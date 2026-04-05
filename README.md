@@ -38,7 +38,7 @@ Or update a repo that already uses the kit:
 
 ```sh
 cd /path/to/target-repo
-uvx --from copier copier update --trust
+uvx --from copier copier update --trust --defaults
 ```
 
 The generated repo includes two committed configuration files:
