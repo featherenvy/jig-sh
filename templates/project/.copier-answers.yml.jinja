@@ -1,4 +1,4 @@
-_commit: '<<[ _copier_answers._commit | default("") | replace("'", "''") ]>>'
+_commit: '<<[ _copier_conf.vcs_ref_hash | default(_copier_answers._commit | default(""), true) | replace("'", "''") ]>>'
 _src_path: '<<[ _copier_answers._src_path | replace("'", "''") ]>>'
 repo_name: '<<[ repo_name | replace("'", "''") ]>>'
 default_branch: '<<[ default_branch | replace("'", "''") ]>>'
