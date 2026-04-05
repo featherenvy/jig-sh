@@ -137,7 +137,9 @@ validate_backend_fixture() {
     bash scripts/check-rust-file-loc.sh --all >/dev/null
     bash scripts/check-migration-immutability.sh --changed-against HEAD
     bash scripts/check-sqlx-unchecked-non-test.sh >/dev/null
-    COVERAGE_DIR=coverage COVERAGE_THRESHOLD=0 node scripts/enforce-coverage.js >/dev/null
+    coverage_dir="$(mktemp -d)"
+    COVERAGE_DIR="$coverage_dir" COVERAGE_THRESHOLD=0 node scripts/enforce-coverage.js >/dev/null
+    rm -rf "$coverage_dir"
     perl -0pi -e "s/default_branch: 'main'/default_branch: 'dev'/" .agentic-kit.yaml
     git add .agentic-kit.yaml
     git commit -m "change answers" >/dev/null
