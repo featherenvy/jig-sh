@@ -7,6 +7,18 @@ cd "$ROOT_DIR"
 tmp_file="$(mktemp)"
 trap 'rm -f "$tmp_file"' EXIT
 
+list_agent_guides() {
+  if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    {
+      git ls-files -z -- '*AGENTS.md'
+      git ls-files -z --others --exclude-standard -- '*AGENTS.md'
+    } | xargs -0 -n1 printf '%s\n' | sort -u
+    return
+  fi
+
+  find . -name AGENTS.md -not -path '*/.git/*' | sed 's#^\./##' | sort
+}
+
 {
   echo "# Agent Map"
   echo
@@ -17,7 +29,7 @@ trap 'rm -f "$tmp_file"' EXIT
   echo "- [Repository AGENTS.md](./AGENTS.md)"
   echo
 
-  mapfile -t guide_paths < <(find . -name AGENTS.md -not -path '*/.git/*' | sed 's#^\./##' | sort)
+  mapfile -t guide_paths < <(list_agent_guides)
   nested_count=0
   for guide_path in "${guide_paths[@]}"; do
     if [[ "$guide_path" == "AGENTS.md" ]]; then

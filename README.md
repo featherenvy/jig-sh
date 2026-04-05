@@ -14,7 +14,6 @@ The kit extracts the durable parts of the OneSales workflow:
 
 The template renders these repo-owned assets into a consumer repository:
 
-- `.copier-answers.yml`
 - `.agentic-kit.yaml`
 - `AGENTS.md`
 - `agent-map.md`
@@ -38,13 +37,15 @@ Or update a repo that already uses the kit:
 
 ```sh
 cd /path/to/target-repo
-uvx --from copier copier update --trust --defaults
+uvx --from copier copier update --trust --defaults --answers-file .agentic-kit.yaml
 ```
 
-The generated repo includes two committed configuration files:
+The generated repo uses `.agentic-kit.yaml` as both:
 
-- `.agentic-kit.yaml`: public repo-facing config
-- `.copier-answers.yml`: `copier` sync state used by `copier update`
+- the public repo-facing config
+- the `copier` answers file used by `copier update`
+
+When the template is rendered from a local checkout, the post-copy normalization step will try to replace a local `_src_path` with the template repo's `origin` remote URL. If the template checkout has no `origin` remote, `_src_path` remains local and update remains machine-local.
 
 ## Required Repo Conventions
 

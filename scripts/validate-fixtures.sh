@@ -125,7 +125,6 @@ validate_backend_fixture() {
   (
     cd "$repo_dir"
     [[ -f .agentic-kit.yaml ]]
-    [[ -f .copier-answers.yml ]]
     git init -b main >/dev/null
     git config user.name "Fixture"
     git config user.email "fixture@example.com"
@@ -139,6 +138,11 @@ validate_backend_fixture() {
     bash scripts/check-migration-immutability.sh --changed-against HEAD
     bash scripts/check-sqlx-unchecked-non-test.sh >/dev/null
     COVERAGE_DIR=coverage COVERAGE_THRESHOLD=0 node scripts/enforce-coverage.js >/dev/null
+    perl -0pi -e "s/default_branch: 'main'/default_branch: 'dev'/" .agentic-kit.yaml
+    git add .agentic-kit.yaml
+    git commit -m "change answers" >/dev/null
+    uvx --from copier copier update --trust --defaults --answers-file .agentic-kit.yaml >/dev/null
+    rg -q '^DEFAULT_BRANCH \\?= dev$' Makefile
     if [[ -f .github/workflows/webapp-checks.yml ]]; then
       rg -q "No web apps configured" .github/workflows/webapp-checks.yml
     fi
@@ -152,7 +156,6 @@ validate_full_stack_fixture() {
   (
     cd "$repo_dir"
     [[ -f .agentic-kit.yaml ]]
-    [[ -f .copier-answers.yml ]]
     git init -b main >/dev/null
     git config user.name "Fixture"
     git config user.email "fixture@example.com"
@@ -166,6 +169,7 @@ validate_full_stack_fixture() {
     bash scripts/check-migration-immutability.sh --changed-against HEAD
     bash scripts/check-sqlx-unchecked-non-test.sh >/dev/null
     bash scripts/check-schema-dump.sh >/dev/null
+    uvx --from copier copier update --trust --defaults --answers-file .agentic-kit.yaml >/dev/null
     rg -q "frontend" .github/workflows/webapp-checks.yml
     rg -q "admin-panel" .github/workflows/webapp-checks.yml
     rg -q "40" .github/workflows/webapp-checks.yml

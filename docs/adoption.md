@@ -4,11 +4,17 @@
 
 1. Start with an existing repository that already has a stable Cargo workspace and CI.
 2. Render the kit into that repo with `copier`.
-3. Confirm both `.agentic-kit.yaml` and `.copier-answers.yml` were generated, then review `.agentic-kit.yaml` and adjust paths or commands before committing.
+3. Confirm `.agentic-kit.yaml` was generated, then review it and adjust paths or commands before committing.
 4. Add or adapt crate-level `AGENTS.md` files for each backend crate.
 5. Run the generated local checks.
 6. Wire any missing project-owned scripts such as `scripts/dump-schema.sh` if schema dumps are enabled.
 7. Commit the generated files and then switch CI to use the new workflows.
+
+For later template updates:
+
+```sh
+uvx --from copier copier update --trust --defaults --answers-file .agentic-kit.yaml
+```
 
 ## What To Keep Project-Owned
 

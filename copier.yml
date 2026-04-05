@@ -1,6 +1,6 @@
 _min_copier_version: "9.0.0"
 _subdirectory: templates/project
-_answers_file: .copier-answers.yml
+_answers_file: .agentic-kit.yaml
 _templates_suffix: .jinja
 _envops:
   block_start_string: "[%"
@@ -11,6 +11,7 @@ _envops:
   comment_end_string: "#>"
 _tasks:
   - chmod +x scripts/*.sh
+  - bash scripts/normalize-template-source.sh
   - bash scripts/generate-agent-map.sh
 
 repo_name:

@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+ANSWERS_FILE="$ROOT_DIR/.agentic-kit.yaml"
+
+if [[ ! -f "$ANSWERS_FILE" ]]; then
+  exit 0
+fi
+
+src_path="$(awk -F"'" '/^_src_path:/ {print $2; exit}' "$ANSWERS_FILE")"
+
+if [[ -z "$src_path" ]]; then
+  exit 0
+fi
+
+case "$src_path" in
+  /*|./*|../*)
+    if [[ -d "$src_path/.git" ]] || git -C "$src_path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+      remote_url="$(git -C "$src_path" remote get-url origin 2>/dev/null || true)"
+      if [[ -n "$remote_url" ]]; then
+        python3 - "$ANSWERS_FILE" "$remote_url" <<'PY'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+remote = sys.argv[2]
+lines = path.read_text().splitlines()
+for i, line in enumerate(lines):
+    if line.startswith("_src_path: "):
+        escaped = remote.replace("'", "''")
+        lines[i] = f"_src_path: '{escaped}'"
+        break
+path.write_text("\n".join(lines) + "\n")
+PY
+      fi
+    fi
+    ;;
+esac

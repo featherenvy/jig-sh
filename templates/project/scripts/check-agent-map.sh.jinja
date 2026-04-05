@@ -65,6 +65,18 @@ broken_links=()
 missing_agents=()
 all_agents=()
 
+list_agent_guides() {
+  if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    {
+      git ls-files -z -- '*AGENTS.md'
+      git ls-files -z --others --exclude-standard -- '*AGENTS.md'
+    }
+    return
+  fi
+
+  find . -name AGENTS.md -not -path '*/.git/*' -print0
+}
+
 trim() {
   local value="$1"
   value="${value#"${value%%[![:space:]]*}"}"
@@ -202,7 +214,7 @@ while IFS= read -r -d '' tracked_path; do
   if [[ "$tracked_path" == "AGENTS.md" || "$tracked_path" == */AGENTS.md ]]; then
     all_agents+=("$tracked_path")
   fi
-done < <(find . -name AGENTS.md -not -path '*/.git/*' -print0)
+done < <(list_agent_guides)
 
 if (( ${#all_agents[@]} > 0 )); then
   IFS=$'\n' all_agents=($(printf '%s\n' "${all_agents[@]}" | sort))

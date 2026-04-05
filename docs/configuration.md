@@ -2,7 +2,13 @@
 
 This file is the supported configuration surface for downstream repos and must be committed alongside the generated template output.
 
-The generated repo also keeps `.copier-answers.yml` as `copier`'s internal sync state. Keep that file committed too if you want `copier update` to work without extra flags.
+`.agentic-kit.yaml` is also the `copier` answers file. Run updates with:
+
+```sh
+uvx --from copier copier update --trust --defaults --answers-file .agentic-kit.yaml
+```
+
+The file contains both public settings and the private `_src_path` / `_commit` fields that `copier update` requires.
 
 ## Required Keys
 
