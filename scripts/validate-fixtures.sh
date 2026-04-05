@@ -202,18 +202,8 @@ validate_unpushed_commit_stays_local() {
   git -C "$template_clone" config user.name "Fixture"
   git -C "$template_clone" config user.email "fixture@example.com"
 
-  python3 - "$ROOT_DIR/tests/fixtures/backend-only.yaml" "$answers_file" "$bare_remote" <<'PY'
-import pathlib
-import sys
-import yaml
-
-src = pathlib.Path(sys.argv[1])
-dst = pathlib.Path(sys.argv[2])
-remote = pathlib.Path(sys.argv[3]).as_uri()
-data = yaml.safe_load(src.read_text())
-data["template_source_url"] = ""
-dst.write_text(yaml.safe_dump(data, sort_keys=False))
-PY
+  cp "$ROOT_DIR/tests/fixtures/backend-only.yaml" "$answers_file"
+  perl -0pi -e "s/^template_source_url:.*$/template_source_url: \"\"/m" "$answers_file"
 
   cat > "$template_clone/UNPUSHED_MARKER.md" <<'EOF'
 marker
