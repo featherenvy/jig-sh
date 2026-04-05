@@ -1,6 +1,8 @@
 # `.agentic-kit.yaml` Configuration
 
-This file is both the `copier` answers file and the supported configuration surface for downstream repos.
+This file is the supported configuration surface for downstream repos and must be committed alongside the generated template output.
+
+The generated repo also keeps `.copier-answers.yml` as `copier`'s internal sync state. Keep that file committed too if you want `copier update` to work without extra flags.
 
 ## Required Keys
 
@@ -69,3 +71,7 @@ The generated `Makefile` exposes these stable targets:
 - `ci`
 
 Downstream repos may add more targets, but these names should remain stable for agent tooling.
+
+## SQLx Metadata Directory
+
+`rust_sqlx_metadata_dir` is wired into the generated `sqlx-check` target via `SQLX_OFFLINE_DIR`. Use `.sqlx` unless the repository has already standardized on a different committed metadata path.

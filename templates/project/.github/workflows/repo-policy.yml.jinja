@@ -6,6 +6,7 @@ on:
 [% for root in rust_crate_roots %]
       - "<<[ root ]>>/**"
 [% endfor %]
+      - "Makefile"
       - "scripts/check-migration-immutability.sh"
       - "scripts/check-rust-file-loc.sh"
       - "scripts/check-sqlx-unchecked-non-test.sh"
@@ -18,6 +19,7 @@ on:
 [% for root in rust_crate_roots %]
       - "<<[ root ]>>/**"
 [% endfor %]
+      - "Makefile"
       - "scripts/check-migration-immutability.sh"
       - "scripts/check-rust-file-loc.sh"
       - "scripts/check-sqlx-unchecked-non-test.sh"

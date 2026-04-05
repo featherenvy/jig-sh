@@ -1,0 +1,27 @@
+_commit: '<<[ _copier_answers._commit | default("") | replace("'", "''") ]>>'
+_src_path: '<<[ _copier_answers._src_path | replace("'", "''") ]>>'
+repo_name: '<<[ repo_name | replace("'", "''") ]>>'
+default_branch: '<<[ default_branch | replace("'", "''") ]>>'
+ci_github_runner: '<<[ ci_github_runner | replace("'", "''") ]>>'
+rust_crate_roots:
+[% for root in rust_crate_roots %]
+  - '<<[ root | replace("'", "''") ]>>'
+[% endfor %]
+rust_migration_dir: '<<[ rust_migration_dir | replace("'", "''") ]>>'
+rust_sqlx_metadata_dir: '<<[ rust_sqlx_metadata_dir | replace("'", "''") ]>>'
+schema_dump_enabled: [% if schema_dump_enabled %]true[% else %]false[% endif %]
+schema_dump_command: '<<[ schema_dump_command | replace("'", "''") ]>>'
+bootstrap_command: '<<[ bootstrap_command | replace("'", "''") ]>>'
+dev_command: '<<[ dev_command | replace("'", "''") ]>>'
+rust_fmt_check_command: '<<[ rust_fmt_check_command | replace("'", "''") ]>>'
+rust_clippy_command: '<<[ rust_clippy_command | replace("'", "''") ]>>'
+rust_test_command: '<<[ rust_test_command | replace("'", "''") ]>>'
+rust_test_locked_command: '<<[ rust_test_locked_command | replace("'", "''") ]>>'
+web_package_manager: '<<[ web_package_manager | replace("'", "''") ]>>'
+frontend_apps:[% if frontend_apps | length == 0 %] [][% else %]
+[% for app in frontend_apps %]
+  - name: '<<[ app.name | replace("'", "''") ]>>'
+    dir: '<<[ app.dir | replace("'", "''") ]>>'
+    coverage_threshold: <<[ app.coverage_threshold ]>>
+[% endfor %]
+[% endif %]

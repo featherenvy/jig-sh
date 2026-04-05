@@ -62,7 +62,7 @@ sqlx-db-setup: ## Reset the SQLx check database and apply migrations
 	SQLX_OFFLINE=false $(CARGO) sqlx database reset -y --source "$(RUST_MIGRATION_DIR)"
 
 sqlx-check: ## Verify committed SQLx metadata is current
-	SQLX_OFFLINE=false $(CARGO) sqlx prepare --check --workspace -- --workspace --all-targets
+	SQLX_OFFLINE=false SQLX_OFFLINE_DIR="$(RUST_SQLX_METADATA_DIR)" $(CARGO) sqlx prepare --check --workspace -- --workspace --all-targets
 
 schema-check: ## Verify schema docs are current when enabled
 	@if [ "$(SCHEMA_DUMP_ENABLED)" = "1" ]; then \

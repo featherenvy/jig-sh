@@ -7,7 +7,7 @@ Usage:
   scripts/check-agent-map.sh [--map <path>]
 
 Checks:
-  1) Every tracked AGENTS.md file is linked from agent-map.md.
+  1) Every AGENTS.md file in the repository is linked from agent-map.md.
   2) Every local markdown link in agent-map.md resolves to an existing file.
 EOF
 }
@@ -198,10 +198,11 @@ while IFS= read -r line || [[ -n "$line" ]]; do
 done < "$MAP_ABS"
 
 while IFS= read -r -d '' tracked_path; do
+  tracked_path="${tracked_path#./}"
   if [[ "$tracked_path" == "AGENTS.md" || "$tracked_path" == */AGENTS.md ]]; then
     all_agents+=("$tracked_path")
   fi
-done < <(git ls-files -z)
+done < <(find . -name AGENTS.md -not -path '*/.git/*' -print0)
 
 if (( ${#all_agents[@]} > 0 )); then
   IFS=$'\n' all_agents=($(printf '%s\n' "${all_agents[@]}" | sort))

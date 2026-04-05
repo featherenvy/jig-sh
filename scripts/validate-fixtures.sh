@@ -124,6 +124,8 @@ validate_backend_fixture() {
   write_backend_stub_repo "$repo_dir"
   (
     cd "$repo_dir"
+    [[ -f .agentic-kit.yaml ]]
+    [[ -f .copier-answers.yml ]]
     git init -b main >/dev/null
     git config user.name "Fixture"
     git config user.email "fixture@example.com"
@@ -149,6 +151,8 @@ validate_full_stack_fixture() {
   write_full_stack_stub_repo "$repo_dir"
   (
     cd "$repo_dir"
+    [[ -f .agentic-kit.yaml ]]
+    [[ -f .copier-answers.yml ]]
     git init -b main >/dev/null
     git config user.name "Fixture"
     git config user.email "fixture@example.com"

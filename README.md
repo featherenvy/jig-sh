@@ -14,6 +14,8 @@ The kit extracts the durable parts of the OneSales workflow:
 
 The template renders these repo-owned assets into a consumer repository:
 
+- `.copier-answers.yml`
+- `.agentic-kit.yaml`
 - `AGENTS.md`
 - `agent-map.md`
 - `.agent/PLANS.md`
@@ -21,7 +23,6 @@ The template renders these repo-owned assets into a consumer repository:
 - `scripts/*.sh`
 - `scripts/enforce-coverage.js`
 - `.github/workflows/*.yml`
-- `.agentic-kit.yaml` as the committed template answers/config file
 
 The template does not try to generate your application code, crate-level `AGENTS.md` files, or a schema dump implementation. Those remain project-owned.
 
@@ -40,7 +41,10 @@ cd /path/to/target-repo
 uvx --from copier copier update --trust
 ```
 
-`copier` stores the chosen answers in `.agentic-kit.yaml`, which is the public configuration surface for downstream repos.
+The generated repo includes two committed configuration files:
+
+- `.agentic-kit.yaml`: public repo-facing config
+- `.copier-answers.yml`: `copier` sync state used by `copier update`
 
 ## Required Repo Conventions
 
