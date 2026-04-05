@@ -37,7 +37,7 @@ If you edit `.agentic-kit.yaml` and want the repo to re-render from those answer
 
 ```sh
 cd /path/to/target-repo
-uvx --from copier copier recopy --trust --defaults --answers-file .agentic-kit.yaml
+uvx --from copier copier recopy --trust --defaults --overwrite --answers-file .agentic-kit.yaml
 ```
 
 To pull a newer version of the template while keeping the stored answers:

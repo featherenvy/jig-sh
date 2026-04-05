@@ -7,7 +7,7 @@ This file is the supported configuration surface for downstream repos and must b
 After changing values in `.agentic-kit.yaml`, re-render with:
 
 ```sh
-uvx --from copier copier recopy --trust --defaults --answers-file .agentic-kit.yaml
+uvx --from copier copier recopy --trust --defaults --overwrite --answers-file .agentic-kit.yaml
 ```
 
 To move onto a newer version of the template while keeping the stored answers, run:
