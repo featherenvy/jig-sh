@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+COMPARE_REF=""
+MIGRATIONS_DIR="<<[ rust_migration_dir ]>>"
+DIFF_OUTPUT_FILE=""
+
+usage() {
+  cat <<'EOF'
+Usage:
+  scripts/check-migration-immutability.sh --changed-against <git-ref>
+
+Rule:
+  - Existing migration files are immutable.
+  - Changes may only add new files under the configured migration directory.
+EOF
+}
+
+emit_error() {
+  local file="$1"
+  local message="$2"
+  echo "ERROR: ${file}: ${message}" >&2
+}
+
+cleanup() {
+  if [[ -n "$DIFF_OUTPUT_FILE" ]]; then
+    rm -f "$DIFF_OUTPUT_FILE"
+  fi
+}
+
+trap cleanup EXIT
+
+parse_args() {
+  if [[ $# -ne 2 ]] || [[ "$1" != "--changed-against" ]]; then
+    usage >&2
+    exit 1
+  fi
+
+  COMPARE_REF="$2"
+  if [[ -z "$COMPARE_REF" ]]; then
+    echo "A compare ref is required." >&2
+    usage >&2
+    exit 1
+  fi
+}
+
+main() {
+  local status=""
+  local path=""
+  local old_path=""
+  local new_path=""
+  local violations=0
+
+  parse_args "$@"
+
+  DIFF_OUTPUT_FILE="$(mktemp)"
+
+  git diff --name-status -z -M --diff-filter=ADMRT \
+    "$COMPARE_REF" HEAD -- "$MIGRATIONS_DIR" >"$DIFF_OUTPUT_FILE"
+
+  while IFS= read -r -d '' status; do
+    case "$status" in
+      A)
+        IFS= read -r -d '' path || break
+        ;;
+      R*)
+        IFS= read -r -d '' old_path || break
+        IFS= read -r -d '' new_path || break
+        emit_error \
+          "$old_path" \
+          "Existing migration files are immutable. Rename detected (${status}): ${old_path} -> ${new_path}. Add a new forward-only migration instead."
+        violations=1
+        ;;
+      *)
+        IFS= read -r -d '' path || break
+        emit_error \
+          "$path" \
+          "Existing migration files are immutable. Change detected (${status}) in ${path}. Add a new forward-only migration instead."
+        violations=1
+        ;;
+    esac
+  done < "$DIFF_OUTPUT_FILE"
+
+  if (( violations != 0 )); then
+    echo "Migration immutability check failed." >&2
+    exit 1
+  fi
+
+  echo "Migration immutability check passed."
+}
+
+main "$@"

@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT_DIR"
+
+report_file="$(mktemp)"
+error_file="$(mktemp)"
+cleanup() {
+  rm -f "$report_file"
+  rm -f "$error_file"
+}
+trap cleanup EXIT
+
+if ! scripts/generate-sqlx-unchecked-queries-todo.sh "$report_file" >/dev/null 2>"$error_file"; then
+  echo "Failed to generate unchecked SQLx query report."
+  if [[ -s "$error_file" ]]; then
+    echo "Generator stderr:"
+    cat "$error_file"
+  fi
+  if [[ -s "$report_file" ]]; then
+    echo "Partial generated report:"
+    cat "$report_file"
+  fi
+  exit 1
+fi
+
+non_test_count="$(awk -F': ' '/^- Non-test call sites:/ {print $2}' "$report_file")"
+if [[ -z "${non_test_count}" ]]; then
+  echo "Failed to parse non-test unchecked SQLx call site count from generated report:"
+  cat "$report_file"
+  exit 1
+fi
+
+echo "Parsed non-test unchecked SQLx call sites: ${non_test_count}"
+
+if [[ "${non_test_count}" != "0" ]]; then
+  echo "Found ${non_test_count} unchecked SQLx query call site(s) in non-test code."
+  exit 1
+fi
+
+echo "No unchecked SQLx query call sites found in non-test code."

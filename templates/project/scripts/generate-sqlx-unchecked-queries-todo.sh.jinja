@@ -1,0 +1,214 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+OUT_FILE="${1:-$ROOT_DIR/docs/sqlx-unchecked-queries-todo.md}"
+crate_roots=( [% for root in rust_crate_roots %]"<<[ root ]>>"[% if not loop.last %] [% endif %][% endfor %] )
+
+tmp_calls_raw="$(mktemp)"
+tmp_calls="$(mktemp)"
+tmp_norm_calls="$(mktemp)"
+tmp_status="$(mktemp)"
+tmp_non_test="$(mktemp)"
+tmp_test="$(mktemp)"
+tmp_checked_calls="$(mktemp)"
+trap 'rm -f "$tmp_calls_raw" "$tmp_calls" "$tmp_norm_calls" "$tmp_status" "$tmp_non_test" "$tmp_test" "$tmp_checked_calls"' EXIT
+
+cd "$ROOT_DIR"
+
+rg_globs=()
+for root in "${crate_roots[@]}"; do
+  rg_globs+=(--glob "${root}/**/*.rs")
+done
+
+rg_status=0
+rg -n -o "${rg_globs[@]}" \
+  '\bsqlx::query(?:_as|_scalar|_file|_file_as|_file_scalar)?!?' \
+  > "$tmp_calls_raw" || rg_status=$?
+if [[ "$rg_status" -ne 0 && "$rg_status" -ne 1 ]]; then
+  echo "Failed to scan SQLx query call sites with ripgrep." >&2
+  exit "$rg_status"
+fi
+awk '!/\!$/' "$tmp_calls_raw" | sort -t: -k1,1 -k2,2n > "$tmp_calls"
+
+awk '
+{
+  first_colon = index($0, ":");
+  rest = substr($0, first_colon + 1);
+  second_colon = index(rest, ":");
+  path = substr($0, 1, first_colon - 1);
+  line = substr(rest, 1, second_colon - 1);
+  fn = substr(rest, second_colon + 1);
+  print path "\t" line "\t" fn;
+}
+' "$tmp_calls" > "$tmp_norm_calls"
+
+declare -A status_by_key
+if [[ -f "$OUT_FILE" ]]; then
+  awk '
+  {
+    if ($0 !~ /^- \[[ xX]\] `/) {
+      next;
+    }
+    status = (substr($0, 4, 1) ~ /[xX]/) ? "x" : " ";
+    n = split($0, parts, "`");
+    if (n >= 5) {
+      key = parts[2] "|" parts[4];
+      print key "\t" status;
+    }
+  }
+  ' "$OUT_FILE" > "$tmp_status"
+
+  while IFS=$'\t' read -r key status; do
+    status_by_key["$key"]="$status"
+  done < "$tmp_status"
+fi
+
+declare -A test_line_map
+while IFS= read -r rel_path; do
+  [[ -z "$rel_path" ]] && continue
+  abs_path="$ROOT_DIR/$rel_path"
+  [[ -f "$abs_path" ]] || continue
+
+  tmp_test_lines_for_file="$(mktemp)"
+  awk '
+    function open_count(s,   t) { t = s; return gsub(/\{/, "{", t) }
+    function close_count(s,  t) { t = s; return gsub(/\}/, "}", t) }
+
+    BEGIN {
+      depth = 0;
+      pending_cfg_test = 0;
+      scope_top = 0;
+    }
+
+    {
+      while (scope_top > 0 && depth < scope_depth[scope_top]) {
+        scope_top--;
+      }
+
+      if (scope_top > 0) {
+        print NR;
+      }
+
+      line = $0;
+      cfg_test_attr = (line ~ /#\[[[:space:]]*cfg[[:space:]]*\([[:space:]]*test[[:space:]]*\)[[:space:]]*\]/);
+      mod_with_block = (line ~ /(^|[[:space:]])mod[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*\{/);
+      attr_blank_or_comment = 0;
+      if (line ~ /^[[:space:]]*#\[/) {
+        attr_blank_or_comment = 1;
+      } else if (line ~ /^[[:space:]]*$/) {
+        attr_blank_or_comment = 1;
+      } else if (line ~ /^[[:space:]]*\/\/.*/) {
+        attr_blank_or_comment = 1;
+      }
+
+      if (cfg_test_attr && mod_with_block) {
+        scope_top++;
+        scope_depth[scope_top] = depth + 1;
+        pending_cfg_test = 0;
+      } else {
+        if (pending_cfg_test) {
+          if (mod_with_block) {
+            scope_top++;
+            scope_depth[scope_top] = depth + 1;
+            pending_cfg_test = 0;
+          } else if (!attr_blank_or_comment) {
+            pending_cfg_test = 0;
+          }
+        }
+
+        if (cfg_test_attr) {
+          pending_cfg_test = 1;
+        }
+      }
+
+      depth += open_count(line) - close_count(line);
+      if (depth < 0) {
+        depth = 0;
+      }
+    }
+  ' "$abs_path" > "$tmp_test_lines_for_file"
+
+  while IFS= read -r line_no; do
+    [[ -n "$line_no" ]] && test_line_map["$rel_path:$line_no"]=1
+  done < "$tmp_test_lines_for_file"
+  rm -f "$tmp_test_lines_for_file"
+done < <(cut -f1 "$tmp_norm_calls" | uniq)
+
+total_count="$(wc -l < "$tmp_norm_calls" | tr -d ' ')"
+files_count="$(cut -f1 "$tmp_norm_calls" | uniq | wc -l | tr -d ' ')"
+checked_rg_status=0
+rg -n -o "${rg_globs[@]}" \
+  '\bsqlx::query(?:_as|_scalar|_file|_file_as|_file_scalar)?!' \
+  > "$tmp_checked_calls" || checked_rg_status=$?
+if [[ "$checked_rg_status" -ne 0 && "$checked_rg_status" -ne 1 ]]; then
+  echo "Failed to scan compile-checked SQLx macro call sites with ripgrep." >&2
+  exit "$checked_rg_status"
+fi
+checked_count="$(wc -l < "$tmp_checked_calls" | tr -d ' ')"
+
+non_test_count=0
+test_count=0
+
+is_test_path() {
+  local path="$1"
+  local basename="${path##*/}"
+
+  if [[ "$path" == */tests/* ]]; then
+    return 0
+  fi
+
+  case "$basename" in
+    tests.rs|test_support.rs|tests_*.rs|*_tests.rs)
+      return 0
+      ;;
+  esac
+
+  return 1
+}
+
+while IFS=$'\t' read -r path line fn; do
+  key="${path}:${line}|${fn}"
+  status="${status_by_key[$key]:- }"
+  macro="${fn}!"
+  item="- [${status}] \`${path}:${line}\`: \`${fn}\` -> \`${macro}\`"
+
+  if is_test_path "$path" || [[ -n "${test_line_map["$path:$line"]+set}" ]]; then
+    echo "$item" >> "$tmp_test"
+    test_count=$((test_count + 1))
+  else
+    echo "$item" >> "$tmp_non_test"
+    non_test_count=$((non_test_count + 1))
+  fi
+done < "$tmp_norm_calls"
+
+{
+  echo "# SQLx Unchecked Queries TODO"
+  echo
+  echo "This checklist tracks every \`sqlx::query*\` call site under the configured Rust crate roots that is not yet using compile-time checked SQLx macros."
+  echo
+  echo "- Generated on: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+  echo "- Unchecked call sites: ${total_count}"
+  echo "- Compile-checked macro call sites already present: ${checked_count}"
+  echo "- Files with unchecked call sites: ${files_count}"
+  echo "- Non-test call sites: ${non_test_count}"
+  echo "- Test call sites: ${test_count}"
+  echo
+  echo "## TODO Items (Non-Test Code - Priority)"
+  echo
+  if [[ -s "$tmp_non_test" ]]; then
+    cat "$tmp_non_test"
+  else
+    echo "_None_"
+  fi
+  echo
+  echo "## TODO Items (Test Code)"
+  echo
+  if [[ -s "$tmp_test" ]]; then
+    cat "$tmp_test"
+  else
+    echo "_None_"
+  fi
+} > "$OUT_FILE"
+
+echo "Wrote $OUT_FILE"

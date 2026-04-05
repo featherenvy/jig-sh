@@ -1,0 +1,95 @@
+name: Rust Tests
+
+on:
+  pull_request:
+    paths:
+[% for root in rust_crate_roots %]
+      - "<<[ root ]>>/**"
+[% endfor %]
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - ".clippy.toml"
+      - "clippy.toml"
+      - "Makefile"
+      - ".cargo/**"
+      - ".github/workflows/rust-tests.yml"
+  push:
+    branches:
+      - <<[ default_branch ]>>
+    paths:
+[% for root in rust_crate_roots %]
+      - "<<[ root ]>>/**"
+[% endfor %]
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - ".clippy.toml"
+      - "clippy.toml"
+      - "Makefile"
+      - ".cargo/**"
+      - ".github/workflows/rust-tests.yml"
+  merge_group:
+    types:
+      - checks_requested
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fmt:
+    name: make fmt-check
+    runs-on: <<[ ci_github_runner ]>>
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: false
+          rustflags: ""
+          components: rustfmt
+      - name: Run rustfmt check
+        run: make fmt-check
+
+  clippy:
+    name: make clippy
+    runs-on: <<[ ci_github_runner ]>>
+    env:
+      SQLX_OFFLINE: "true"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: false
+          rustflags: ""
+          components: clippy
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+      - name: Run clippy
+        run: make clippy
+
+  test:
+    name: make test-rust-locked
+    runs-on: <<[ ci_github_runner ]>>
+    env:
+      SQLX_OFFLINE: "true"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: false
+          rustflags: ""
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+      - name: Run locked Rust tests
+        run: make test-rust-locked

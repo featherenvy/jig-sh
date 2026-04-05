@@ -1,0 +1,120 @@
+name: Repo Policy
+
+on:
+  pull_request:
+    paths:
+[% for root in rust_crate_roots %]
+      - "<<[ root ]>>/**"
+[% endfor %]
+      - "scripts/check-migration-immutability.sh"
+      - "scripts/check-rust-file-loc.sh"
+      - "scripts/check-sqlx-unchecked-non-test.sh"
+      - "scripts/generate-sqlx-unchecked-queries-todo.sh"
+      - ".github/workflows/repo-policy.yml"
+  push:
+    branches:
+      - <<[ default_branch ]>>
+    paths:
+[% for root in rust_crate_roots %]
+      - "<<[ root ]>>/**"
+[% endfor %]
+      - "scripts/check-migration-immutability.sh"
+      - "scripts/check-rust-file-loc.sh"
+      - "scripts/check-sqlx-unchecked-non-test.sh"
+      - "scripts/generate-sqlx-unchecked-queries-todo.sh"
+      - ".github/workflows/repo-policy.yml"
+  merge_group:
+    types:
+      - checks_requested
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: repo-policy-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  no-mod-rs:
+    name: Check for disallowed mod.rs files
+    runs-on: <<[ ci_github_runner ]>>
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Detect disallowed mod.rs files
+        run: |
+          make check-no-mod-rs
+
+  rust-file-loc:
+    name: Enforce agentic-first Rust file size policy
+    runs-on: <<[ ci_github_runner ]>>
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Check Rust file LOC policy
+        run: |
+          make check-rust-file-loc
+
+  sqlx-unchecked-queries:
+    name: Verify non-test SQLx queries are compile-time checked
+    runs-on: <<[ ci_github_runner ]>>
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Ensure ripgrep is available
+        run: |
+          if command -v rg >/dev/null 2>&1; then
+            rg --version | head -n 1
+            exit 0
+          fi
+          sudo apt-get update
+          sudo apt-get install -y ripgrep
+      - name: Check unchecked SQLx query usage in non-test code
+        run: |
+          make check-sqlx-unchecked-non-test
+
+  migration-immutability:
+    name: Enforce migration immutability
+    runs-on: <<[ ci_github_runner ]>>
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Determine base ref
+        id: base_ref
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ref=""
+          event_name="${{ github.event_name }}"
+
+          if [[ "$event_name" == "pull_request" ]]; then
+            ref="${{ github.event.pull_request.base.sha }}"
+          elif [[ "$event_name" == "push" ]]; then
+            ref="${{ github.event.before }}"
+            if [[ "$ref" == "0000000000000000000000000000000000000000" ]]; then
+              ref=""
+            fi
+          elif [[ "$event_name" == "merge_group" ]]; then
+            ref="${{ github.event.merge_group.base_sha }}"
+          fi
+
+          if [[ -z "$ref" ]]; then
+            if git rev-parse --verify origin/<<[ default_branch ]>> >/dev/null 2>&1; then
+              ref="$(git merge-base HEAD origin/<<[ default_branch ]>>)"
+            elif git rev-parse --verify HEAD^ >/dev/null 2>&1; then
+              ref="HEAD^"
+            else
+              ref="4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+            fi
+          fi
+
+          echo "ref=$ref" >>"$GITHUB_OUTPUT"
+      - name: Check migration immutability
+        run: |
+          scripts/check-migration-immutability.sh --changed-against "${{ steps.base_ref.outputs.ref }}"

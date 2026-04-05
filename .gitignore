@@ -1,0 +1,6 @@
+.DS_Store
+.venv/
+.pytest_cache/
+dist/
+tmp/
+rendered-fixtures/

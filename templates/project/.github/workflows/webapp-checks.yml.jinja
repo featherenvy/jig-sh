@@ -1,0 +1,85 @@
+[% if frontend_apps | length > 0 %]
+name: Webapp Checks
+
+on:
+  pull_request:
+    paths:
+[% for app in frontend_apps %]
+      - "<<[ app.dir ]>>/**"
+[% endfor %]
+      - "Makefile"
+      - ".github/workflows/webapp-checks.yml"
+  push:
+    branches:
+      - <<[ default_branch ]>>
+    paths:
+[% for app in frontend_apps %]
+      - "<<[ app.dir ]>>/**"
+[% endfor %]
+      - "Makefile"
+      - ".github/workflows/webapp-checks.yml"
+  merge_group:
+    types:
+      - checks_requested
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: webapp-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: webapp checks
+    runs-on: <<[ ci_github_runner ]>>
+    strategy:
+      fail-fast: false
+      matrix:
+        app:
+[% for app in frontend_apps %]
+          - name: <<[ app.name ]>>
+            dir: <<[ app.dir ]>>
+            coverage_threshold: <<[ app.coverage_threshold ]>>
+[% endfor %]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+      - name: Cache Bun dependencies
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.bun/install/cache
+            ${{ matrix.app.dir }}/node_modules
+          key: ${{ runner.os }}-bun-${{ matrix.app.dir }}-${{ hashFiles(format('{0}/bun.lock', matrix.app.dir)) }}
+      - name: Install dependencies
+        run: cd "${{ matrix.app.dir }}" && bun install --frozen-lockfile
+      - name: Run lint
+        run: cd "${{ matrix.app.dir }}" && bun run lint
+      - name: Run typecheck
+        run: cd "${{ matrix.app.dir }}" && bun run typecheck
+      - name: Run build
+        run: cd "${{ matrix.app.dir }}" && bun run build:bundle
+      - name: Run tests with coverage
+        run: cd "${{ matrix.app.dir }}" && bun run test:coverage
+      - name: Enforce coverage threshold
+        run: make enforce-coverage COVERAGE_DIR="${{ matrix.app.dir }}/coverage" COVERAGE_THRESHOLD="${{ matrix.app.coverage_threshold }}"
+[% else %]
+name: Webapp Checks (Disabled)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  disabled:
+    runs-on: <<[ ci_github_runner ]>>
+    steps:
+      - name: No configured web apps
+        run: echo "No web apps configured in .agentic-kit.yaml"
+[% endif %]

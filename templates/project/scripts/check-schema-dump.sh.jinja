@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT_DIR"
+
+SCHEMA_DUMP_COMMAND="${SCHEMA_DUMP_COMMAND:-<<[ schema_dump_command ]>>}"
+SCHEMA_DOCS_DIR="${SCHEMA_DOCS_DIR:-docs/schema}"
+
+bash -lc "$SCHEMA_DUMP_COMMAND"
+
+if [[ -n "$(git status --porcelain -- "$SCHEMA_DOCS_DIR")" ]]; then
+  echo "Schema dump is stale. Re-run ${SCHEMA_DUMP_COMMAND} and commit ${SCHEMA_DOCS_DIR} changes."
+  git --no-pager status --short -- "$SCHEMA_DOCS_DIR"
+  git --no-pager diff -- "$SCHEMA_DOCS_DIR"
+  exit 1
+fi
+
+echo "Schema dump is up to date."
