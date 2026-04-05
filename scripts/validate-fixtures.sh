@@ -17,6 +17,19 @@ render_fixture() {
     "$dest_dir"
 }
 
+render_fixture_from_template() {
+  local template_root="$1"
+  local answers_file="$2"
+  local dest_dir="$3"
+
+  uvx --from copier copier copy \
+    --trust \
+    --defaults \
+    --data-file "$answers_file" \
+    "$template_root" \
+    "$dest_dir"
+}
+
 write_backend_stub_repo() {
   local repo_dir="$1"
 
@@ -178,6 +191,48 @@ validate_full_stack_fixture() {
   )
 }
 
+validate_unpushed_commit_stays_local() {
+  local bare_remote="$TMP_DIR/template-remote.git"
+  local template_clone="$TMP_DIR/template-clone"
+  local answers_file="$TMP_DIR/template-backend.yaml"
+  local rendered_dir="$TMP_DIR/rendered-from-clone"
+
+  git clone --bare "$ROOT_DIR" "$bare_remote" >/dev/null 2>&1
+  git clone "$bare_remote" "$template_clone" >/dev/null 2>&1
+  git -C "$template_clone" config user.name "Fixture"
+  git -C "$template_clone" config user.email "fixture@example.com"
+
+  python3 - "$ROOT_DIR/tests/fixtures/backend-only.yaml" "$answers_file" "$bare_remote" <<'PY'
+import pathlib
+import sys
+import yaml
+
+src = pathlib.Path(sys.argv[1])
+dst = pathlib.Path(sys.argv[2])
+remote = pathlib.Path(sys.argv[3]).as_uri()
+data = yaml.safe_load(src.read_text())
+data["template_source_url"] = ""
+dst.write_text(yaml.safe_dump(data, sort_keys=False))
+PY
+
+  cat > "$template_clone/UNPUSHED_MARKER.md" <<'EOF'
+marker
+EOF
+  git -C "$template_clone" add UNPUSHED_MARKER.md
+  git -C "$template_clone" commit -m "unpushed template change" >/dev/null
+
+  render_fixture_from_template "$template_clone" "$answers_file" "$rendered_dir"
+
+  actual_src_path="$(awk -F"'" '/^_src_path:/ {print $2; exit}' "$rendered_dir/.agentic-kit.yaml")"
+  expected_src_path="$template_clone"
+  if [[ "$actual_src_path" != "$expected_src_path" ]]; then
+    echo "Expected _src_path to stay local for an unpushed commit." >&2
+    echo "Expected: $expected_src_path" >&2
+    echo "Actual:   $actual_src_path" >&2
+    exit 1
+  fi
+}
+
 BACKEND_DIR="$TMP_DIR/backend-only"
 FULL_STACK_DIR="$TMP_DIR/full-stack"
 
@@ -186,5 +241,6 @@ render_fixture "$ROOT_DIR/tests/fixtures/full-stack.yaml" "$FULL_STACK_DIR"
 
 validate_backend_fixture "$BACKEND_DIR"
 validate_full_stack_fixture "$FULL_STACK_DIR"
+validate_unpushed_commit_stays_local
 
 echo "Fixture validation passed."

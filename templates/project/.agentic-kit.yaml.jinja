@@ -3,6 +3,7 @@ _src_path: '<<[ _copier_answers._src_path | replace("'", "''") ]>>'
 repo_name: '<<[ repo_name | replace("'", "''") ]>>'
 default_branch: '<<[ default_branch | replace("'", "''") ]>>'
 ci_github_runner: '<<[ ci_github_runner | replace("'", "''") ]>>'
+template_source_url: '<<[ template_source_url | replace("'", "''") ]>>'
 rust_crate_roots:
 [% for root in rust_crate_roots %]
   - '<<[ root | replace("'", "''") ]>>'

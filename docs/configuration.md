@@ -23,6 +23,7 @@ The file contains both public settings and the private `_src_path` / `_commit` f
 - `repo_name`: display name used in generated docs
 - `default_branch`: branch name used for base-ref comparisons
 - `ci_github_runner`: runner label for GitHub Actions jobs
+- `template_source_url`: optional canonical template source URL for portable recopy/update
 - `rust_crate_roots`: list of directories whose direct child directories are considered crates
 - `rust_migration_dir`: SQL migration directory
 - `rust_sqlx_metadata_dir`: committed SQLx metadata directory
@@ -89,3 +90,13 @@ Downstream repos may add more targets, but these names should remain stable for 
 ## SQLx Metadata Directory
 
 `rust_sqlx_metadata_dir` is wired into the generated `sqlx-check` target via `SQLX_OFFLINE_DIR`. Use `.sqlx` unless the repository has already standardized on a different committed metadata path.
+
+## Template Source
+
+For portable shared repos, set:
+
+```yaml
+template_source_url: git@github.com:your-org/agentic-rust-kit.git
+```
+
+If `template_source_url` is blank, the post-copy normalization step may rewrite a local `_src_path` to the template repo's `origin` URL, but only when the current `_commit` is already reachable from the local `origin/<default_branch>` tracking ref. Otherwise it leaves the local path unchanged to avoid recording an unreachable remote commit.

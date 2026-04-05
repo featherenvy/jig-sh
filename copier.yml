@@ -28,6 +28,13 @@ ci_github_runner:
   default: ubuntu-latest
   help: Runner label used for GitHub Actions jobs.
 
+template_source_url:
+  type: str
+  default: ""
+  help: >
+    Optional canonical template source URL to store in .agentic-kit.yaml for
+    recopy/update. Set this for portable shared repos.
+
 rust_crate_roots:
   type: yaml
   default:

@@ -52,7 +52,9 @@ The generated repo uses `.agentic-kit.yaml` as both:
 - the public repo-facing config
 - the `copier` answers file used by `copier recopy` and `copier update`
 
-When the template is rendered from a local checkout, the post-copy normalization step will try to replace a local `_src_path` with the template repo's `origin` remote URL. If the template checkout has no `origin` remote, `_src_path` remains local and update remains machine-local.
+Set `template_source_url` in `.agentic-kit.yaml` if you want portable recopy/update behavior across machines.
+
+Without `template_source_url`, the post-copy normalization step only rewrites `_src_path` from a local checkout path to the template repo's `origin` URL when the current `_commit` is already contained in the local `origin/<default_branch>` tracking ref. Otherwise it keeps the local path to avoid stamping an unreachable remote commit.
 
 ## Required Repo Conventions
 

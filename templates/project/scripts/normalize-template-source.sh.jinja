@@ -9,8 +9,29 @@ if [[ ! -f "$ANSWERS_FILE" ]]; then
 fi
 
 src_path="$(awk -F"'" '/^_src_path:/ {print $2; exit}' "$ANSWERS_FILE")"
+commit_ref="$(awk -F"'" '/^_commit:/ {print $2; exit}' "$ANSWERS_FILE")"
+default_branch="$(awk -F"'" '/^default_branch:/ {print $2; exit}' "$ANSWERS_FILE")"
+template_source_url="$(awk -F"'" '/^template_source_url:/ {print $2; exit}' "$ANSWERS_FILE")"
 
-if [[ -z "$src_path" ]]; then
+if [[ -n "$template_source_url" ]]; then
+  python3 - "$ANSWERS_FILE" "$template_source_url" <<'PY'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+source = sys.argv[2]
+lines = path.read_text().splitlines()
+for i, line in enumerate(lines):
+    if line.startswith("_src_path: "):
+        escaped = source.replace("'", "''")
+        lines[i] = f"_src_path: '{escaped}'"
+        break
+path.write_text("\n".join(lines) + "\n")
+PY
+  exit 0
+fi
+
+if [[ -z "$src_path" || -z "$commit_ref" || -z "$default_branch" ]]; then
   exit 0
 fi
 
@@ -18,7 +39,10 @@ case "$src_path" in
   /*|./*|../*)
     if [[ -d "$src_path/.git" ]] || git -C "$src_path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
       remote_url="$(git -C "$src_path" remote get-url origin 2>/dev/null || true)"
-      if [[ -n "$remote_url" ]]; then
+      tracking_ref="origin/$default_branch"
+      if [[ -n "$remote_url" ]] \
+        && git -C "$src_path" rev-parse --verify "$tracking_ref" >/dev/null 2>&1 \
+        && git -C "$src_path" merge-base --is-ancestor "$commit_ref" "$tracking_ref" >/dev/null 2>&1; then
         python3 - "$ANSWERS_FILE" "$remote_url" <<'PY'
 import pathlib
 import sys
