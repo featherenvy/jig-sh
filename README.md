@@ -33,7 +33,14 @@ Render the kit into an existing repository:
 uvx --from copier copier copy --trust /path/to/agentic-rust-kit /path/to/target-repo
 ```
 
-Or update a repo that already uses the kit:
+If you edit `.agentic-kit.yaml` and want the repo to re-render from those answers:
+
+```sh
+cd /path/to/target-repo
+uvx --from copier copier recopy --trust --defaults --answers-file .agentic-kit.yaml
+```
+
+To pull a newer version of the template while keeping the stored answers:
 
 ```sh
 cd /path/to/target-repo
@@ -43,7 +50,7 @@ uvx --from copier copier update --trust --defaults --answers-file .agentic-kit.y
 The generated repo uses `.agentic-kit.yaml` as both:
 
 - the public repo-facing config
-- the `copier` answers file used by `copier update`
+- the `copier` answers file used by `copier recopy` and `copier update`
 
 When the template is rendered from a local checkout, the post-copy normalization step will try to replace a local `_src_path` with the template repo's `origin` remote URL. If the template checkout has no `origin` remote, `_src_path` remains local and update remains machine-local.
 

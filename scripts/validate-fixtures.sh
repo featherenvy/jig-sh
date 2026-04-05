@@ -143,7 +143,7 @@ validate_backend_fixture() {
     perl -0pi -e "s/default_branch: 'main'/default_branch: 'dev'/" .agentic-kit.yaml
     git add .agentic-kit.yaml
     git commit -m "change answers" >/dev/null
-    uvx --from copier copier update --trust --defaults --answers-file .agentic-kit.yaml >/dev/null
+    uvx --from copier copier recopy --trust --defaults --answers-file .agentic-kit.yaml >/dev/null
     grep -q '^DEFAULT_BRANCH ?= dev$' Makefile
     if [[ -f .github/workflows/webapp-checks.yml ]]; then
       rg -q "No web apps configured" .github/workflows/webapp-checks.yml

@@ -16,6 +16,12 @@ For later template updates:
 uvx --from copier copier update --trust --defaults --answers-file .agentic-kit.yaml
 ```
 
+After editing `.agentic-kit.yaml`, re-render the repo with:
+
+```sh
+uvx --from copier copier recopy --trust --defaults --answers-file .agentic-kit.yaml
+```
+
 ## What To Keep Project-Owned
 
 - application code

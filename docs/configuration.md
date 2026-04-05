@@ -2,7 +2,15 @@
 
 This file is the supported configuration surface for downstream repos and must be committed alongside the generated template output.
 
-`.agentic-kit.yaml` is also the `copier` answers file. Run updates with:
+`.agentic-kit.yaml` is also the `copier` answers file.
+
+After changing values in `.agentic-kit.yaml`, re-render with:
+
+```sh
+uvx --from copier copier recopy --trust --defaults --answers-file .agentic-kit.yaml
+```
+
+To move onto a newer version of the template while keeping the stored answers, run:
 
 ```sh
 uvx --from copier copier update --trust --defaults --answers-file .agentic-kit.yaml
