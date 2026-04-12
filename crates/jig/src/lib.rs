@@ -1,5 +1,5 @@
-mod cli;
 mod bootstrap;
+mod cli;
 mod context;
 mod git_receipts;
 mod mcp;

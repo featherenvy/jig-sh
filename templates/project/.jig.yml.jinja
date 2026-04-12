@@ -1,5 +1,7 @@
 _commit: '<<[ _copier_conf.vcs_ref_hash | default(_copier_answers._commit | default(""), true) | replace("'", "''") ]>>'
 _src_path: '<<[ _copier_answers._src_path | replace("'", "''") ]>>'
+_template_mode: '<<[ _copier_answers._template_mode | default("", true) | replace("'", "''") ]>>'
+_template_local_path: '<<[ _copier_answers._template_local_path | default("", true) | replace("'", "''") ]>>'
 repo_name: '<<[ repo_name | replace("'", "''") ]>>'
 default_branch: '<<[ default_branch | replace("'", "''") ]>>'
 ci_github_runner: '<<[ ci_github_runner | replace("'", "''") ]>>'

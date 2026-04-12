@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context, Result, bail};
-use clap::Args;
+use clap::{Args, ValueEnum};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use serde_yaml::{Mapping, Value as YamlValue};
@@ -23,6 +23,9 @@ const SQLX_PRUNED_TASK_PATHS: &[&str] = &[
     "scripts/check-sqlx-unchecked-non-test.sh",
     "scripts/generate-sqlx-unchecked-queries-todo.sh",
 ];
+const TEMPLATE_MODE_KEY: &str = "_template_mode";
+const TEMPLATE_LOCAL_PATH_KEY: &str = "_template_local_path";
+const TEMPLATE_CACHE_RELATIVE_PATH: &str = ".agent/.cache/template-source";
 
 #[derive(Debug, Args, Clone, Default)]
 pub struct AnswerOpts {
@@ -73,6 +76,8 @@ pub struct InitOpts {
     pub path: PathBuf,
     #[arg(long)]
     pub template: String,
+    #[arg(long, value_enum)]
+    pub template_mode: Option<TemplateMode>,
     #[arg(long)]
     pub vcs_ref: Option<String>,
     #[arg(long)]
@@ -91,6 +96,8 @@ pub struct AdoptOpts {
     pub path: PathBuf,
     #[arg(long)]
     pub template: String,
+    #[arg(long, value_enum)]
+    pub template_mode: Option<TemplateMode>,
     #[arg(long)]
     pub vcs_ref: Option<String>,
     #[arg(long)]
@@ -108,6 +115,10 @@ pub struct UpdateOpts {
     #[arg(default_value = ".")]
     pub path: PathBuf,
     #[arg(long)]
+    pub template: Option<String>,
+    #[arg(long, value_enum)]
+    pub template_mode: Option<TemplateMode>,
+    #[arg(long)]
     pub recopy: bool,
     #[arg(long)]
     pub vcs_ref: Option<String>,
@@ -122,6 +133,22 @@ pub struct FrontendApp {
     pub name: String,
     pub dir: String,
     pub coverage_threshold: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ValueEnum)]
+#[serde(rename_all = "kebab-case")]
+pub enum TemplateMode {
+    Committed,
+    WorkingTree,
+}
+
+impl TemplateMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Committed => "committed",
+            Self::WorkingTree => "working-tree",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -147,6 +174,26 @@ struct CopierCommandSpec {
     args: Vec<String>,
 }
 
+#[derive(Debug, Clone, Default)]
+struct PrivateAnswerOverrides {
+    template_mode: Option<TemplateMode>,
+    template_local_path: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct PreparedTemplateSource {
+    copier_template: String,
+    vcs_ref: Option<String>,
+    private_answers: PrivateAnswerOverrides,
+}
+
+#[derive(Debug, Clone)]
+struct StoredTemplateState {
+    src_path: String,
+    template_mode: Option<TemplateMode>,
+    template_local_path: Option<String>,
+}
+
 struct StagedRender {
     _root: TempDir,
     destination: PathBuf,
@@ -158,11 +205,18 @@ pub fn run_init(opts: InitOpts) -> Result<Value> {
     let destination = absolute_path(&opts.path)?;
     validate_init_destination(&destination, opts.force)?;
     let interactive = !(opts.defaults || opts.no_input);
-
-    let seed_answers = TempAnswersFile::write_seed(&opts.answers)?;
-    let staged = stage_render(
+    let template = prepare_template_source(
         &opts.template,
+        opts.template_mode,
         opts.vcs_ref.as_deref(),
+        &destination,
+        false,
+    )?;
+
+    let seed_answers = TempAnswersFile::write_seed(&opts.answers, &template.private_answers)?;
+    let staged = stage_render(
+        &template.copier_template,
+        template.vcs_ref.as_deref(),
         seed_answers.as_ref().map(|file| file.path()),
         None,
         opts.defaults || opts.no_input,
@@ -170,7 +224,7 @@ pub fn run_init(opts: InitOpts) -> Result<Value> {
     )?;
     run_copier(
         build_copy_spec(
-            &opts.template,
+            &template.copier_template,
             &destination,
             Some(&staged.answers_path),
             staged.resolved_vcs_ref.as_deref(),
@@ -182,6 +236,14 @@ pub fn run_init(opts: InitOpts) -> Result<Value> {
         None,
         false,
     )?;
+    rewrite_private_template_answers(
+        &destination.join(ANSWERS_FILE),
+        &PreparedTemplateSource {
+            copier_template: template.copier_template.clone(),
+            vcs_ref: staged.resolved_vcs_ref.clone(),
+            private_answers: template.private_answers.clone(),
+        },
+    )?;
 
     let default_branch = read_default_branch(&staged.answers_path)?;
     let git_initialized = init_git_repo(&destination, &default_branch)?;
@@ -190,7 +252,7 @@ pub fn run_init(opts: InitOpts) -> Result<Value> {
         "ok": true,
         "command": "init",
         "copier_mode": "copy",
-        "template": opts.template,
+        "template": template.copier_template,
         "destination": destination.display().to_string(),
         "answers_file": ANSWERS_FILE,
         "git_initialized": git_initialized,
@@ -201,11 +263,18 @@ pub fn run_adopt(opts: AdoptOpts) -> Result<Value> {
     let destination = absolute_path(&opts.path)?;
     validate_adopt_destination(&destination)?;
     let interactive = !(opts.defaults || opts.no_input);
-
-    let seed_answers = TempAnswersFile::write_seed(&opts.answers)?;
-    let staged = stage_render(
+    let template = prepare_template_source(
         &opts.template,
+        opts.template_mode,
         opts.vcs_ref.as_deref(),
+        &destination,
+        false,
+    )?;
+
+    let seed_answers = TempAnswersFile::write_seed(&opts.answers, &template.private_answers)?;
+    let staged = stage_render(
+        &template.copier_template,
+        template.vcs_ref.as_deref(),
         seed_answers.as_ref().map(|file| file.path()),
         Some(&destination),
         opts.defaults || opts.no_input,
@@ -225,7 +294,7 @@ pub fn run_adopt(opts: AdoptOpts) -> Result<Value> {
 
     run_copier(
         build_copy_spec(
-            &opts.template,
+            &template.copier_template,
             &destination,
             Some(&staged.answers_path),
             staged.resolved_vcs_ref.as_deref(),
@@ -237,12 +306,20 @@ pub fn run_adopt(opts: AdoptOpts) -> Result<Value> {
         None,
         false,
     )?;
+    rewrite_private_template_answers(
+        &destination.join(ANSWERS_FILE),
+        &PreparedTemplateSource {
+            copier_template: template.copier_template.clone(),
+            vcs_ref: staged.resolved_vcs_ref.clone(),
+            private_answers: template.private_answers.clone(),
+        },
+    )?;
 
     Ok(json!({
         "ok": true,
         "command": "adopt",
         "copier_mode": "copy",
-        "template": opts.template,
+        "template": template.copier_template,
         "destination": destination.display().to_string(),
         "answers_file": ANSWERS_FILE,
         "git_initialized": false,
@@ -257,17 +334,63 @@ pub fn run_update(opts: UpdateOpts) -> Result<Value> {
     } else {
         CopierMode::Update
     };
+    let answers_path = destination.join(ANSWERS_FILE);
+    let stored = read_stored_template_state(&answers_path)?;
+    let mut update_template = None;
+    let mut answers_postwrite = None;
+
+    if opts.template.is_some() || opts.template_mode.is_some() {
+        let template_arg = opts.template.as_deref().unwrap_or(&stored.src_path);
+        let prepared = prepare_template_source(
+            template_arg,
+            opts.template_mode.or(stored.template_mode),
+            opts.vcs_ref.as_deref(),
+            &destination,
+            true,
+        )?;
+        if !stored.src_path.is_empty() && prepared.copier_template != stored.src_path {
+            bail!(
+                "jig update cannot switch template source paths in-place. Re-run with the existing source path, or re-adopt the repo from the new template source."
+            );
+        }
+        update_template = Some(prepared);
+        answers_postwrite = update_template.clone();
+    } else {
+        if stored.template_mode == Some(TemplateMode::WorkingTree) {
+            let local_path = stored.template_local_path.as_deref().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Missing {TEMPLATE_LOCAL_PATH_KEY} in {} for working-tree template mode",
+                    answers_path.display()
+                )
+            })?;
+            let prepared = prepare_template_source(
+                local_path,
+                Some(TemplateMode::WorkingTree),
+                None,
+                &destination,
+                true,
+            )?;
+            update_template = Some(prepared);
+            answers_postwrite = update_template.clone();
+        }
+    }
 
     run_copier(
         build_update_spec(
             mode,
             &destination,
-            opts.vcs_ref.as_deref(),
+            update_template
+                .as_ref()
+                .and_then(|prepared| prepared.vcs_ref.as_deref())
+                .or(opts.vcs_ref.as_deref()),
             opts.defaults || opts.no_input,
         ),
         Some(&destination),
         !(opts.defaults || opts.no_input),
     )?;
+    if let Some(prepared) = answers_postwrite {
+        rewrite_private_template_answers(&answers_path, &prepared)?;
+    }
 
     Ok(json!({
         "ok": true,
@@ -277,6 +400,390 @@ pub fn run_update(opts: UpdateOpts) -> Result<Value> {
         "answers_file": ANSWERS_FILE,
         "git_initialized": false,
     }))
+}
+
+fn prepare_template_source(
+    template: &str,
+    template_mode: Option<TemplateMode>,
+    vcs_ref: Option<&str>,
+    destination: &Path,
+    update_existing: bool,
+) -> Result<PreparedTemplateSource> {
+    if is_remote_template_source(template) {
+        if template_mode.is_some() {
+            bail!("--template-mode only applies to local git template paths.");
+        }
+        return Ok(PreparedTemplateSource {
+            copier_template: template.to_string(),
+            vcs_ref: vcs_ref.map(str::to_string),
+            private_answers: PrivateAnswerOverrides::default(),
+        });
+    }
+
+    let local_template = absolute_path(Path::new(template))?;
+    if !local_template.is_dir() {
+        bail!(
+            "Template path is not a directory: {}",
+            local_template.display()
+        );
+    }
+
+    if !local_template.join("copier.yml").exists() {
+        bail!(
+            "Template path does not contain copier.yml: {}",
+            local_template.display()
+        );
+    }
+
+    if !is_git_work_tree(&local_template) {
+        if template_mode.is_some() {
+            bail!(
+                "Local template mode requires a git working tree: {}",
+                local_template.display()
+            );
+        }
+        return Ok(PreparedTemplateSource {
+            copier_template: local_template.display().to_string(),
+            vcs_ref: vcs_ref.map(str::to_string),
+            private_answers: PrivateAnswerOverrides::default(),
+        });
+    }
+
+    let mode = template_mode.ok_or_else(|| {
+        anyhow::anyhow!(
+            "Local git template paths require --template-mode committed or --template-mode working-tree.\n\
+             Example: jig adopt . --template {} --template-mode working-tree",
+            local_template.display()
+        )
+    })?;
+
+    match mode {
+        TemplateMode::Committed => prepare_committed_template_source(&local_template, vcs_ref),
+        TemplateMode::WorkingTree => {
+            prepare_working_tree_template_source(&local_template, destination, update_existing)
+        }
+    }
+}
+
+fn prepare_committed_template_source(
+    template_root: &Path,
+    vcs_ref: Option<&str>,
+) -> Result<PreparedTemplateSource> {
+    ensure_clean_git_work_tree(template_root)?;
+    let resolved_vcs_ref = match vcs_ref {
+        Some(value) => value.to_string(),
+        None => git_stdout(template_root, ["rev-parse", "HEAD"])?,
+    };
+
+    Ok(PreparedTemplateSource {
+        copier_template: template_root.display().to_string(),
+        vcs_ref: Some(resolved_vcs_ref),
+        private_answers: PrivateAnswerOverrides {
+            template_mode: Some(TemplateMode::Committed),
+            template_local_path: Some(template_root.display().to_string()),
+        },
+    })
+}
+
+fn prepare_working_tree_template_source(
+    template_root: &Path,
+    destination: &Path,
+    update_existing: bool,
+) -> Result<PreparedTemplateSource> {
+    let snapshot_root = template_cache_root(destination);
+    let snapshot_commit =
+        refresh_template_snapshot(template_root, &snapshot_root, update_existing)?;
+
+    Ok(PreparedTemplateSource {
+        copier_template: snapshot_root.display().to_string(),
+        vcs_ref: Some(snapshot_commit),
+        private_answers: PrivateAnswerOverrides {
+            template_mode: Some(TemplateMode::WorkingTree),
+            template_local_path: Some(template_root.display().to_string()),
+        },
+    })
+}
+
+fn rewrite_private_template_answers(
+    answers_path: &Path,
+    template: &PreparedTemplateSource,
+) -> Result<()> {
+    let mut answers = read_answers_yaml(answers_path)?;
+    answers.insert(
+        YamlValue::String("_src_path".into()),
+        YamlValue::String(template.copier_template.clone()),
+    );
+    answers.insert(
+        YamlValue::String("_commit".into()),
+        YamlValue::String(template.vcs_ref.clone().unwrap_or_default()),
+    );
+    set_optional_yaml_string(
+        &mut answers,
+        TEMPLATE_MODE_KEY,
+        template
+            .private_answers
+            .template_mode
+            .map(TemplateMode::as_str),
+    );
+    set_optional_yaml_string(
+        &mut answers,
+        TEMPLATE_LOCAL_PATH_KEY,
+        template.private_answers.template_local_path.as_deref(),
+    );
+    write_answers_yaml(answers_path, &answers)
+}
+
+fn read_stored_template_state(answers_path: &Path) -> Result<StoredTemplateState> {
+    Ok(StoredTemplateState {
+        src_path: read_optional_answer_string(answers_path, "_src_path")?.unwrap_or_default(),
+        template_mode: read_optional_answer_string(answers_path, TEMPLATE_MODE_KEY)?
+            .as_deref()
+            .map(parse_template_mode_answer)
+            .transpose()?,
+        template_local_path: read_optional_answer_string(answers_path, TEMPLATE_LOCAL_PATH_KEY)?,
+    })
+}
+
+fn parse_template_mode_answer(value: &str) -> Result<TemplateMode> {
+    match value {
+        "committed" => Ok(TemplateMode::Committed),
+        "working-tree" => Ok(TemplateMode::WorkingTree),
+        other => bail!("Unsupported template mode '{other}' in {}", ANSWERS_FILE),
+    }
+}
+
+fn template_cache_root(destination: &Path) -> PathBuf {
+    destination.join(TEMPLATE_CACHE_RELATIVE_PATH)
+}
+
+fn refresh_template_snapshot(
+    template_root: &Path,
+    snapshot_root: &Path,
+    update_existing: bool,
+) -> Result<String> {
+    fs::create_dir_all(snapshot_root)
+        .with_context(|| format!("Failed to create {}", snapshot_root.display()))?;
+    ensure_git_repo(snapshot_root)?;
+    clear_snapshot_worktree(snapshot_root)?;
+    copy_working_tree_snapshot(template_root, snapshot_root)?;
+    git(snapshot_root, ["add", "-A"])?;
+
+    let has_changes = !git_stdout(snapshot_root, ["status", "--porcelain"])?.is_empty();
+    let has_head = git_command(snapshot_root, ["rev-parse", "--verify", "HEAD"])
+        .output()
+        .is_ok_and(|output| output.status.success());
+
+    if has_changes || !has_head {
+        let message = if update_existing {
+            format!("Refresh template snapshot from {}", template_root.display())
+        } else {
+            format!("Create template snapshot from {}", template_root.display())
+        };
+        git_with_config(
+            snapshot_root,
+            [
+                "-c",
+                "user.name=jig",
+                "-c",
+                "user.email=jig@local.invalid",
+                "commit",
+                "-m",
+                &message,
+            ],
+        )?;
+    }
+
+    git_stdout(snapshot_root, ["rev-parse", "HEAD"])
+}
+
+fn ensure_git_repo(path: &Path) -> Result<()> {
+    if path.join(".git").exists() {
+        return Ok(());
+    }
+
+    let git_program = external_program(GIT_BIN_ENV, "git");
+    let output = Command::new(&git_program)
+        .current_dir(path)
+        .args(["init", "-b", "main"])
+        .output()
+        .with_context(|| format!("Failed to start {}", git_program))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    if !git_init_branch_flag_unsupported(&output) {
+        bail!(
+            "git init -b main failed.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    git(path, ["init"])?;
+    set_git_head_branch(path, &git_program, "main")
+}
+
+fn clear_snapshot_worktree(snapshot_root: &Path) -> Result<()> {
+    for entry in fs::read_dir(snapshot_root)? {
+        let entry = entry?;
+        if entry.file_name() == ".git" {
+            continue;
+        }
+        let entry_path = entry.path();
+        if entry.file_type()?.is_dir() {
+            fs::remove_dir_all(&entry_path)
+                .with_context(|| format!("Failed to remove {}", entry_path.display()))?;
+        } else {
+            fs::remove_file(&entry_path)
+                .with_context(|| format!("Failed to remove {}", entry_path.display()))?;
+        }
+    }
+    Ok(())
+}
+
+fn copy_working_tree_snapshot(template_root: &Path, snapshot_root: &Path) -> Result<()> {
+    let output = git_command(
+        template_root,
+        [
+            "ls-files",
+            "-z",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+        ],
+    )
+    .output()
+    .with_context(|| format!("Failed to start git in {}", template_root.display()))?;
+    if !output.status.success() {
+        bail!(
+            "git ls-files failed for {}\nstdout:\n{}\nstderr:\n{}",
+            template_root.display(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    for relative in output
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|entry| !entry.is_empty())
+    {
+        let relative = std::str::from_utf8(relative)
+            .with_context(|| format!("Non-UTF-8 git path under {}", template_root.display()))?;
+        let source_path = template_root.join(relative);
+        let destination_path = snapshot_root.join(relative);
+        copy_path_entry(&source_path, &destination_path)?;
+    }
+    Ok(())
+}
+
+fn copy_path_entry(source_path: &Path, destination_path: &Path) -> Result<()> {
+    if let Some(parent) = destination_path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("Failed to create {}", parent.display()))?;
+    }
+
+    let metadata = fs::symlink_metadata(source_path)
+        .with_context(|| format!("Failed to stat {}", source_path.display()))?;
+    let file_type = metadata.file_type();
+
+    if file_type.is_symlink() {
+        let target = fs::read_link(source_path)
+            .with_context(|| format!("Failed to read symlink {}", source_path.display()))?;
+        create_symlink(&target, destination_path)?;
+        return Ok(());
+    }
+
+    if file_type.is_dir() {
+        fs::create_dir_all(destination_path)
+            .with_context(|| format!("Failed to create {}", destination_path.display()))?;
+        return Ok(());
+    }
+
+    fs::copy(source_path, destination_path).with_context(|| {
+        format!(
+            "Failed to copy {} to {}",
+            source_path.display(),
+            destination_path.display()
+        )
+    })?;
+    fs::set_permissions(destination_path, metadata.permissions()).with_context(|| {
+        format!(
+            "Failed to set permissions on {}",
+            destination_path.display()
+        )
+    })?;
+    Ok(())
+}
+
+fn is_remote_template_source(template: &str) -> bool {
+    template.contains("://") || template.starts_with("git@") && template.contains(':')
+}
+
+fn is_git_work_tree(path: &Path) -> bool {
+    git_command(path, ["rev-parse", "--is-inside-work-tree"])
+        .output()
+        .is_ok_and(|output| output.status.success())
+}
+
+fn ensure_clean_git_work_tree(path: &Path) -> Result<()> {
+    let status = git_stdout(path, ["status", "--short"])?;
+    if !status.is_empty() {
+        bail!(
+            "Local committed template mode requires a clean git working tree: {}\n\
+             Commit or stash template changes, or re-run with --template-mode working-tree.",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+fn git(path: &Path, args: impl IntoIterator<Item = impl AsRef<str>>) -> Result<()> {
+    let output = git_command(path, args).output()?;
+    if !output.status.success() {
+        bail!(
+            "git command failed in {}\nstdout:\n{}\nstderr:\n{}",
+            path.display(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(())
+}
+
+fn git_stdout(path: &Path, args: impl IntoIterator<Item = impl AsRef<str>>) -> Result<String> {
+    let output = git_command(path, args).output()?;
+    if !output.status.success() {
+        bail!(
+            "git command failed in {}\nstdout:\n{}\nstderr:\n{}",
+            path.display(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn git_with_config(path: &Path, args: impl IntoIterator<Item = impl AsRef<str>>) -> Result<()> {
+    let output = git_command(path, args).output()?;
+    if !output.status.success() {
+        bail!(
+            "git command failed in {}\nstdout:\n{}\nstderr:\n{}",
+            path.display(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(())
+}
+
+fn git_command(path: &Path, args: impl IntoIterator<Item = impl AsRef<str>>) -> Command {
+    let git_program = external_program(GIT_BIN_ENV, "git");
+    let mut command = Command::new(git_program);
+    command.current_dir(path);
+    for arg in args {
+        command.arg(arg.as_ref());
+    }
+    command
 }
 
 fn stage_render(
@@ -352,6 +859,24 @@ fn read_answers_yaml(path: &Path) -> Result<Mapping> {
     yaml.as_mapping()
         .cloned()
         .ok_or_else(|| anyhow::anyhow!("Expected mapping in {}", path.display()))
+}
+
+fn write_answers_yaml(path: &Path, mapping: &Mapping) -> Result<()> {
+    let yaml = serde_yaml::to_string(&YamlValue::Mapping(mapping.clone()))
+        .with_context(|| format!("Failed to serialize {}", path.display()))?;
+    fs::write(path, yaml).with_context(|| format!("Failed to write {}", path.display()))
+}
+
+fn set_optional_yaml_string(mapping: &mut Mapping, key: &str, value: Option<&str>) {
+    let key = YamlValue::String(key.to_string());
+    match value {
+        Some(value) => {
+            mapping.insert(key, YamlValue::String(value.to_string()));
+        }
+        None => {
+            mapping.remove(&key);
+        }
+    }
 }
 
 fn parse_frontend_app(value: &str) -> Result<FrontendApp, String> {
@@ -802,10 +1327,16 @@ fn external_program(env_key: &str, fallback: &str) -> String {
 }
 
 fn absolute_path(path: &Path) -> Result<PathBuf> {
-    if path.is_absolute() {
-        Ok(path.to_path_buf())
+    let resolved = if path.is_absolute() {
+        path.to_path_buf()
     } else {
-        Ok(env::current_dir()?.join(path))
+        env::current_dir()?.join(path)
+    };
+    if resolved.exists() {
+        fs::canonicalize(&resolved)
+            .with_context(|| format!("Failed to canonicalize {}", resolved.display()))
+    } else {
+        Ok(resolved)
     }
 }
 
@@ -814,8 +1345,11 @@ struct TempAnswersFile {
 }
 
 impl TempAnswersFile {
-    fn write_seed(opts: &AnswerOpts) -> Result<Option<Self>> {
-        let value = seed_answers_yaml(opts);
+    fn write_seed(
+        opts: &AnswerOpts,
+        private_answers: &PrivateAnswerOverrides,
+    ) -> Result<Option<Self>> {
+        let value = seed_answers_yaml(opts, private_answers);
         if value.as_mapping().is_some_and(Mapping::is_empty) {
             return Ok(None);
         }
@@ -837,7 +1371,7 @@ impl Drop for TempAnswersFile {
     }
 }
 
-fn seed_answers_yaml(opts: &AnswerOpts) -> YamlValue {
+fn seed_answers_yaml(opts: &AnswerOpts, private_answers: &PrivateAnswerOverrides) -> YamlValue {
     let mut mapping = Mapping::new();
     insert_string(&mut mapping, "repo_name", opts.repo_name.as_deref());
     insert_string(
@@ -912,6 +1446,16 @@ fn seed_answers_yaml(opts: &AnswerOpts) -> YamlValue {
         &mut mapping,
         "web_package_manager",
         opts.web_package_manager.as_deref(),
+    );
+    insert_string(
+        &mut mapping,
+        TEMPLATE_MODE_KEY,
+        private_answers.template_mode.map(TemplateMode::as_str),
+    );
+    insert_string(
+        &mut mapping,
+        TEMPLATE_LOCAL_PATH_KEY,
+        private_answers.template_local_path.as_deref(),
     );
 
     if !opts.rust_crate_roots.is_empty() {
@@ -1021,6 +1565,14 @@ mod tests {
         temp
     }
 
+    fn materialize_template_git_worktree() -> TempDir {
+        let temp = materialize_template_worktree();
+        init_git_repo_for_test(temp.path());
+        git(temp.path(), ["add", "."]).unwrap();
+        git(temp.path(), ["commit", "-m", "template"]).unwrap();
+        temp
+    }
+
     #[test]
     fn parses_frontend_app_flag() {
         let app = parse_frontend_app("frontend:web:40").unwrap();
@@ -1036,17 +1588,20 @@ mod tests {
 
     #[test]
     fn seed_answers_only_serializes_provided_values() {
-        let yaml = seed_answers_yaml(&AnswerOpts {
-            repo_name: Some("demo".into()),
-            sqlx_enabled: Some(false),
-            rust_crate_roots: vec!["crates".into()],
-            frontend_apps: vec![FrontendApp {
-                name: "frontend".into(),
-                dir: "web".into(),
-                coverage_threshold: 40,
-            }],
-            ..AnswerOpts::default()
-        });
+        let yaml = seed_answers_yaml(
+            &AnswerOpts {
+                repo_name: Some("demo".into()),
+                sqlx_enabled: Some(false),
+                rust_crate_roots: vec!["crates".into()],
+                frontend_apps: vec![FrontendApp {
+                    name: "frontend".into(),
+                    dir: "web".into(),
+                    coverage_threshold: 40,
+                }],
+                ..AnswerOpts::default()
+            },
+            &PrivateAnswerOverrides::default(),
+        );
 
         let mapping = yaml.as_mapping().unwrap();
         assert_eq!(
@@ -1277,7 +1832,8 @@ mod tests {
         let destination = temp.path().join("repo");
         let output = run_init(InitOpts {
             path: destination.clone(),
-            template: "/tmp/template".into(),
+            template: "git@github.com:demo/template.git".into(),
+            template_mode: None,
             vcs_ref: None,
             force: false,
             defaults: false,
@@ -1344,7 +1900,8 @@ mod tests {
         let destination = temp.path().join("repo");
         let output = run_init(InitOpts {
             path: destination,
-            template: "/tmp/template".into(),
+            template: "git@github.com:demo/template.git".into(),
+            template_mode: None,
             vcs_ref: None,
             force: false,
             defaults: false,
@@ -1408,7 +1965,8 @@ mod tests {
 
         let error = run_init(InitOpts {
             path: temp.path().join("repo"),
-            template: "/tmp/template".into(),
+            template: "git@github.com:demo/template.git".into(),
+            template_mode: None,
             vcs_ref: None,
             force: false,
             defaults: false,
@@ -1438,13 +1996,14 @@ mod tests {
         let _guard = lock_env();
         let temp = tempdir().unwrap();
         let repo = temp.path().join("repo");
-        let template = materialize_template_worktree();
+        let template = materialize_template_git_worktree();
         fs::create_dir_all(repo.join("crates/api")).unwrap();
         fs::write(repo.join("crates/api/AGENTS.md"), "crate guide").unwrap();
 
         run_adopt(AdoptOpts {
             path: repo.clone(),
             template: template.path().display().to_string(),
+            template_mode: Some(TemplateMode::Committed),
             vcs_ref: None,
             force: false,
             defaults: true,
@@ -1475,13 +2034,14 @@ mod tests {
         let _guard = lock_env();
         let temp = tempdir().unwrap();
         let repo = temp.path().join("repo");
-        let template = materialize_template_worktree();
+        let template = materialize_template_git_worktree();
         fs::create_dir_all(repo.join("crates/api")).unwrap();
         fs::write(repo.join("crates/api/AGENTS.md"), "crate guide").unwrap();
 
         run_adopt(AdoptOpts {
             path: repo.clone(),
             template: template.path().display().to_string(),
+            template_mode: Some(TemplateMode::Committed),
             vcs_ref: None,
             force: false,
             defaults: true,
@@ -1514,5 +2074,155 @@ mod tests {
         );
         let answers = fs::read_to_string(repo.join(".jig.yml")).unwrap();
         assert!(answers.contains("sqlx_enabled: true"));
+    }
+
+    fn init_git_repo_for_test(path: &Path) {
+        git(path, ["init", "-b", "main"]).unwrap();
+        git(path, ["config", "user.name", "Fixture"]).unwrap();
+        git(path, ["config", "user.email", "fixture@example.com"]).unwrap();
+    }
+
+    #[test]
+    fn adopt_requires_template_mode_for_local_git_templates() {
+        let temp = tempdir().unwrap();
+        let repo = temp.path().join("repo");
+        let template = materialize_template_git_worktree();
+        fs::create_dir_all(repo.join("crates/api")).unwrap();
+        fs::write(repo.join("crates/api/AGENTS.md"), "crate guide").unwrap();
+
+        let error = run_adopt(AdoptOpts {
+            path: repo,
+            template: template.path().display().to_string(),
+            template_mode: None,
+            vcs_ref: None,
+            force: false,
+            defaults: true,
+            no_input: true,
+            answers: AnswerOpts {
+                repo_name: Some("demo".into()),
+                sqlx_enabled: Some(false),
+                ..AnswerOpts::default()
+            },
+        })
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("require --template-mode"));
+    }
+
+    #[test]
+    fn adopt_committed_mode_rejects_dirty_local_template() {
+        let temp = tempdir().unwrap();
+        let repo = temp.path().join("repo");
+        let template = materialize_template_git_worktree();
+        fs::write(template.path().join("DIRTY.txt"), "dirty").unwrap();
+        fs::create_dir_all(repo.join("crates/api")).unwrap();
+        fs::write(repo.join("crates/api/AGENTS.md"), "crate guide").unwrap();
+
+        let error = run_adopt(AdoptOpts {
+            path: repo,
+            template: template.path().display().to_string(),
+            template_mode: Some(TemplateMode::Committed),
+            vcs_ref: None,
+            force: false,
+            defaults: true,
+            no_input: true,
+            answers: AnswerOpts {
+                repo_name: Some("demo".into()),
+                sqlx_enabled: Some(false),
+                ..AnswerOpts::default()
+            },
+        })
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("clean git working tree"));
+    }
+
+    #[test]
+    fn adopt_working_tree_mode_renders_uncommitted_template_changes() {
+        let temp = tempdir().unwrap();
+        let repo = temp.path().join("repo");
+        let template = materialize_template_git_worktree();
+        fs::create_dir_all(repo.join("crates/api")).unwrap();
+        fs::write(repo.join("crates/api/AGENTS.md"), "crate guide").unwrap();
+        fs::write(
+            template.path().join("templates/project/AGENTS.md.jinja"),
+            "# Working Tree Marker\n",
+        )
+        .unwrap();
+
+        run_adopt(AdoptOpts {
+            path: repo.clone(),
+            template: template.path().display().to_string(),
+            template_mode: Some(TemplateMode::WorkingTree),
+            vcs_ref: None,
+            force: false,
+            defaults: true,
+            no_input: true,
+            answers: AnswerOpts {
+                repo_name: Some("demo".into()),
+                sqlx_enabled: Some(false),
+                ..AnswerOpts::default()
+            },
+        })
+        .unwrap();
+
+        let root_guide = fs::read_to_string(repo.join("AGENTS.md")).unwrap();
+        assert!(root_guide.contains("Working Tree Marker"));
+        let answers = fs::read_to_string(repo.join(".jig.yml")).unwrap();
+        assert!(answers.contains("_template_mode: working-tree"));
+        assert!(answers.contains("_template_local_path:"));
+        assert!(repo.join(".agent/.cache/template-source/.git").exists());
+    }
+
+    #[test]
+    fn update_working_tree_mode_refreshes_template_snapshot() {
+        let temp = tempdir().unwrap();
+        let repo = temp.path().join("repo");
+        let template = materialize_template_git_worktree();
+        fs::create_dir_all(repo.join("crates/api")).unwrap();
+        fs::write(repo.join("crates/api/AGENTS.md"), "crate guide").unwrap();
+
+        run_adopt(AdoptOpts {
+            path: repo.clone(),
+            template: template.path().display().to_string(),
+            template_mode: Some(TemplateMode::WorkingTree),
+            vcs_ref: None,
+            force: false,
+            defaults: true,
+            no_input: true,
+            answers: AnswerOpts {
+                repo_name: Some("demo".into()),
+                sqlx_enabled: Some(false),
+                ..AnswerOpts::default()
+            },
+        })
+        .unwrap();
+        init_git_repo_for_test(&repo);
+        git(&repo, ["add", "."]).unwrap();
+        git(&repo, ["commit", "-m", "adopt"]).unwrap();
+
+        fs::write(
+            template.path().join("templates/project/AGENTS.md.jinja"),
+            "# Updated Working Tree Marker\n",
+        )
+        .unwrap();
+
+        run_update(UpdateOpts {
+            path: repo.clone(),
+            template: None,
+            template_mode: None,
+            recopy: false,
+            vcs_ref: None,
+            defaults: true,
+            no_input: true,
+        })
+        .unwrap();
+
+        let root_guide = fs::read_to_string(repo.join("AGENTS.md")).unwrap();
+        assert!(root_guide.contains("Updated Working Tree Marker"));
+        let answers = fs::read_to_string(repo.join(".jig.yml")).unwrap();
+        assert!(answers.contains("_template_mode: working-tree"));
     }
 }

@@ -181,6 +181,8 @@ mod tests {
             "/tmp/demo",
             "--template",
             "/tmp/template",
+            "--template-mode",
+            "working-tree",
             "--repo-name",
             "demo",
             "--rust-migration-dir",
@@ -195,7 +197,12 @@ mod tests {
         .unwrap();
 
         match cli.command {
-            CommandKind::Init(bootstrap::InitOpts { answers, .. }) => {
+            CommandKind::Init(bootstrap::InitOpts {
+                template_mode,
+                answers,
+                ..
+            }) => {
+                assert_eq!(template_mode, Some(bootstrap::TemplateMode::WorkingTree));
                 assert_eq!(answers.rust_crate_roots, vec!["crates", "libs"]);
                 assert_eq!(answers.frontend_apps.len(), 1);
             }
@@ -205,10 +212,28 @@ mod tests {
 
     #[test]
     fn parses_update_recopy_flag() {
-        let cli = Cli::try_parse_from(["jig", "update", "--recopy"]).unwrap();
+        let cli = Cli::try_parse_from([
+            "jig",
+            "update",
+            "--recopy",
+            "--template",
+            "/tmp/template",
+            "--template-mode",
+            "committed",
+        ])
+        .unwrap();
 
         match cli.command {
-            CommandKind::Update(bootstrap::UpdateOpts { recopy, .. }) => assert!(recopy),
+            CommandKind::Update(bootstrap::UpdateOpts {
+                recopy,
+                template,
+                template_mode,
+                ..
+            }) => {
+                assert!(recopy);
+                assert_eq!(template.as_deref(), Some("/tmp/template"));
+                assert_eq!(template_mode, Some(bootstrap::TemplateMode::Committed));
+            }
             other => panic!("expected update command, got {other:?}"),
         }
     }

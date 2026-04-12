@@ -16,7 +16,7 @@ To move onto a newer version of the template while keeping the stored answers, r
 jig update
 ```
 
-The file contains both public settings and the private `_src_path` / `_commit` fields that `copier update` requires.
+The file contains both public settings and the private `_src_path` / `_commit` fields that `copier update` requires. Local-template repos may also store `_template_mode` and `_template_local_path` for `jig`'s local snapshot handling.
 
 `jig` shells out to Copier via `uvx --from copier copier ...`. Direct Copier usage remains available if needed:
 
@@ -24,6 +24,11 @@ The file contains both public settings and the private `_src_path` / `_commit` f
 uvx --from copier copier recopy --trust --defaults --overwrite --answers-file .jig.yml
 uvx --from copier copier update --trust --answers-file .jig.yml
 ```
+
+For local git template checkouts, `jig init` / `jig adopt` require:
+
+- `--template-mode committed`: use the clean local `HEAD`
+- `--template-mode working-tree`: snapshot the exact current checkout, including uncommitted changes
 
 ## Required Keys
 
@@ -142,3 +147,5 @@ When `template_source_url` is set, the generated normalization step validates it
 If any of those checks fail, `copier` exits instead of saving an unusable remote template source into `.jig.yml`.
 
 If `template_source_url` is blank, the post-copy normalization step may rewrite a local `_src_path` to the template repo's `origin` URL, but only when the current `_commit` is already reachable from the local `origin/<default_branch>` tracking ref. Otherwise it leaves the local path unchanged to avoid recording an unreachable remote commit.
+
+When `_template_mode` is `working-tree`, `jig` stores a repo-local git snapshot under `.agent/.cache/template-source` and skips remote rewrite. That keeps the adopted repo updateable from the exact local template checkout until you intentionally relink it to a committed source.

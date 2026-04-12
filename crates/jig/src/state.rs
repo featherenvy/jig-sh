@@ -11,8 +11,7 @@ use serde_json::{Value, json};
 use ulid::Ulid;
 
 use crate::cli::{
-    DecisionAddOpts, PlanAppendOpts, PlanCloseOpts, PlanOpenOpts, ReceiptsListOpts,
-    SessionEndOpts,
+    DecisionAddOpts, PlanAppendOpts, PlanCloseOpts, PlanOpenOpts, ReceiptsListOpts, SessionEndOpts,
 };
 use crate::context::RepoContext;
 use crate::git_receipts::{DiffStat, collect_git_receipt_metadata};
