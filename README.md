@@ -1,11 +1,12 @@
-# agentic-rust-kit
+# jig.sh
 
-Reusable agentic-development kit for Rust application repos with a Tokio/Axum/SQLx/Postgres backend and optional web apps.
+Reusable agentic-development kit for Rust application repos, including SQLx/Postgres backends and tooling-only Rust repos, with optional web apps.
 
 The kit extracts the durable parts of the OneSales workflow:
 
 - agent-facing repo guidance
 - a stable top-level `make` contract
+- a typed `jig` runtime over that contract
 - repo policy scripts
 - GitHub Actions workflows
 - template-based sync via `copier`
@@ -14,55 +15,94 @@ The kit extracts the durable parts of the OneSales workflow:
 
 The template renders these repo-owned assets into a consumer repository:
 
-- `.agentic-kit.yaml`
+- `.jig.yml`
+- `.mcp.json`
 - `AGENTS.md`
 - `agent-map.md`
 - `.agent/PLANS.md`
+- `.agent/jig-contract.json`
 - `Makefile`
 - `scripts/*.sh`
 - `scripts/enforce-coverage.js`
 - `.github/workflows/*.yml`
 
-The template does not try to generate your application code, crate-level `AGENTS.md` files, or a schema dump implementation. Those remain project-owned.
+Generated repos keep `make` as the execution backend, but they also get a `scripts/jig` launcher, MCP wiring, and append-only repo memory under `.agent/state/*.jsonl`.
+
+The template does not try to generate your application code, crate-level `AGENTS.md` files, or a schema dump implementation. Those remain project-owned. SQLx and migration-specific contract pieces are optional via `sqlx_enabled`.
 
 ## Quick Start
 
-Render the kit into an existing repository:
+Bootstrap a new repo from the template:
 
 ```sh
-uvx --from copier copier copy --trust /path/to/agentic-rust-kit /path/to/target-repo
+jig init /path/to/target-repo \
+  --template /path/to/jig-sh \
+  --repo-name target-repo \
+  --rust-migration-dir migrations
 ```
 
-If you edit `.agentic-kit.yaml` and want the repo to re-render from those answers:
+For a tooling-only repo with no SQLx or migrations:
+
+```sh
+jig init /path/to/target-repo \
+  --template /path/to/jig-sh \
+  --repo-name target-repo \
+  --sqlx-enabled false
+```
+
+Adopt the template in an existing repository:
 
 ```sh
 cd /path/to/target-repo
-uvx --from copier copier recopy --trust --defaults --overwrite --answers-file .agentic-kit.yaml
+jig adopt . \
+  --template /path/to/jig-sh \
+  --repo-name target-repo \
+  --rust-migration-dir migrations
 ```
 
-To pull a newer version of the template while keeping the stored answers:
+For a tooling-only repo, replace the migration flag with `--sqlx-enabled false`.
+
+Update an adopted repo while preserving local diffs when possible:
 
 ```sh
 cd /path/to/target-repo
-uvx --from copier copier update --trust --defaults --answers-file .agentic-kit.yaml
+jig update
 ```
 
-The generated repo uses `.agentic-kit.yaml` as both:
+If you edit `.jig.yml` and want a full re-render from the stored answers:
+
+```sh
+cd /path/to/target-repo
+jig update --recopy
+```
+
+The generated repo uses `.jig.yml` as both:
 
 - the public repo-facing config
-- the `copier` answers file used by `copier recopy` and `copier update`
+- the `copier` answers file used under the hood by `jig update` and `jig update --recopy`
 
-Set `template_source_url` in `.agentic-kit.yaml` if you want portable recopy/update behavior across machines.
+`jig` shells out to `uvx --from copier copier ...`, so direct Copier usage remains available as a fallback:
+
+```sh
+uvx --from copier copier copy --trust /path/to/jig-sh /path/to/target-repo
+uvx --from copier copier update --trust --answers-file .jig.yml
+uvx --from copier copier recopy --trust --defaults --overwrite --answers-file .jig.yml
+```
+
+Set `template_source_url` in `.jig.yml` if you want portable recopy/update behavior across machines. The value is validated before `_src_path` is rewritten: it must be fetchable with git, and the current `_commit` must already be reachable from `refs/heads/<default_branch>` at that source.
 
 Without `template_source_url`, the post-copy normalization step only rewrites `_src_path` from a local checkout path to the template repo's `origin` URL when the current `_commit` is already contained in the local `origin/<default_branch>` tracking ref. Otherwise it keeps the local path to avoid stamping an unreachable remote commit.
 
 ## Required Repo Conventions
 
-Backend repos are expected to use:
+All generated repos are expected to use:
 
 - Cargo workspaces
 - `cargo fmt`
 - `cargo clippy`
+
+When `sqlx_enabled` is `true`, repos are also expected to use:
+
 - SQLx workspace metadata in a shared directory such as `.sqlx/`
 - forward-only migration additions
 
@@ -75,9 +115,12 @@ Optional web apps are expected to expose these package scripts in each configure
 
 The default workflow assumes Bun for package installation and script execution.
 
+Generated repos also expect Rust to be available for `scripts/install-jig.sh`, which installs the exact pinned `jig` version when the launcher is first used.
+
 ## Layout
 
 - `copier.yml`: template configuration and questions
+- `crates/jig/`: publishable `jig` runtime and MCP server
 - `templates/project/`: files rendered into downstream repos
 - `docs/`: config and adoption guidance
 - `examples/`: example answer files

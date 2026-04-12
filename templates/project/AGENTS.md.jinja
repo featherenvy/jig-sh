@@ -1,6 +1,6 @@
 # Repository Guidelines
 
-This repository uses the shared `agentic-rust-kit` workflow. Keep repo-local business rules and ownership guidance in crate-level guides; keep generic agent workflow and repo policy here.
+This repository uses the shared `jig.sh` workflow. Keep repo-local business rules and ownership guidance in crate-level guides; keep generic agent workflow and repo policy here.
 
 ## Start Here
 
@@ -8,20 +8,28 @@ This repository uses the shared `agentic-rust-kit` workflow. Keep repo-local bus
 - Open [agent-map.md](./agent-map.md) before backend work.
 - Read the nearest crate-level `AGENTS.md` before changing a crate.
 - Use `.agent/PLANS.md` when writing an ExecPlan for a complex feature or refactor.
+- Use `scripts/jig` for the typed repo contract and `scripts/jig mcp` for MCP clients.
+- Treat `.agent/state/*.jsonl` as append-only repo memory.
 
 ## Compatibility And Cutovers
 
 - Prefer direct cutovers only for internal code-only changes that can ship in one coordinated deploy.
 - Preserve compatibility or stage rollouts for persisted database state, queued job types, public API contracts, bookmarked routes, webhook boundaries, or source-of-truth moves that can straddle deploys.
+[% if sqlx_enabled %]
 - Never overwrite an existing database migration; add a new forward-only migration instead.
+[% endif %]
 
 ## Backend Defaults
 
 - Treat [% for root in rust_crate_roots %]`<<[ root ]>>`[% if not loop.last %], [% endif %][% endfor %] as Rust crate roots.
+[% if sqlx_enabled %]
 - SQL migrations live under `<<[ rust_migration_dir ]>>`.
 - SQLx metadata is committed in `<<[ rust_sqlx_metadata_dir ]>>`.
+[% endif %]
 - Keep transport logic thin and business logic in the owning crate.
+[% if sqlx_enabled %]
 - Keep transaction boundaries explicit and deterministic.
+[% endif %]
 
 ## Frontend Defaults
 
@@ -34,7 +42,7 @@ Configured web apps:
 
 Each configured app is expected to support `lint`, `typecheck`, `build:bundle`, and `test:coverage`.
 [% else -%]
-No web apps are configured in `.agentic-kit.yaml`.
+No web apps are configured in `.jig.yml`.
 [% endif %]
 
 ## Preferred Commands
@@ -44,19 +52,32 @@ No web apps are configured in `.agentic-kit.yaml`.
 - `make test`
 - `make fmt-check`
 - `make clippy`
+[% if sqlx_enabled %]
 - `make sqlx-check`
+[% endif %]
 - `make schema-check`
+[% if schema_dump_enabled %]
+- `make schema-dump`
+[% endif %]
+[% if sqlx_enabled %]
+- `make migration-add NAME=...`
+[% endif %]
+- `make contract-check`
 - `make check-agent-map`
 - `make check-agent-guides`
 - `make check-rust-file-loc`
+[% if sqlx_enabled %]
 - `make check-sqlx-unchecked-non-test`
+[% endif %]
 - `make ci`
 
 ## Done Means
 
 - Run the relevant local verification for the area you changed.
 - For backend changes, finish with `make test`.
+[% if sqlx_enabled %]
 - For SQLx or migration changes, run `make sqlx-check`.
+[% endif %]
 [% if schema_dump_enabled %]
 - For schema-doc-enabled repos, run `make schema-check`.
 [% endif %]

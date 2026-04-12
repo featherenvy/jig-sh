@@ -60,8 +60,10 @@ jobs:
   clippy:
     name: make clippy
     runs-on: <<[ ci_github_runner ]>>
+[% if sqlx_enabled %]
     env:
       SQLX_OFFLINE: "true"
+[% endif %]
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -79,8 +81,10 @@ jobs:
   test:
     name: make test-rust-locked
     runs-on: <<[ ci_github_runner ]>>
+[% if sqlx_enabled %]
     env:
       SQLX_OFFLINE: "true"
+[% endif %]
     steps:
       - name: Checkout
         uses: actions/checkout@v6

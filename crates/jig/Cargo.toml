@@ -1,0 +1,24 @@
+[package]
+name = "jig-sh"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "jig"
+
+[[bin]]
+name = "jig"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+fs4.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+tempfile.workspace = true
+ulid.workspace = true
+
+[dev-dependencies]

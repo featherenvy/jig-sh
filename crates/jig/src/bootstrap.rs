@@ -1,0 +1,1518 @@
+use std::collections::BTreeSet;
+use std::env;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use anyhow::{Context, Result, bail};
+use clap::Args;
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use serde_yaml::{Mapping, Value as YamlValue};
+use tempfile::TempDir;
+
+const ANSWERS_FILE: &str = ".jig.yml";
+const UVX_BIN_ENV: &str = "JIG_UVX_BIN";
+const GIT_BIN_ENV: &str = "JIG_GIT_BIN";
+// Keep in sync with the current template tasks in copier.yml and the normalization/generation
+// scripts they invoke. The end-to-end adopt test below exercises the real template tasks.
+const ALWAYS_TASK_MUTATED_PATHS: &[&str] = &[".jig.yml", "agent-map.md"];
+const SQLX_PRUNED_TASK_PATHS: &[&str] = &[
+    "scripts/add-migration.sh",
+    "scripts/check-migration-immutability.sh",
+    "scripts/check-sqlx-unchecked-non-test.sh",
+    "scripts/generate-sqlx-unchecked-queries-todo.sh",
+];
+
+#[derive(Debug, Args, Clone, Default)]
+pub struct AnswerOpts {
+    #[arg(long)]
+    pub repo_name: Option<String>,
+    #[arg(long)]
+    pub default_branch: Option<String>,
+    #[arg(long)]
+    pub ci_github_runner: Option<String>,
+    #[arg(long)]
+    pub jig_version: Option<String>,
+    #[arg(long)]
+    pub template_source_url: Option<String>,
+    #[arg(long)]
+    pub sqlx_enabled: Option<bool>,
+    #[arg(long = "rust-crate-root")]
+    pub rust_crate_roots: Vec<String>,
+    #[arg(long)]
+    pub rust_migration_dir: Option<String>,
+    #[arg(long)]
+    pub rust_sqlx_metadata_dir: Option<String>,
+    #[arg(long)]
+    pub schema_dump_enabled: Option<bool>,
+    #[arg(long)]
+    pub schema_dump_command: Option<String>,
+    #[arg(long)]
+    pub migration_add_command: Option<String>,
+    #[arg(long)]
+    pub bootstrap_command: Option<String>,
+    #[arg(long)]
+    pub dev_command: Option<String>,
+    #[arg(long)]
+    pub rust_fmt_check_command: Option<String>,
+    #[arg(long)]
+    pub rust_clippy_command: Option<String>,
+    #[arg(long)]
+    pub rust_test_command: Option<String>,
+    #[arg(long)]
+    pub rust_test_locked_command: Option<String>,
+    #[arg(long)]
+    pub web_package_manager: Option<String>,
+    #[arg(long = "frontend-app", value_parser = parse_frontend_app)]
+    pub frontend_apps: Vec<FrontendApp>,
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct InitOpts {
+    pub path: PathBuf,
+    #[arg(long)]
+    pub template: String,
+    #[arg(long)]
+    pub vcs_ref: Option<String>,
+    #[arg(long)]
+    pub force: bool,
+    #[arg(long)]
+    pub defaults: bool,
+    #[arg(long)]
+    pub no_input: bool,
+    #[command(flatten)]
+    pub answers: AnswerOpts,
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct AdoptOpts {
+    #[arg(default_value = ".")]
+    pub path: PathBuf,
+    #[arg(long)]
+    pub template: String,
+    #[arg(long)]
+    pub vcs_ref: Option<String>,
+    #[arg(long)]
+    pub force: bool,
+    #[arg(long)]
+    pub defaults: bool,
+    #[arg(long)]
+    pub no_input: bool,
+    #[command(flatten)]
+    pub answers: AnswerOpts,
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct UpdateOpts {
+    #[arg(default_value = ".")]
+    pub path: PathBuf,
+    #[arg(long)]
+    pub recopy: bool,
+    #[arg(long)]
+    pub vcs_ref: Option<String>,
+    #[arg(long)]
+    pub defaults: bool,
+    #[arg(long)]
+    pub no_input: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FrontendApp {
+    pub name: String,
+    pub dir: String,
+    pub coverage_threshold: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CopierMode {
+    Copy,
+    Update,
+    Recopy,
+}
+
+impl CopierMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Copy => "copy",
+            Self::Update => "update",
+            Self::Recopy => "recopy",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CopierCommandSpec {
+    program: String,
+    args: Vec<String>,
+}
+
+struct StagedRender {
+    _root: TempDir,
+    destination: PathBuf,
+    answers_path: PathBuf,
+    resolved_vcs_ref: Option<String>,
+}
+
+pub fn run_init(opts: InitOpts) -> Result<Value> {
+    let destination = absolute_path(&opts.path)?;
+    validate_init_destination(&destination, opts.force)?;
+    let interactive = !(opts.defaults || opts.no_input);
+
+    let seed_answers = TempAnswersFile::write_seed(&opts.answers)?;
+    let staged = stage_render(
+        &opts.template,
+        opts.vcs_ref.as_deref(),
+        seed_answers.as_ref().map(|file| file.path()),
+        None,
+        opts.defaults || opts.no_input,
+        interactive,
+    )?;
+    run_copier(
+        build_copy_spec(
+            &opts.template,
+            &destination,
+            Some(&staged.answers_path),
+            staged.resolved_vcs_ref.as_deref(),
+            opts.force,
+            false,
+            true,
+            false,
+        ),
+        None,
+        false,
+    )?;
+
+    let default_branch = read_default_branch(&staged.answers_path)?;
+    let git_initialized = init_git_repo(&destination, &default_branch)?;
+
+    Ok(json!({
+        "ok": true,
+        "command": "init",
+        "copier_mode": "copy",
+        "template": opts.template,
+        "destination": destination.display().to_string(),
+        "answers_file": ANSWERS_FILE,
+        "git_initialized": git_initialized,
+    }))
+}
+
+pub fn run_adopt(opts: AdoptOpts) -> Result<Value> {
+    let destination = absolute_path(&opts.path)?;
+    validate_adopt_destination(&destination)?;
+    let interactive = !(opts.defaults || opts.no_input);
+
+    let seed_answers = TempAnswersFile::write_seed(&opts.answers)?;
+    let staged = stage_render(
+        &opts.template,
+        opts.vcs_ref.as_deref(),
+        seed_answers.as_ref().map(|file| file.path()),
+        Some(&destination),
+        opts.defaults || opts.no_input,
+        interactive,
+    )?;
+
+    if !opts.force {
+        let conflicts =
+            rendered_conflicts(&staged.destination, &staged.answers_path, &destination)?;
+        if !conflicts.is_empty() {
+            bail!(
+                "Adopt would overwrite template-managed paths. Re-run with --force or clear these paths first:\n{}",
+                conflicts.join("\n")
+            );
+        }
+    }
+
+    run_copier(
+        build_copy_spec(
+            &opts.template,
+            &destination,
+            Some(&staged.answers_path),
+            staged.resolved_vcs_ref.as_deref(),
+            opts.force,
+            false,
+            true,
+            false,
+        ),
+        None,
+        false,
+    )?;
+
+    Ok(json!({
+        "ok": true,
+        "command": "adopt",
+        "copier_mode": "copy",
+        "template": opts.template,
+        "destination": destination.display().to_string(),
+        "answers_file": ANSWERS_FILE,
+        "git_initialized": false,
+    }))
+}
+
+pub fn run_update(opts: UpdateOpts) -> Result<Value> {
+    let destination = absolute_path(&opts.path)?;
+    validate_update_destination(&destination)?;
+    let mode = if opts.recopy {
+        CopierMode::Recopy
+    } else {
+        CopierMode::Update
+    };
+
+    run_copier(
+        build_update_spec(
+            mode,
+            &destination,
+            opts.vcs_ref.as_deref(),
+            opts.defaults || opts.no_input,
+        ),
+        Some(&destination),
+        !(opts.defaults || opts.no_input),
+    )?;
+
+    Ok(json!({
+        "ok": true,
+        "command": "update",
+        "copier_mode": mode.as_str(),
+        "destination": destination.display().to_string(),
+        "answers_file": ANSWERS_FILE,
+        "git_initialized": false,
+    }))
+}
+
+fn stage_render(
+    template: &str,
+    vcs_ref: Option<&str>,
+    answers_data_path: Option<&Path>,
+    seed_repo_path: Option<&Path>,
+    non_interactive_defaults: bool,
+    interactive: bool,
+) -> Result<StagedRender> {
+    let root = TempDir::new().context("Failed to create staging directory")?;
+    let destination = root.path().join("render");
+    if let Some(seed_repo_path) = seed_repo_path {
+        seed_preview_workspace(seed_repo_path, &destination)?;
+    }
+    run_copier(
+        build_copy_spec(
+            template,
+            &destination,
+            answers_data_path,
+            vcs_ref,
+            false,
+            seed_repo_path.is_some(),
+            non_interactive_defaults,
+            true,
+        ),
+        None,
+        interactive,
+    )?;
+
+    let answers_path = destination.join(ANSWERS_FILE);
+    if !answers_path.exists() {
+        bail!(
+            "Staging render did not produce {} in {}",
+            ANSWERS_FILE,
+            destination.display()
+        );
+    }
+    let resolved_vcs_ref = read_optional_answer_string(&answers_path, "_commit")?;
+    Ok(StagedRender {
+        _root: root,
+        destination,
+        answers_path,
+        resolved_vcs_ref,
+    })
+}
+
+fn read_default_branch(answers_path: &Path) -> Result<String> {
+    let value = read_optional_answer_string(answers_path, "default_branch")?
+        .ok_or_else(|| anyhow::anyhow!("Missing default_branch in {}", answers_path.display()))?;
+    Ok(value.to_string())
+}
+
+fn read_optional_answer_bool(answers_path: &Path, key: &str) -> Result<Option<bool>> {
+    let answers = read_answers_yaml(answers_path)?;
+    Ok(answers.get(key).and_then(YamlValue::as_bool))
+}
+
+fn read_optional_answer_string(answers_path: &Path, key: &str) -> Result<Option<String>> {
+    let answers = read_answers_yaml(answers_path)?;
+    Ok(answers
+        .get(key)
+        .and_then(YamlValue::as_str)
+        .map(str::to_string)
+        .filter(|value| !value.is_empty()))
+}
+
+fn read_answers_yaml(path: &Path) -> Result<Mapping> {
+    let text =
+        fs::read_to_string(path).with_context(|| format!("Failed to read {}", path.display()))?;
+    let yaml: YamlValue = serde_yaml::from_str(&text)
+        .with_context(|| format!("Failed to parse {}", path.display()))?;
+    yaml.as_mapping()
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("Expected mapping in {}", path.display()))
+}
+
+fn parse_frontend_app(value: &str) -> Result<FrontendApp, String> {
+    let parts = value.splitn(3, ':').collect::<Vec<_>>();
+    if parts.len() != 3 {
+        return Err("expected <name>:<dir>:<coverage_threshold>".into());
+    }
+
+    let coverage_threshold = parts[2]
+        .parse::<u32>()
+        .map_err(|_| "coverage_threshold must be a non-negative integer".to_string())?;
+
+    Ok(FrontendApp {
+        name: parts[0].to_string(),
+        dir: parts[1].to_string(),
+        coverage_threshold,
+    })
+}
+
+fn validate_init_destination(path: &Path, force: bool) -> Result<()> {
+    if path.exists() && !path.is_dir() {
+        bail!("Init destination is not a directory: {}", path.display());
+    }
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let mut entries = fs::read_dir(path)?
+        .collect::<std::io::Result<Vec<_>>>()
+        .with_context(|| format!("Failed to enumerate {}", path.display()))?;
+    if entries.is_empty() || force {
+        return Ok(());
+    }
+
+    entries.sort_by_key(|entry| entry.path());
+    bail!(
+        "Init destination is not empty: {}. Re-run with --force to overwrite.",
+        path.display()
+    );
+}
+
+fn validate_adopt_destination(path: &Path) -> Result<()> {
+    if !path.exists() {
+        bail!("Adopt destination does not exist: {}", path.display());
+    }
+    if !path.is_dir() {
+        bail!("Adopt destination is not a directory: {}", path.display());
+    }
+    Ok(())
+}
+
+fn validate_update_destination(path: &Path) -> Result<()> {
+    validate_adopt_destination(path)?;
+    let answers_path = path.join(ANSWERS_FILE);
+    if !answers_path.exists() {
+        bail!(
+            "Update destination does not contain {}: {}",
+            ANSWERS_FILE,
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+fn rendered_conflicts(
+    rendered_root: &Path,
+    answers_path: &Path,
+    destination: &Path,
+) -> Result<Vec<String>> {
+    let mut conflicts = BTreeSet::new();
+    collect_sync_conflicts(rendered_root, destination, rendered_root, &mut conflicts)?;
+    for relative in ALWAYS_TASK_MUTATED_PATHS {
+        let path = destination.join(relative);
+        if path.exists() {
+            conflicts.insert((*relative).to_string());
+        }
+    }
+    if read_optional_answer_bool(answers_path, "sqlx_enabled")? == Some(false) {
+        for relative in SQLX_PRUNED_TASK_PATHS {
+            let path = destination.join(relative);
+            if path.exists() {
+                conflicts.insert((*relative).to_string());
+            }
+        }
+    }
+    Ok(conflicts.into_iter().collect())
+}
+
+fn collect_sync_conflicts(
+    rendered_root: &Path,
+    destination_root: &Path,
+    current_rendered: &Path,
+    conflicts: &mut BTreeSet<String>,
+) -> Result<()> {
+    for entry in fs::read_dir(current_rendered)? {
+        let entry = entry?;
+        let rendered_path = entry.path();
+        let relative = rendered_path.strip_prefix(rendered_root).with_context(|| {
+            format!(
+                "{} is not under {}",
+                rendered_path.display(),
+                rendered_root.display()
+            )
+        })?;
+        let destination_path = destination_root.join(relative);
+        let file_type = entry.file_type()?;
+
+        if file_type.is_dir() {
+            if destination_path.exists() && !destination_path.is_dir() {
+                conflicts.insert(relative.display().to_string());
+                continue;
+            }
+            collect_sync_conflicts(rendered_root, destination_root, &rendered_path, conflicts)?;
+            continue;
+        }
+
+        if destination_path.exists() && !files_match(&rendered_path, &destination_path)? {
+            conflicts.insert(relative.display().to_string());
+        }
+    }
+    Ok(())
+}
+
+fn build_copy_spec(
+    template: &str,
+    destination: &Path,
+    answers_data_path: Option<&Path>,
+    vcs_ref: Option<&str>,
+    force: bool,
+    overwrite: bool,
+    use_defaults: bool,
+    skip_tasks: bool,
+) -> CopierCommandSpec {
+    let mut args = vec![
+        "--from".into(),
+        "copier".into(),
+        "copier".into(),
+        CopierMode::Copy.as_str().into(),
+        "--trust".into(),
+        "--answers-file".into(),
+        ANSWERS_FILE.into(),
+    ];
+    if skip_tasks {
+        args.push("--skip-tasks".into());
+    }
+    if let Some(answers_data_path) = answers_data_path {
+        args.push("--data-file".into());
+        args.push(answers_data_path.display().to_string());
+    }
+    if force {
+        args.push("--force".into());
+    } else {
+        if overwrite {
+            args.push("--overwrite".into());
+        }
+        if use_defaults {
+            args.push("--defaults".into());
+        }
+    }
+    if let Some(vcs_ref) = vcs_ref {
+        args.push("--vcs-ref".into());
+        args.push(vcs_ref.to_string());
+    }
+    args.push(template.to_string());
+    args.push(destination.display().to_string());
+
+    CopierCommandSpec {
+        program: external_program(UVX_BIN_ENV, "uvx"),
+        args,
+    }
+}
+
+fn build_update_spec(
+    mode: CopierMode,
+    destination: &Path,
+    vcs_ref: Option<&str>,
+    defaults: bool,
+) -> CopierCommandSpec {
+    let mut args = vec![
+        "--from".into(),
+        "copier".into(),
+        "copier".into(),
+        mode.as_str().into(),
+        "--trust".into(),
+        "--answers-file".into(),
+        ANSWERS_FILE.into(),
+    ];
+    if defaults || mode == CopierMode::Recopy {
+        args.push("--defaults".into());
+    }
+    if mode == CopierMode::Recopy {
+        args.push("--overwrite".into());
+    }
+    if let Some(vcs_ref) = vcs_ref {
+        args.push("--vcs-ref".into());
+        args.push(vcs_ref.to_string());
+    }
+    args.push(destination.display().to_string());
+
+    CopierCommandSpec {
+        program: external_program(UVX_BIN_ENV, "uvx"),
+        args,
+    }
+}
+
+fn run_copier(
+    spec: CopierCommandSpec,
+    current_dir: Option<&Path>,
+    interactive: bool,
+) -> Result<()> {
+    let mut command = Command::new(&spec.program);
+    if let Some(dir) = current_dir {
+        command.current_dir(dir);
+    }
+    command.args(&spec.args);
+
+    if interactive {
+        let status = command
+            .status()
+            .with_context(|| format!("Failed to start {}", spec.program))?;
+        if !status.success() {
+            bail!(
+                "Copier command failed with status {}",
+                status.code().unwrap_or(1)
+            );
+        }
+    } else {
+        let output = command
+            .output()
+            .with_context(|| format!("Failed to start {}", spec.program))?;
+        if !output.status.success() {
+            bail!(
+                "Copier command failed with status {}\nstdout:\n{}\nstderr:\n{}",
+                output.status.code().unwrap_or(1),
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
+    Ok(())
+}
+
+fn files_match(rendered_path: &Path, destination_path: &Path) -> Result<bool> {
+    let rendered_meta = fs::metadata(rendered_path)
+        .with_context(|| format!("Failed to read {}", rendered_path.display()))?;
+    let destination_meta = fs::metadata(destination_path)
+        .with_context(|| format!("Failed to read {}", destination_path.display()))?;
+    if rendered_meta.is_file() != destination_meta.is_file() {
+        return Ok(false);
+    }
+    if !rendered_meta.is_file() {
+        return Ok(false);
+    }
+
+    let rendered = fs::read(rendered_path)
+        .with_context(|| format!("Failed to read {}", rendered_path.display()))?;
+    let destination = fs::read(destination_path)
+        .with_context(|| format!("Failed to read {}", destination_path.display()))?;
+    Ok(rendered == destination)
+}
+
+fn seed_preview_workspace(source_root: &Path, destination_root: &Path) -> Result<()> {
+    fs::create_dir_all(destination_root)
+        .with_context(|| format!("Failed to create {}", destination_root.display()))?;
+    copy_agent_guides_recursive(source_root, destination_root, source_root)
+}
+
+fn copy_agent_guides_recursive(
+    source_root: &Path,
+    destination_root: &Path,
+    current_source: &Path,
+) -> Result<()> {
+    for entry in fs::read_dir(current_source)? {
+        let entry = entry?;
+        let source_path = entry.path();
+        let relative = source_path.strip_prefix(source_root).with_context(|| {
+            format!(
+                "{} is not under {}",
+                source_path.display(),
+                source_root.display()
+            )
+        })?;
+        if relative
+            .components()
+            .next()
+            .is_some_and(|part| part.as_os_str() == ".git")
+        {
+            continue;
+        }
+        let destination_path = destination_root.join(relative);
+        let file_type = entry.file_type()?;
+
+        if file_type.is_dir() {
+            fs::create_dir_all(&destination_path)
+                .with_context(|| format!("Failed to create {}", destination_path.display()))?;
+            copy_agent_guides_recursive(source_root, destination_root, &source_path)?;
+            continue;
+        }
+
+        let file_name = source_path.file_name().and_then(|name| name.to_str());
+        if file_name != Some("AGENTS.md") {
+            continue;
+        }
+
+        copy_preview_guide(&source_path, &destination_path)?;
+    }
+    Ok(())
+}
+
+fn copy_preview_guide(source_path: &Path, destination_path: &Path) -> Result<()> {
+    if let Some(parent) = destination_path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("Failed to create {}", parent.display()))?;
+    }
+
+    let metadata = fs::symlink_metadata(source_path)
+        .with_context(|| format!("Failed to stat {}", source_path.display()))?;
+    let file_type = metadata.file_type();
+
+    if file_type.is_symlink() {
+        let target = fs::read_link(source_path)
+            .with_context(|| format!("Failed to read symlink {}", source_path.display()))?;
+        create_symlink(&target, destination_path)?;
+        return Ok(());
+    }
+
+    fs::copy(source_path, destination_path).with_context(|| {
+        format!(
+            "Failed to copy {} to {}",
+            source_path.display(),
+            destination_path.display()
+        )
+    })?;
+    fs::set_permissions(destination_path, metadata.permissions()).with_context(|| {
+        format!(
+            "Failed to set permissions on {}",
+            destination_path.display()
+        )
+    })?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn create_symlink(target: &Path, link_path: &Path) -> Result<()> {
+    use std::os::unix::fs as unix_fs;
+
+    if link_path.exists() {
+        fs::remove_file(link_path)
+            .with_context(|| format!("Failed to remove {}", link_path.display()))?;
+    }
+    unix_fs::symlink(target, link_path).with_context(|| {
+        format!(
+            "Failed to create symlink {} -> {}",
+            link_path.display(),
+            target.display()
+        )
+    })?;
+    Ok(())
+}
+
+#[cfg(windows)]
+fn create_symlink(target: &Path, link_path: &Path) -> Result<()> {
+    use std::os::windows::fs as windows_fs;
+
+    if link_path.exists() {
+        fs::remove_file(link_path)
+            .with_context(|| format!("Failed to remove {}", link_path.display()))?;
+    }
+    windows_fs::symlink_file(target, link_path).with_context(|| {
+        format!(
+            "Failed to create symlink {} -> {}",
+            link_path.display(),
+            target.display()
+        )
+    })?;
+    Ok(())
+}
+
+fn init_git_repo(destination: &Path, default_branch: &str) -> Result<bool> {
+    if destination.join(".git").exists() {
+        return Ok(false);
+    }
+
+    let git_program = external_program(GIT_BIN_ENV, "git");
+    let with_branch = Command::new(&git_program)
+        .current_dir(destination)
+        .args(["init", "-b", default_branch])
+        .output()
+        .with_context(|| format!("Failed to start {}", git_program))?;
+
+    if with_branch.status.success() {
+        return Ok(true);
+    }
+    if !git_init_branch_flag_unsupported(&with_branch) {
+        bail!(
+            "git init -b {default_branch} failed.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&with_branch.stdout),
+            String::from_utf8_lossy(&with_branch.stderr)
+        );
+    }
+
+    let fallback = Command::new(&git_program)
+        .current_dir(destination)
+        .arg("init")
+        .output()
+        .with_context(|| format!("Failed to start {}", git_program))?;
+    if !fallback.status.success() {
+        bail!(
+            "git init failed.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&fallback.stdout),
+            String::from_utf8_lossy(&fallback.stderr)
+        );
+    }
+    set_git_head_branch(destination, &git_program, default_branch)?;
+    Ok(true)
+}
+
+fn git_init_branch_flag_unsupported(output: &std::process::Output) -> bool {
+    let stderr = String::from_utf8_lossy(&output.stderr).to_ascii_lowercase();
+    stderr.contains("unknown switch `b")
+        || stderr.contains("unknown option `b")
+        || stderr.contains("unknown option `initial-branch")
+        || stderr.contains("unknown option `initial branch")
+}
+
+fn set_git_head_branch(destination: &Path, git_program: &str, default_branch: &str) -> Result<()> {
+    let output = Command::new(git_program)
+        .current_dir(destination)
+        .args([
+            "symbolic-ref",
+            "HEAD",
+            &format!("refs/heads/{default_branch}"),
+        ])
+        .output()
+        .with_context(|| format!("Failed to start {}", git_program))?;
+    if !output.status.success() {
+        bail!(
+            "git symbolic-ref HEAD refs/heads/{default_branch} failed.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(())
+}
+
+fn external_program(env_key: &str, fallback: &str) -> String {
+    env::var(env_key).unwrap_or_else(|_| fallback.to_string())
+}
+
+fn absolute_path(path: &Path) -> Result<PathBuf> {
+    if path.is_absolute() {
+        Ok(path.to_path_buf())
+    } else {
+        Ok(env::current_dir()?.join(path))
+    }
+}
+
+struct TempAnswersFile {
+    path: PathBuf,
+}
+
+impl TempAnswersFile {
+    fn write_seed(opts: &AnswerOpts) -> Result<Option<Self>> {
+        let value = seed_answers_yaml(opts);
+        if value.as_mapping().is_some_and(Mapping::is_empty) {
+            return Ok(None);
+        }
+
+        let path = env::temp_dir().join(format!("{}.yaml", unique_id("answers")));
+        let yaml = serde_yaml::to_string(&value)?;
+        fs::write(&path, yaml).with_context(|| format!("Failed to write {}", path.display()))?;
+        Ok(Some(Self { path }))
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for TempAnswersFile {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+fn seed_answers_yaml(opts: &AnswerOpts) -> YamlValue {
+    let mut mapping = Mapping::new();
+    insert_string(&mut mapping, "repo_name", opts.repo_name.as_deref());
+    insert_string(
+        &mut mapping,
+        "default_branch",
+        opts.default_branch.as_deref(),
+    );
+    insert_string(
+        &mut mapping,
+        "ci_github_runner",
+        opts.ci_github_runner.as_deref(),
+    );
+    insert_string(&mut mapping, "jig_version", opts.jig_version.as_deref());
+    insert_string(
+        &mut mapping,
+        "template_source_url",
+        opts.template_source_url.as_deref(),
+    );
+    insert_bool(&mut mapping, "sqlx_enabled", opts.sqlx_enabled);
+    insert_string(
+        &mut mapping,
+        "rust_migration_dir",
+        opts.rust_migration_dir.as_deref(),
+    );
+    insert_string(
+        &mut mapping,
+        "rust_sqlx_metadata_dir",
+        opts.rust_sqlx_metadata_dir.as_deref(),
+    );
+    insert_bool(
+        &mut mapping,
+        "schema_dump_enabled",
+        opts.schema_dump_enabled,
+    );
+    insert_string(
+        &mut mapping,
+        "schema_dump_command",
+        opts.schema_dump_command.as_deref(),
+    );
+    insert_string(
+        &mut mapping,
+        "migration_add_command",
+        opts.migration_add_command.as_deref(),
+    );
+    insert_string(
+        &mut mapping,
+        "bootstrap_command",
+        opts.bootstrap_command.as_deref(),
+    );
+    insert_string(&mut mapping, "dev_command", opts.dev_command.as_deref());
+    insert_string(
+        &mut mapping,
+        "rust_fmt_check_command",
+        opts.rust_fmt_check_command.as_deref(),
+    );
+    insert_string(
+        &mut mapping,
+        "rust_clippy_command",
+        opts.rust_clippy_command.as_deref(),
+    );
+    insert_string(
+        &mut mapping,
+        "rust_test_command",
+        opts.rust_test_command.as_deref(),
+    );
+    insert_string(
+        &mut mapping,
+        "rust_test_locked_command",
+        opts.rust_test_locked_command.as_deref(),
+    );
+    insert_string(
+        &mut mapping,
+        "web_package_manager",
+        opts.web_package_manager.as_deref(),
+    );
+
+    if !opts.rust_crate_roots.is_empty() {
+        mapping.insert(
+            YamlValue::String("rust_crate_roots".into()),
+            YamlValue::Sequence(
+                opts.rust_crate_roots
+                    .iter()
+                    .cloned()
+                    .map(YamlValue::String)
+                    .collect(),
+            ),
+        );
+    }
+    if !opts.frontend_apps.is_empty() {
+        mapping.insert(
+            YamlValue::String("frontend_apps".into()),
+            YamlValue::Sequence(
+                opts.frontend_apps
+                    .iter()
+                    .map(|app| serde_yaml::to_value(app).unwrap_or(YamlValue::Null))
+                    .collect(),
+            ),
+        );
+    }
+
+    YamlValue::Mapping(mapping)
+}
+
+fn insert_string(mapping: &mut Mapping, key: &str, value: Option<&str>) {
+    if let Some(value) = value {
+        mapping.insert(
+            YamlValue::String(key.to_string()),
+            YamlValue::String(value.to_string()),
+        );
+    }
+}
+
+fn insert_bool(mapping: &mut Mapping, key: &str, value: Option<bool>) {
+    if let Some(value) = value {
+        mapping.insert(YamlValue::String(key.to_string()), YamlValue::Bool(value));
+    }
+}
+
+fn unique_id(prefix: &str) -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    format!("jig-{prefix}-{nanos}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Mutex, OnceLock};
+    use tempfile::tempdir;
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    fn lock_env() -> std::sync::MutexGuard<'static, ()> {
+        env_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn template_repo_root() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .unwrap()
+            .to_path_buf()
+    }
+
+    fn copy_dir_recursive(source: &Path, destination: &Path) {
+        fs::create_dir_all(destination).unwrap();
+        for entry in fs::read_dir(source).unwrap() {
+            let entry = entry.unwrap();
+            let source_path = entry.path();
+            let destination_path = destination.join(entry.file_name());
+            let file_type = entry.file_type().unwrap();
+
+            if file_type.is_dir() {
+                if entry.file_name() == ".git" {
+                    continue;
+                }
+                copy_dir_recursive(&source_path, &destination_path);
+                continue;
+            }
+
+            if file_type.is_symlink() {
+                let target = fs::read_link(&source_path).unwrap();
+                create_symlink(&target, &destination_path).unwrap();
+                continue;
+            }
+
+            fs::copy(&source_path, &destination_path).unwrap();
+        }
+    }
+
+    fn materialize_template_worktree() -> TempDir {
+        let temp = tempdir().unwrap();
+        copy_dir_recursive(&template_repo_root(), temp.path());
+        temp
+    }
+
+    #[test]
+    fn parses_frontend_app_flag() {
+        let app = parse_frontend_app("frontend:web:40").unwrap();
+        assert_eq!(
+            app,
+            FrontendApp {
+                name: "frontend".into(),
+                dir: "web".into(),
+                coverage_threshold: 40,
+            }
+        );
+    }
+
+    #[test]
+    fn seed_answers_only_serializes_provided_values() {
+        let yaml = seed_answers_yaml(&AnswerOpts {
+            repo_name: Some("demo".into()),
+            sqlx_enabled: Some(false),
+            rust_crate_roots: vec!["crates".into()],
+            frontend_apps: vec![FrontendApp {
+                name: "frontend".into(),
+                dir: "web".into(),
+                coverage_threshold: 40,
+            }],
+            ..AnswerOpts::default()
+        });
+
+        let mapping = yaml.as_mapping().unwrap();
+        assert_eq!(
+            mapping.get(YamlValue::String("repo_name".into())).unwrap(),
+            &YamlValue::String("demo".into())
+        );
+        assert_eq!(
+            mapping
+                .get(YamlValue::String("sqlx_enabled".into()))
+                .unwrap(),
+            &YamlValue::Bool(false)
+        );
+        assert!(mapping.contains_key(YamlValue::String("rust_crate_roots".into())));
+        assert!(!mapping.contains_key(YamlValue::String("default_branch".into())));
+    }
+
+    #[test]
+    fn build_copy_spec_uses_force_for_overwrite_mode() {
+        let spec = build_copy_spec(
+            "/tmp/template",
+            Path::new("/tmp/dest"),
+            Some(Path::new("/tmp/answers.yml")),
+            Some("HEAD"),
+            true,
+            false,
+            true,
+            false,
+        );
+
+        assert_eq!(spec.program, "uvx");
+        assert!(spec.args.contains(&"--force".to_string()));
+        assert!(spec.args.contains(&"--vcs-ref".to_string()));
+        assert!(!spec.args.contains(&"--defaults".to_string()));
+        assert!(!spec.args.contains(&"--skip-tasks".to_string()));
+    }
+
+    #[test]
+    fn build_update_spec_switches_to_recopy_and_overwrite() {
+        let spec = build_update_spec(CopierMode::Recopy, Path::new("/tmp/dest"), None, false);
+        assert_eq!(spec.args[3], "recopy");
+        assert!(spec.args.contains(&"--defaults".to_string()));
+        assert!(spec.args.contains(&"--overwrite".to_string()));
+    }
+
+    fn write_answers_fixture(dir: &Path, sqlx_enabled: Option<bool>) {
+        let mut body = String::from("default_branch: main\n");
+        if let Some(sqlx_enabled) = sqlx_enabled {
+            body.push_str(&format!(
+                "sqlx_enabled: {}\n",
+                if sqlx_enabled { "true" } else { "false" }
+            ));
+        }
+        fs::write(dir.join(".jig.yml"), body).unwrap();
+    }
+
+    #[test]
+    fn rendered_conflicts_detects_generated_paths() {
+        let rendered = tempdir().unwrap();
+        let destination = tempdir().unwrap();
+        fs::create_dir_all(rendered.path().join("scripts")).unwrap();
+        fs::write(rendered.path().join("scripts/jig"), "rendered").unwrap();
+        write_answers_fixture(rendered.path(), Some(true));
+        fs::create_dir_all(destination.path().join("scripts")).unwrap();
+        fs::write(destination.path().join("scripts/jig"), "existing").unwrap();
+
+        let conflicts = rendered_conflicts(
+            rendered.path(),
+            &rendered.path().join(".jig.yml"),
+            destination.path(),
+        )
+        .unwrap();
+        assert_eq!(conflicts, vec!["scripts/jig"]);
+    }
+
+    #[test]
+    fn rendered_conflicts_marks_task_mutated_outputs() {
+        let rendered = tempdir().unwrap();
+        let destination = tempdir().unwrap();
+        write_answers_fixture(rendered.path(), Some(true));
+        fs::write(rendered.path().join("agent-map.md"), "placeholder").unwrap();
+        fs::write(destination.path().join("agent-map.md"), "existing").unwrap();
+
+        let conflicts = rendered_conflicts(
+            rendered.path(),
+            &rendered.path().join(".jig.yml"),
+            destination.path(),
+        )
+        .unwrap();
+        assert_eq!(conflicts, vec!["agent-map.md"]);
+    }
+
+    #[test]
+    fn rendered_conflicts_marks_sqlx_pruned_task_outputs() {
+        let rendered = tempdir().unwrap();
+        let destination = tempdir().unwrap();
+        write_answers_fixture(rendered.path(), Some(false));
+        fs::create_dir_all(rendered.path().join("scripts")).unwrap();
+        fs::create_dir_all(destination.path().join("scripts")).unwrap();
+        fs::write(
+            rendered.path().join("scripts/add-migration.sh"),
+            "templated",
+        )
+        .unwrap();
+        fs::write(
+            destination.path().join("scripts/add-migration.sh"),
+            "existing",
+        )
+        .unwrap();
+
+        let conflicts = rendered_conflicts(
+            rendered.path(),
+            &rendered.path().join(".jig.yml"),
+            destination.path(),
+        )
+        .unwrap();
+        assert_eq!(conflicts, vec!["scripts/add-migration.sh"]);
+    }
+
+    #[test]
+    fn rendered_conflicts_ignores_identical_files() {
+        let rendered = tempdir().unwrap();
+        let destination = tempdir().unwrap();
+        write_answers_fixture(rendered.path(), Some(true));
+        fs::create_dir_all(rendered.path().join("scripts")).unwrap();
+        fs::create_dir_all(destination.path().join("scripts")).unwrap();
+        fs::write(rendered.path().join("scripts/jig"), "same").unwrap();
+        fs::write(destination.path().join("scripts/jig"), "same").unwrap();
+
+        let conflicts = rendered_conflicts(
+            rendered.path(),
+            &rendered.path().join(".jig.yml"),
+            destination.path(),
+        )
+        .unwrap();
+        assert!(conflicts.is_empty());
+    }
+
+    #[test]
+    fn rendered_conflicts_detects_blocking_ancestor_file() {
+        let rendered = tempdir().unwrap();
+        let destination = tempdir().unwrap();
+        write_answers_fixture(rendered.path(), Some(true));
+        fs::create_dir_all(rendered.path().join("scripts")).unwrap();
+        fs::write(rendered.path().join("scripts/jig"), "rendered").unwrap();
+        fs::write(destination.path().join("scripts"), "blocking file").unwrap();
+
+        let conflicts = rendered_conflicts(
+            rendered.path(),
+            &rendered.path().join(".jig.yml"),
+            destination.path(),
+        )
+        .unwrap();
+        assert_eq!(conflicts, vec!["scripts"]);
+    }
+
+    #[test]
+    fn preview_workspace_only_copies_agent_guides() {
+        let source = tempdir().unwrap();
+        let destination = tempdir().unwrap();
+        fs::create_dir_all(source.path().join("crates/api")).unwrap();
+        fs::create_dir_all(source.path().join("target/debug")).unwrap();
+        fs::write(source.path().join("AGENTS.md"), "root").unwrap();
+        fs::write(source.path().join("crates/api/AGENTS.md"), "nested").unwrap();
+        fs::write(source.path().join("target/debug/build.log"), "noise").unwrap();
+
+        seed_preview_workspace(source.path(), destination.path()).unwrap();
+
+        assert!(destination.path().join("AGENTS.md").exists());
+        assert!(destination.path().join("crates/api/AGENTS.md").exists());
+        assert!(!destination.path().join("target/debug/build.log").exists());
+    }
+
+    #[test]
+    fn build_copy_spec_can_skip_tasks_for_staging() {
+        let spec = build_copy_spec(
+            "/tmp/template",
+            Path::new("/tmp/dest"),
+            None,
+            None,
+            false,
+            true,
+            true,
+            true,
+        );
+
+        assert!(spec.args.contains(&"--skip-tasks".to_string()));
+        assert!(spec.args.contains(&"--defaults".to_string()));
+    }
+
+    #[test]
+    fn run_init_uses_stubbed_uvx_and_git() {
+        let _guard = lock_env();
+        let temp = tempdir().unwrap();
+        let bin_dir = temp.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+
+        let log_path = temp.path().join("commands.log");
+        let uvx_path = bin_dir.join("uvx-stub.sh");
+        fs::write(
+            &uvx_path,
+            format!(
+                "#!/bin/sh\nprintf 'uvx %s\\n' \"$*\" >> \"{}\"\ncmd=\"$4\"\nfor arg in \"$@\"; do dest=\"$arg\"; done\nmkdir -p \"$dest\"\ncat > \"$dest/.jig.yml\" <<'EOF'\ndefault_branch: main\nEOF\nexit 0\n",
+                log_path.display()
+            ),
+        )
+        .unwrap();
+        let git_path = bin_dir.join("git-stub.sh");
+        fs::write(
+            &git_path,
+            format!(
+                "#!/bin/sh\nprintf 'git %s\\n' \"$*\" >> \"{}\"\nexit 0\n",
+                log_path.display()
+            ),
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&uvx_path, fs::Permissions::from_mode(0o755)).unwrap();
+            fs::set_permissions(&git_path, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        unsafe {
+            env::set_var(UVX_BIN_ENV, &uvx_path);
+            env::set_var(GIT_BIN_ENV, &git_path);
+        }
+
+        let destination = temp.path().join("repo");
+        let output = run_init(InitOpts {
+            path: destination.clone(),
+            template: "/tmp/template".into(),
+            vcs_ref: None,
+            force: false,
+            defaults: false,
+            no_input: true,
+            answers: AnswerOpts {
+                repo_name: Some("demo".into()),
+                rust_migration_dir: Some("migrations".into()),
+                ..AnswerOpts::default()
+            },
+        })
+        .unwrap();
+
+        unsafe {
+            env::remove_var(UVX_BIN_ENV);
+            env::remove_var(GIT_BIN_ENV);
+        }
+
+        assert_eq!(output["git_initialized"], true);
+        let log = fs::read_to_string(&log_path).unwrap();
+        let copy_count = log.matches("uvx --from copier copier copy --trust").count();
+        assert_eq!(copy_count, 2);
+        assert!(log.contains("git init -b main"));
+        assert!(destination.exists());
+    }
+
+    #[test]
+    fn run_init_falls_back_only_for_unsupported_git_branch_flag() {
+        let _guard = lock_env();
+        let temp = tempdir().unwrap();
+        let bin_dir = temp.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+
+        let log_path = temp.path().join("commands.log");
+        let uvx_path = bin_dir.join("uvx-stub.sh");
+        fs::write(
+            &uvx_path,
+            format!(
+                "#!/bin/sh\nprintf 'uvx %s\\n' \"$*\" >> \"{}\"\nfor arg in \"$@\"; do dest=\"$arg\"; done\nmkdir -p \"$dest\"\ncat > \"$dest/.jig.yml\" <<'EOF'\ndefault_branch: trunk\nEOF\nexit 0\n",
+                log_path.display()
+            ),
+        )
+        .unwrap();
+        let git_path = bin_dir.join("git-stub.sh");
+        fs::write(
+            &git_path,
+            format!(
+                "#!/bin/sh\nprintf 'git %s\\n' \"$*\" >> \"{}\"\nif [ \"$1\" = \"init\" ] && [ \"$2\" = \"-b\" ]; then\n  printf 'error: unknown switch `b`\\n' >&2\n  exit 129\nfi\nexit 0\n",
+                log_path.display()
+            ),
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&uvx_path, fs::Permissions::from_mode(0o755)).unwrap();
+            fs::set_permissions(&git_path, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        unsafe {
+            env::set_var(UVX_BIN_ENV, &uvx_path);
+            env::set_var(GIT_BIN_ENV, &git_path);
+        }
+
+        let destination = temp.path().join("repo");
+        let output = run_init(InitOpts {
+            path: destination,
+            template: "/tmp/template".into(),
+            vcs_ref: None,
+            force: false,
+            defaults: false,
+            no_input: true,
+            answers: AnswerOpts {
+                repo_name: Some("demo".into()),
+                ..AnswerOpts::default()
+            },
+        })
+        .unwrap();
+
+        unsafe {
+            env::remove_var(UVX_BIN_ENV);
+            env::remove_var(GIT_BIN_ENV);
+        }
+
+        assert_eq!(output["git_initialized"], true);
+        let log = fs::read_to_string(&log_path).unwrap();
+        assert!(log.contains("git init -b trunk"));
+        assert!(log.contains("git init"));
+        assert!(log.contains("git symbolic-ref HEAD refs/heads/trunk"));
+    }
+
+    #[test]
+    fn run_init_surfaces_git_branch_init_failures() {
+        let _guard = lock_env();
+        let temp = tempdir().unwrap();
+        let bin_dir = temp.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+
+        let log_path = temp.path().join("commands.log");
+        let uvx_path = bin_dir.join("uvx-stub.sh");
+        fs::write(
+            &uvx_path,
+            format!(
+                "#!/bin/sh\nprintf 'uvx %s\\n' \"$*\" >> \"{}\"\nfor arg in \"$@\"; do dest=\"$arg\"; done\nmkdir -p \"$dest\"\ncat > \"$dest/.jig.yml\" <<'EOF'\ndefault_branch: main\nEOF\nexit 0\n",
+                log_path.display()
+            ),
+        )
+        .unwrap();
+        let git_path = bin_dir.join("git-stub.sh");
+        fs::write(
+            &git_path,
+            format!(
+                "#!/bin/sh\nprintf 'git %s\\n' \"$*\" >> \"{}\"\nif [ \"$1\" = \"init\" ] && [ \"$2\" = \"-b\" ]; then\n  printf 'fatal: repository storage is broken\\n' >&2\n  exit 1\nfi\nexit 0\n",
+                log_path.display()
+            ),
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&uvx_path, fs::Permissions::from_mode(0o755)).unwrap();
+            fs::set_permissions(&git_path, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        unsafe {
+            env::set_var(UVX_BIN_ENV, &uvx_path);
+            env::set_var(GIT_BIN_ENV, &git_path);
+        }
+
+        let error = run_init(InitOpts {
+            path: temp.path().join("repo"),
+            template: "/tmp/template".into(),
+            vcs_ref: None,
+            force: false,
+            defaults: false,
+            no_input: true,
+            answers: AnswerOpts {
+                repo_name: Some("demo".into()),
+                ..AnswerOpts::default()
+            },
+        })
+        .unwrap_err()
+        .to_string();
+
+        unsafe {
+            env::remove_var(UVX_BIN_ENV);
+            env::remove_var(GIT_BIN_ENV);
+        }
+
+        assert!(error.contains("git init -b main failed"));
+        assert!(error.contains("repository storage is broken"));
+        let log = fs::read_to_string(&log_path).unwrap();
+        assert!(log.contains("git init -b main"));
+        assert!(!log.contains("git symbolic-ref HEAD refs/heads/main"));
+    }
+
+    #[test]
+    fn adopt_with_real_template_runs_destination_tasks() {
+        let _guard = lock_env();
+        let temp = tempdir().unwrap();
+        let repo = temp.path().join("repo");
+        let template = materialize_template_worktree();
+        fs::create_dir_all(repo.join("crates/api")).unwrap();
+        fs::write(repo.join("crates/api/AGENTS.md"), "crate guide").unwrap();
+
+        run_adopt(AdoptOpts {
+            path: repo.clone(),
+            template: template.path().display().to_string(),
+            vcs_ref: None,
+            force: false,
+            defaults: true,
+            no_input: true,
+            answers: AnswerOpts {
+                repo_name: Some("demo".into()),
+                sqlx_enabled: Some(false),
+                rust_migration_dir: Some("migrations".into()),
+                ..AnswerOpts::default()
+            },
+        })
+        .unwrap();
+
+        let agent_map = fs::read_to_string(repo.join("agent-map.md")).unwrap();
+        assert!(agent_map.contains("[crates/api](./crates/api/AGENTS.md)"));
+        assert!(!repo.join("scripts/add-migration.sh").exists());
+        assert!(
+            !repo
+                .join("scripts/check-migration-immutability.sh")
+                .exists()
+        );
+        let answers = fs::read_to_string(repo.join(".jig.yml")).unwrap();
+        assert!(answers.contains("sqlx_enabled: false"));
+    }
+
+    #[test]
+    fn adopt_with_real_template_keeps_sqlx_files_when_enabled() {
+        let _guard = lock_env();
+        let temp = tempdir().unwrap();
+        let repo = temp.path().join("repo");
+        let template = materialize_template_worktree();
+        fs::create_dir_all(repo.join("crates/api")).unwrap();
+        fs::write(repo.join("crates/api/AGENTS.md"), "crate guide").unwrap();
+
+        run_adopt(AdoptOpts {
+            path: repo.clone(),
+            template: template.path().display().to_string(),
+            vcs_ref: None,
+            force: false,
+            defaults: true,
+            no_input: true,
+            answers: AnswerOpts {
+                repo_name: Some("demo".into()),
+                sqlx_enabled: Some(true),
+                rust_migration_dir: Some("migrations".into()),
+                rust_sqlx_metadata_dir: Some(".sqlx".into()),
+                migration_add_command: Some("scripts/add-migration.sh".into()),
+                ..AnswerOpts::default()
+            },
+        })
+        .unwrap();
+
+        let agent_map = fs::read_to_string(repo.join("agent-map.md")).unwrap();
+        assert!(agent_map.contains("[crates/api](./crates/api/AGENTS.md)"));
+        assert!(repo.join("scripts/add-migration.sh").exists());
+        assert!(
+            repo.join("scripts/check-migration-immutability.sh")
+                .exists()
+        );
+        assert!(
+            repo.join("scripts/check-sqlx-unchecked-non-test.sh")
+                .exists()
+        );
+        assert!(
+            repo.join("scripts/generate-sqlx-unchecked-queries-todo.sh")
+                .exists()
+        );
+        let answers = fs::read_to_string(repo.join(".jig.yml")).unwrap();
+        assert!(answers.contains("sqlx_enabled: true"));
+    }
+}

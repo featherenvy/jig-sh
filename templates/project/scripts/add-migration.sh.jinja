@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+MIGRATIONS_DIR="${RUST_MIGRATION_DIR:-<<[ rust_migration_dir ]>>}"
+RAW_NAME="${NAME:-${1:-}}"
+
+if [[ -z "$RAW_NAME" ]]; then
+  echo "Migration name is required. Use NAME=your_migration_name." >&2
+  exit 1
+fi
+
+slug="$(printf '%s' "$RAW_NAME" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/_/g; s/^_+//; s/_+$//')"
+if [[ -z "$slug" ]]; then
+  echo "Migration name must contain at least one alphanumeric character." >&2
+  exit 1
+fi
+
+timestamp="$(date -u '+%Y%m%d%H%M%S')"
+base_path="$MIGRATIONS_DIR/${timestamp}_${slug}"
+up_path="${base_path}.up.sql"
+down_path="${base_path}.down.sql"
+
+mkdir -p "$MIGRATIONS_DIR"
+
+if [[ -e "$up_path" || -e "$down_path" ]]; then
+  echo "Migration files already exist for ${base_path}." >&2
+  exit 1
+fi
+
+cat > "$up_path" <<EOF
+-- forward migration: ${slug}
+EOF
+
+cat > "$down_path" <<EOF
+-- rollback migration: ${slug}
+EOF
+
+echo "Created:"
+echo "  - $up_path"
+echo "  - $down_path"

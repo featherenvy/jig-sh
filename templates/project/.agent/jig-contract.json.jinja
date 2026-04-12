@@ -1,0 +1,130 @@
+{
+  "contract_version": 1,
+  "memory_schema_version": 1,
+  "tool_namespace": "jig",
+  "jig_version": "<<[ jig_version ]>>",
+  "required_make_targets": [
+    "fmt-check",
+    "clippy",
+    "test",
+    "test-rust-locked",
+[% if sqlx_enabled %]
+    "sqlx-check",
+    "migration-add",
+[% endif %]
+    "schema-check",
+[% if schema_dump_enabled %]
+    "schema-dump",
+[% endif %]
+    "contract-check"
+  ],
+  "optional_make_targets": [],
+  "tools": [
+    {
+      "name": "jig.fmt_check",
+      "kind": "make",
+      "description": "Run make fmt-check.",
+      "target": "fmt-check"
+    },
+    {
+      "name": "jig.clippy",
+      "kind": "make",
+      "description": "Run make clippy.",
+      "target": "clippy"
+    },
+    {
+      "name": "jig.test",
+      "kind": "make",
+      "description": "Run make test.",
+      "target": "test"
+    },
+    {
+      "name": "jig.test_locked",
+      "kind": "make",
+      "description": "Run make test-rust-locked.",
+      "target": "test-rust-locked"
+    },
+    {
+      "name": "jig.schema_check",
+      "kind": "make",
+      "description": "Run make schema-check.",
+      "target": "schema-check"
+    },
+[% if schema_dump_enabled %]
+    {
+      "name": "jig.schema_dump",
+      "kind": "make",
+      "description": "Run make schema-dump.",
+      "target": "schema-dump"
+    },
+[% endif %]
+[% if sqlx_enabled %]
+    {
+      "name": "jig.sqlx_check",
+      "kind": "make",
+      "description": "Run make sqlx-check.",
+      "target": "sqlx-check"
+    },
+    {
+      "name": "jig.migration_add",
+      "kind": "make",
+      "description": "Run make migration-add NAME=... .",
+      "target": "migration-add"
+    },
+[% endif %]
+    {
+      "name": "jig.contract_check",
+      "kind": "make",
+      "description": "Run make contract-check.",
+      "target": "contract-check"
+    },
+    {
+      "name": "jig.run_target",
+      "kind": "make",
+      "description": "Run an arbitrary make target by name.",
+      "target": null
+    },
+    {
+      "name": "jig.session_start",
+      "kind": "memory",
+      "description": "Open a new jig session and return recent repo context.",
+      "target": null
+    },
+    {
+      "name": "jig.session_end",
+      "kind": "memory",
+      "description": "Close a jig session.",
+      "target": null
+    },
+    {
+      "name": "jig.plans_open",
+      "kind": "memory",
+      "description": "Open a structured plan and create its Markdown body.",
+      "target": null
+    },
+    {
+      "name": "jig.plans_append",
+      "kind": "memory",
+      "description": "Append to a structured plan body.",
+      "target": null
+    },
+    {
+      "name": "jig.plans_close",
+      "kind": "memory",
+      "description": "Close a structured plan.",
+      "target": null
+    },
+    {
+      "name": "jig.receipts_list",
+      "kind": "memory",
+      "description": "List structured receipts.",
+      "target": null
+    },
+    {
+      "name": "jig.decisions_add",
+      "kind": "memory",
+      "description": "Append a structured decision record.",
+      "target": null
+    }
+  ]
+}

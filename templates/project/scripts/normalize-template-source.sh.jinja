@@ -2,19 +2,50 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
-ANSWERS_FILE="$ROOT_DIR/.agentic-kit.yaml"
+ANSWERS_FILE="$ROOT_DIR/.jig.yml"
 
 if [[ ! -f "$ANSWERS_FILE" ]]; then
   exit 0
 fi
 
-src_path="$(awk -F"'" '/^_src_path:/ {print $2; exit}' "$ANSWERS_FILE")"
-commit_ref="$(awk -F"'" '/^_commit:/ {print $2; exit}' "$ANSWERS_FILE")"
-default_branch="$(awk -F"'" '/^default_branch:/ {print $2; exit}' "$ANSWERS_FILE")"
-template_source_url="$(awk -F"'" '/^template_source_url:/ {print $2; exit}' "$ANSWERS_FILE")"
+read_field() {
+  local key="$1"
+  python3 - "$ANSWERS_FILE" "$key" <<'PY'
+import pathlib
+import re
+import sys
 
-if [[ -n "$template_source_url" ]]; then
-  python3 - "$ANSWERS_FILE" "$template_source_url" <<'PY'
+answers_path = pathlib.Path(sys.argv[1])
+key = sys.argv[2]
+pattern = re.compile(rf"^{re.escape(key)}:\s*(.*)$")
+
+for line in answers_path.read_text().splitlines():
+    match = pattern.match(line)
+    if not match:
+        continue
+    raw = match.group(1).strip()
+    if raw in {"''", '""'}:
+        print("")
+    elif len(raw) >= 2 and raw[0] == "'" and raw[-1] == "'":
+        print(raw[1:-1].replace("''", "'"))
+    elif len(raw) >= 2 and raw[0] == '"' and raw[-1] == '"':
+        print(raw[1:-1])
+    else:
+        print(raw)
+    break
+PY
+}
+
+src_path="$(read_field _src_path)"
+commit_ref="$(read_field _commit)"
+default_branch="$(read_field default_branch)"
+template_source_url="$(read_field template_source_url)"
+sqlx_enabled="$(read_field sqlx_enabled)"
+
+write_src_path() {
+  local source="$1"
+
+  python3 - "$ANSWERS_FILE" "$source" <<'PY'
 import pathlib
 import sys
 
@@ -28,6 +59,62 @@ for i, line in enumerate(lines):
         break
 path.write_text("\n".join(lines) + "\n")
 PY
+}
+
+fail_template_source_url() {
+  local message="$1"
+
+  echo "$message" >&2
+  exit 1
+}
+
+validate_remote_template_source() {
+  local source_url="$1"
+  local expected_commit="$2"
+  local branch="$3"
+  local fetch_ref="refs/heads/$branch:refs/remotes/origin/$branch"
+  local probe_repo
+
+  probe_repo="$(mktemp -d)"
+  git init --bare "$probe_repo" >/dev/null 2>&1
+
+  if ! git -C "$probe_repo" fetch --quiet "$source_url" "$fetch_ref" >/dev/null 2>&1; then
+    rm -rf "$probe_repo"
+    fail_template_source_url \
+      "template_source_url '$source_url' is not usable: unable to fetch refs/heads/$branch."
+  fi
+
+  if ! git -C "$probe_repo" rev-parse --verify "${expected_commit}^{commit}" >/dev/null 2>&1; then
+    rm -rf "$probe_repo"
+    fail_template_source_url \
+      "template_source_url '$source_url' is not usable: _commit '$expected_commit' is not reachable from refs/heads/$branch."
+  fi
+
+  rm -rf "$probe_repo"
+}
+
+prune_sqlx_artifacts() {
+  if [[ "$sqlx_enabled" != "false" ]]; then
+    return
+  fi
+
+  rm -f \
+    "$ROOT_DIR/scripts/add-migration.sh" \
+    "$ROOT_DIR/scripts/check-migration-immutability.sh" \
+    "$ROOT_DIR/scripts/check-sqlx-unchecked-non-test.sh" \
+    "$ROOT_DIR/scripts/generate-sqlx-unchecked-queries-todo.sh"
+}
+
+prune_sqlx_artifacts
+
+if [[ -n "$template_source_url" ]]; then
+  if [[ -z "$commit_ref" || -z "$default_branch" ]]; then
+    fail_template_source_url \
+      "template_source_url '$template_source_url' requires non-empty _commit and default_branch."
+  fi
+
+  validate_remote_template_source "$template_source_url" "$commit_ref" "$default_branch"
+  write_src_path "$template_source_url"
   exit 0
 fi
 
@@ -43,20 +130,7 @@ case "$src_path" in
       if [[ -n "$remote_url" ]] \
         && git -C "$src_path" rev-parse --verify "$tracking_ref" >/dev/null 2>&1 \
         && git -C "$src_path" merge-base --is-ancestor "$commit_ref" "$tracking_ref" >/dev/null 2>&1; then
-        python3 - "$ANSWERS_FILE" "$remote_url" <<'PY'
-import pathlib
-import sys
-
-path = pathlib.Path(sys.argv[1])
-remote = sys.argv[2]
-lines = path.read_text().splitlines()
-for i, line in enumerate(lines):
-    if line.startswith("_src_path: "):
-        escaped = remote.replace("'", "''")
-        lines[i] = f"_src_path: '{escaped}'"
-        break
-path.write_text("\n".join(lines) + "\n")
-PY
+        write_src_path "$remote_url"
       fi
     fi
     ;;

@@ -7,10 +7,12 @@ on:
       - "<<[ root ]>>/**"
 [% endfor %]
       - "Makefile"
+[% if sqlx_enabled %]
       - "scripts/check-migration-immutability.sh"
-      - "scripts/check-rust-file-loc.sh"
       - "scripts/check-sqlx-unchecked-non-test.sh"
       - "scripts/generate-sqlx-unchecked-queries-todo.sh"
+[% endif %]
+      - "scripts/check-rust-file-loc.sh"
       - ".github/workflows/repo-policy.yml"
   push:
     branches:
@@ -20,10 +22,12 @@ on:
       - "<<[ root ]>>/**"
 [% endfor %]
       - "Makefile"
+[% if sqlx_enabled %]
       - "scripts/check-migration-immutability.sh"
-      - "scripts/check-rust-file-loc.sh"
       - "scripts/check-sqlx-unchecked-non-test.sh"
       - "scripts/generate-sqlx-unchecked-queries-todo.sh"
+[% endif %]
+      - "scripts/check-rust-file-loc.sh"
       - ".github/workflows/repo-policy.yml"
   merge_group:
     types:
@@ -60,6 +64,7 @@ jobs:
         run: |
           make check-rust-file-loc
 
+[% if sqlx_enabled %]
   sqlx-unchecked-queries:
     name: Verify non-test SQLx queries are compile-time checked
     runs-on: <<[ ci_github_runner ]>>
@@ -120,3 +125,4 @@ jobs:
       - name: Check migration immutability
         run: |
           scripts/check-migration-immutability.sh --changed-against "${{ steps.base_ref.outputs.ref }}"
+[% endif %]

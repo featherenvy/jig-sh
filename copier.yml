@@ -1,6 +1,6 @@
 _min_copier_version: "9.0.0"
 _subdirectory: templates/project
-_answers_file: .agentic-kit.yaml
+_answers_file: .jig.yml
 _templates_suffix: .jinja
 _envops:
   block_start_string: "[%"
@@ -10,7 +10,7 @@ _envops:
   comment_start_string: "<#"
   comment_end_string: "#>"
 _tasks:
-  - chmod +x scripts/*.sh
+  - chmod +x scripts/*.sh scripts/jig
   - bash scripts/normalize-template-source.sh
   - bash scripts/generate-agent-map.sh
 
@@ -28,12 +28,23 @@ ci_github_runner:
   default: ubuntu-latest
   help: Runner label used for GitHub Actions jobs.
 
+jig_version:
+  type: str
+  default: "0.1.0"
+  help: Exact external jig version that generated repos should use.
+
 template_source_url:
   type: str
   default: ""
   help: >
-    Optional canonical template source URL to store in .agentic-kit.yaml for
-    recopy/update. Set this for portable shared repos.
+    Optional canonical template source URL to store in .jig.yml for
+    recopy/update. The URL must be fetchable and the current _commit must be
+    reachable from refs/heads/<default_branch> there.
+
+sqlx_enabled:
+  type: bool
+  default: true
+  help: Whether to generate SQLx and migration-specific repo tooling.
 
 rust_crate_roots:
   type: yaml
@@ -43,11 +54,13 @@ rust_crate_roots:
 
 rust_migration_dir:
   type: str
+  when: <<[ sqlx_enabled ]>>
   help: Path to the SQL migration directory.
 
 rust_sqlx_metadata_dir:
   type: str
   default: .sqlx
+  when: <<[ sqlx_enabled ]>>
   help: Path to the committed SQLx metadata directory.
 
 schema_dump_enabled:
@@ -60,6 +73,12 @@ schema_dump_command:
   default: scripts/dump-schema.sh
   help: Command used to regenerate schema docs when schema dump checks are enabled.
 
+migration_add_command:
+  type: str
+  default: scripts/add-migration.sh
+  when: <<[ sqlx_enabled ]>>
+  help: Command used by make migration-add to add a forward-only migration.
+
 bootstrap_command:
   type: str
   default: make deps
@@ -67,7 +86,7 @@ bootstrap_command:
 
 dev_command:
   type: str
-  default: 'echo "Define dev_command in .agentic-kit.yaml" >&2 && exit 1'
+  default: 'echo "Define dev_command in .jig.yml" >&2 && exit 1'
   help: Shell command executed by the generated make dev target.
 
 rust_fmt_check_command:
