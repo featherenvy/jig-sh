@@ -13,10 +13,8 @@ RUST_CRATE_ROOTS := [% for root in rust_crate_roots %]<<[ root ]>>[% if not loop
 [% if sqlx_enabled %]
 RUST_MIGRATION_DIR := <<[ rust_migration_dir ]>>
 RUST_SQLX_METADATA_DIR := <<[ rust_sqlx_metadata_dir ]>>
-[% endif %]
 SCHEMA_DUMP_ENABLED := [% if schema_dump_enabled %]1[% else %]0[% endif %]
 SCHEMA_DUMP_COMMAND := <<[ schema_dump_command ]>>
-[% if sqlx_enabled %]
 MIGRATION_ADD_COMMAND := <<[ migration_add_command ]>>
 [% endif %]
 BOOTSTRAP_COMMAND := <<[ bootstrap_command ]>>
@@ -24,9 +22,9 @@ DEV_COMMAND := <<[ dev_command ]>>
 
 .PHONY: help bootstrap deps dev fmt-check clippy test-rust test-rust-locked test
 [% if sqlx_enabled %]
-.PHONY: sqlx-db-setup sqlx-check schema-check schema-dump migration-add contract-check
+.PHONY: sqlx-db-setup sqlx-check schema-check migration-add contract-check[% if schema_dump_enabled %] schema-dump[% endif %]
 [% else %]
-.PHONY: schema-check schema-dump contract-check
+.PHONY: contract-check
 [% endif %]
 .PHONY: check-agent-map check-agent-guides check-rust-file-loc check-no-mod-rs[% if sqlx_enabled %] check-sqlx-unchecked-non-test[% endif %]
 .PHONY: enforce-coverage ci ci-webapps
@@ -74,7 +72,6 @@ sqlx-db-setup: ## Reset the SQLx check database and apply migrations
 
 sqlx-check: ## Verify committed SQLx metadata is current
 	SQLX_OFFLINE=false SQLX_OFFLINE_DIR="$(RUST_SQLX_METADATA_DIR)" $(CARGO) sqlx prepare --check --workspace -- --workspace --all-targets
-[% endif %]
 
 schema-check: ## Verify schema docs are current when enabled
 	@if [ "$(SCHEMA_DUMP_ENABLED)" = "1" ]; then \
@@ -83,6 +80,7 @@ schema-check: ## Verify schema docs are current when enabled
 	  echo "Schema dump checks disabled."; \
 	fi
 
+[% if schema_dump_enabled %]
 schema-dump: ## Regenerate schema docs when enabled
 	@if [ "$(SCHEMA_DUMP_ENABLED)" = "1" ]; then \
 	  bash -lc '$(SCHEMA_DUMP_COMMAND)'; \
@@ -90,8 +88,8 @@ schema-dump: ## Regenerate schema docs when enabled
 	  echo "Schema dump generation disabled."; \
 	  exit 1; \
 	fi
+[% endif %]
 
-[% if sqlx_enabled %]
 migration-add: ## Add a forward-only migration (pass NAME=<migration_name>)
 	@if [ -z "$(NAME)" ]; then \
 	  echo "NAME is required. Example: make migration-add NAME=create_users"; \
@@ -162,4 +160,4 @@ ci-webapps: ## No configured web apps
 	@echo "No web apps configured."
 [% endif %]
 
-ci: fmt-check clippy test-rust-locked check-rust-file-loc check-no-mod-rs check-agent-map check-agent-guides[% if sqlx_enabled %] check-sqlx-unchecked-non-test sqlx-check[% endif %] schema-check ci-webapps ## Run the standard CI validation set
+ci: fmt-check clippy test-rust-locked check-rust-file-loc check-no-mod-rs check-agent-map check-agent-guides[% if sqlx_enabled %] check-sqlx-unchecked-non-test sqlx-check schema-check[% endif %] ci-webapps ## Run the standard CI validation set

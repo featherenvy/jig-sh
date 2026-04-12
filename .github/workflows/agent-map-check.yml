@@ -1,0 +1,45 @@
+name: Agent Map Check
+
+on:
+  pull_request:
+    paths:
+      - "AGENTS.md"
+      - "**/AGENTS.md"
+      - "agent-map.md"
+      - "scripts/check-agent-map.sh"
+      - "scripts/generate-agent-map.sh"
+      - ".github/workflows/agent-map-check.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "AGENTS.md"
+      - "**/AGENTS.md"
+      - "agent-map.md"
+      - "scripts/check-agent-map.sh"
+      - "scripts/generate-agent-map.sh"
+      - ".github/workflows/agent-map-check.yml"
+  merge_group:
+    types:
+      - checks_requested
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-map-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  agent-map-check:
+    name: Verify AGENTS map drift
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Validate agent-map links and coverage
+        shell: bash
+        run: |
+          scripts/check-agent-map.sh

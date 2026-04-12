@@ -1,0 +1,246 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage:
+  scripts/check-agent-map.sh [--map <path>]
+
+Checks:
+  1) Every AGENTS.md file in the repository is linked from agent-map.md.
+  2) Every local markdown link in agent-map.md resolves to an existing file.
+EOF
+}
+
+MAP_PATH="agent-map.md"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --map)
+      if [[ $# -lt 2 ]]; then
+        echo "--map requires a path."
+        usage
+        exit 1
+      fi
+      MAP_PATH="$2"
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown argument: $1"
+      usage
+      exit 1
+      ;;
+  esac
+  shift
+done
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+cd "$ROOT_DIR"
+
+if [[ ! -f "$MAP_PATH" ]]; then
+  echo "error: map file not found: $MAP_PATH"
+  exit 1
+fi
+
+MAP_ABS="$(cd "$(dirname "$MAP_PATH")" && pwd -P)/$(basename "$MAP_PATH")"
+MAP_REL="$MAP_PATH"
+MAP_DIR="$(dirname "$MAP_ABS")"
+MAP_DIR_REL=""
+
+if [[ "$MAP_DIR" == "$ROOT_DIR" ]]; then
+  MAP_DIR_REL=""
+elif [[ "$MAP_DIR" == "$ROOT_DIR/"* ]]; then
+  MAP_DIR_REL="${MAP_DIR#$ROOT_DIR/}"
+else
+  echo "error: map path must be inside repository: $MAP_PATH"
+  exit 1
+fi
+
+linked_paths=()
+broken_links=()
+missing_agents=()
+all_agents=()
+
+list_agent_guides() {
+  if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    {
+      git ls-files -z -- '*AGENTS.md'
+      git ls-files -z --others --exclude-standard -- '*AGENTS.md'
+    }
+    return
+  fi
+
+  find . -name AGENTS.md -not -path '*/.git/*' -print0
+}
+
+trim() {
+  local value="$1"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  printf '%s' "$value"
+}
+
+normalize_repo_relative_path() {
+  local input_path="$1"
+  local segment
+  local last_index
+  local -a parts=()
+  local -a stack=()
+  local IFS='/'
+  read -r -a parts <<< "$input_path"
+
+  for segment in "${parts[@]}"; do
+    if [[ -z "$segment" || "$segment" == "." ]]; then
+      continue
+    fi
+
+    if [[ "$segment" == ".." ]]; then
+      if (( ${#stack[@]} > 0 )); then
+        last_index=$((${#stack[@]} - 1))
+        if [[ "${stack[$last_index]}" != ".." ]]; then
+          unset "stack[$last_index]"
+          continue
+        fi
+      fi
+      stack+=("..")
+      continue
+    fi
+
+    stack+=("$segment")
+  done
+
+  if (( ${#stack[@]} == 0 )); then
+    printf '.\n'
+    return
+  fi
+
+  local output=""
+  for segment in "${stack[@]}"; do
+    if [[ -n "$output" ]]; then
+      output+="/"
+    fi
+    output+="$segment"
+  done
+
+  printf '%s\n' "$output"
+}
+
+normalize_link_path() {
+  local raw_target="$1"
+  local target
+  target="$(trim "$raw_target")"
+
+  if [[ -z "$target" ]]; then
+    return 1
+  fi
+
+  if [[ "${target:0:1}" == "<" ]]; then
+    if [[ "$target" =~ ^\<([^>]*)\> ]]; then
+      target="${BASH_REMATCH[1]}"
+    fi
+  else
+    target="${target%%[[:space:]]*}"
+  fi
+
+  target="${target%%\#*}"
+  target="${target%%\?*}"
+
+  if [[ -z "$target" ]]; then
+    return 1
+  fi
+
+  if [[ "$target" =~ ^(https?|mailto): ]]; then
+    return 1
+  fi
+
+  if [[ "$target" == \#* ]]; then
+    return 1
+  fi
+
+  local combined_path
+  if [[ "$target" == /* ]]; then
+    combined_path="${target#/}"
+  elif [[ -n "$MAP_DIR_REL" ]]; then
+    combined_path="${MAP_DIR_REL}/${target}"
+  else
+    combined_path="$target"
+  fi
+
+  normalize_repo_relative_path "$combined_path"
+}
+
+contains_path() {
+  local needle="$1"
+  local entry
+  local linked=("${linked_paths[@]-}")
+  for entry in "${linked[@]}"; do
+    if [[ "$entry" == "$needle" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+line_number=0
+link_pattern='\[[^][]+\]\(([^)]*)\)'
+while IFS= read -r line || [[ -n "$line" ]]; do
+  line_number=$((line_number + 1))
+  remainder="$line"
+
+  while [[ "$remainder" =~ $link_pattern ]]; do
+    full_match="${BASH_REMATCH[0]}"
+    raw_target="${BASH_REMATCH[1]}"
+    remainder="${remainder#*"$full_match"}"
+
+    if normalized_path="$(normalize_link_path "$raw_target")"; then
+      if ! contains_path "$normalized_path"; then
+        linked_paths+=("$normalized_path")
+      fi
+      if [[ "$normalized_path" == ".." || "$normalized_path" == ../* ]]; then
+        broken_links+=("${MAP_REL}:${line_number}: ${raw_target} -> ${normalized_path} (outside repository)")
+      elif [[ ! -e "$ROOT_DIR/$normalized_path" ]]; then
+        broken_links+=("${MAP_REL}:${line_number}: ${raw_target} -> ${normalized_path}")
+      fi
+    fi
+  done
+done < "$MAP_ABS"
+
+while IFS= read -r -d '' tracked_path; do
+  tracked_path="${tracked_path#./}"
+  if [[ "$tracked_path" == "AGENTS.md" || "$tracked_path" == */AGENTS.md ]]; then
+    all_agents+=("$tracked_path")
+  fi
+done < <(list_agent_guides)
+
+if (( ${#all_agents[@]} > 0 )); then
+  IFS=$'\n' all_agents=($(printf '%s\n' "${all_agents[@]}" | sort))
+  unset IFS
+fi
+
+for agents_path in "${all_agents[@]}"; do
+  if ! contains_path "$agents_path"; then
+    missing_agents+=("$agents_path")
+  fi
+done
+
+if (( ${#missing_agents[@]} > 0 )); then
+  echo "Missing AGENTS.md links in ${MAP_REL}:"
+  printf '  - %s\n' "${missing_agents[@]}"
+fi
+
+if (( ${#broken_links[@]} > 0 )); then
+  echo "Broken local links in ${MAP_REL}:"
+  printf '  - %s\n' "${broken_links[@]}"
+fi
+
+if (( ${#missing_agents[@]} > 0 || ${#broken_links[@]} > 0 )); then
+  exit 1
+fi
+
+echo "agent-map check passed:"
+echo "  - ${#all_agents[@]} AGENTS.md files are indexed."
+echo "  - all local links in ${MAP_REL} resolve."

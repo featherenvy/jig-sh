@@ -15,35 +15,19 @@ This repository uses the shared `jig.sh` workflow. Keep repo-local business rule
 
 - Prefer direct cutovers only for internal code-only changes that can ship in one coordinated deploy.
 - Preserve compatibility or stage rollouts for persisted database state, queued job types, public API contracts, bookmarked routes, webhook boundaries, or source-of-truth moves that can straddle deploys.
-[% if sqlx_enabled %]
-- Never overwrite an existing database migration; add a new forward-only migration instead.
-[% endif %]
+
 
 ## Backend Defaults
 
-- Treat [% for root in rust_crate_roots %]`<<[ root ]>>`[% if not loop.last %], [% endif %][% endfor %] as Rust crate roots.
-[% if sqlx_enabled %]
-- SQL migrations live under `<<[ rust_migration_dir ]>>`.
-- SQLx metadata is committed in `<<[ rust_sqlx_metadata_dir ]>>`.
-[% endif %]
+- Treat `crates` as Rust crate roots.
+
 - Keep transport logic thin and business logic in the owning crate.
-[% if sqlx_enabled %]
-- Keep transaction boundaries explicit and deterministic.
-[% endif %]
+
 
 ## Frontend Defaults
 
-[% if frontend_apps | length > 0 -%]
-Configured web apps:
-
-[% for app in frontend_apps -%]
-- `<<[ app.name ]>>` in `<<[ app.dir ]>>`
-[% endfor %]
-
-Each configured app is expected to support `lint`, `typecheck`, `build:bundle`, and `test:coverage`.
-[% else -%]
 No web apps are configured in `.jig.yml`.
-[% endif %]
+
 
 ## Preferred Commands
 
@@ -52,31 +36,17 @@ No web apps are configured in `.jig.yml`.
 - `make test`
 - `make fmt-check`
 - `make clippy`
-[% if sqlx_enabled %]
-- `make sqlx-check`
-- `make schema-check`
-[% if schema_dump_enabled %]
-- `make schema-dump`
-[% endif %]
-- `make migration-add NAME=...`
-[% endif %]
 - `make contract-check`
 - `make check-agent-map`
 - `make check-agent-guides`
 - `make check-rust-file-loc`
-[% if sqlx_enabled %]
-- `make check-sqlx-unchecked-non-test`
-[% endif %]
+
 - `make ci`
 
 ## Done Means
 
 - Run the relevant local verification for the area you changed.
 - For backend changes, finish with `make test`.
-[% if sqlx_enabled %]
-- For SQLx or migration changes, run `make sqlx-check`.
-- For schema-doc-enabled repos, run `make schema-check`.
-[% endif %]
 - Review the generated diff for stale docs, policy drift, or missing dependent updates.
 
 ## Crate Guide Requirements

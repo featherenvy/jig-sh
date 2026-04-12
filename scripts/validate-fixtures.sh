@@ -193,7 +193,7 @@ send({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
 response = recv()
 tool_names = {tool["name"] for tool in response["result"]["tools"]}
 assert "jig.fmt_check" in tool_names, tool_names
-assert "jig.schema_check" in tool_names, tool_names
+assert ("jig.schema_check" in tool_names) == expect_sqlx, tool_names
 assert ("jig.schema_dump" in tool_names) == expect_schema_dump, tool_names
 assert ("jig.sqlx_check" in tool_names) == expect_sqlx, tool_names
 assert ("jig.migration_add" in tool_names) == expect_sqlx, tool_names
@@ -238,9 +238,9 @@ targets = set(manifest["required_make_targets"])
 tools = {tool["name"] for tool in manifest["tools"]}
 
 assert ("schema-dump" in targets) == expect_schema_dump, manifest
-assert "schema-check" in targets, manifest
+assert ("schema-check" in targets) == expect_sqlx, manifest
 assert ("jig.schema_dump" in tools) == expect_schema_dump, manifest
-assert "jig.schema_check" in tools, manifest
+assert ("jig.schema_check" in tools) == expect_sqlx, manifest
 assert ("sqlx-check" in targets) == expect_sqlx, manifest
 assert ("migration-add" in targets) == expect_sqlx, manifest
 assert ("jig.sqlx_check" in tools) == expect_sqlx, manifest
@@ -268,7 +268,9 @@ PY
     scripts/jig fmt-check --plan-id "$plan_id" >/dev/null
     scripts/jig contract-check --plan-id "$plan_id" >/dev/null
     scripts/jig test --plan-id "$plan_id" >/dev/null
-    scripts/jig schema-check --plan-id "$plan_id" >/dev/null
+    if [[ "$expect_sqlx" == "1" ]]; then
+      scripts/jig schema-check --plan-id "$plan_id" >/dev/null
+    fi
 
     if [[ "$expect_schema_dump" == "1" ]]; then
       scripts/jig schema-dump --plan-id "$plan_id" >/dev/null
@@ -287,11 +289,11 @@ PY
 
     receipts_json="$(scripts/jig receipts-list --plan-id "$plan_id" --limit 20)"
     receipt_count="$(printf '%s' "$receipts_json" | json_get receipts | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')"
-    expected_receipt_count=4
-    if [[ "$expect_schema_dump" == "1" ]]; then
+    expected_receipt_count=3
+    if [[ "$expect_sqlx" == "1" ]]; then
       expected_receipt_count=$((expected_receipt_count + 1))
     fi
-    if [[ "$expect_sqlx" == "1" ]]; then
+    if [[ "$expect_schema_dump" == "1" ]]; then
       expected_receipt_count=$((expected_receipt_count + 1))
     fi
     if [[ "$receipt_count" -lt "$expected_receipt_count" ]]; then
@@ -543,13 +545,18 @@ validate_tooling_only_fixture() {
     rm -rf "$coverage_dir"
     [[ ! -f scripts/add-migration.sh ]]
     [[ ! -f scripts/check-migration-immutability.sh ]]
+    [[ ! -f scripts/check-schema-dump.sh ]]
     [[ ! -f scripts/check-sqlx-unchecked-non-test.sh ]]
     [[ ! -f scripts/generate-sqlx-unchecked-queries-todo.sh ]]
     ! rg -q '^sqlx-db-setup:' Makefile
     ! rg -q '^sqlx-check:' Makefile
+    ! rg -q '^schema-check:' Makefile
+    ! rg -q '^schema-dump:' Makefile
     ! rg -q '^migration-add:' Makefile
     ! rg -q '^check-sqlx-unchecked-non-test:' Makefile
     ! rg -q '"jig\\.sqlx_check"' .agent/jig-contract.json
+    ! rg -q '"jig\\.schema_check"' .agent/jig-contract.json
+    ! rg -q '"jig\\.schema_dump"' .agent/jig-contract.json
     ! rg -q '"jig\\.migration_add"' .agent/jig-contract.json
     ! rg -q 'sqlx-unchecked-queries:' .github/workflows/repo-policy.yml
     ! rg -q 'migration-immutability:' .github/workflows/repo-policy.yml
@@ -560,6 +567,7 @@ validate_tooling_only_fixture() {
     grep -q '^DEFAULT_BRANCH ?= dev$' Makefile
     [[ ! -f scripts/add-migration.sh ]]
     [[ ! -f scripts/check-migration-immutability.sh ]]
+    [[ ! -f scripts/check-schema-dump.sh ]]
     [[ ! -f scripts/check-sqlx-unchecked-non-test.sh ]]
     [[ ! -f scripts/generate-sqlx-unchecked-queries-todo.sh ]]
     validate_jig_runtime "$repo_dir" 0 0

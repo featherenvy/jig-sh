@@ -1,0 +1,59 @@
+name: Repo Policy
+
+on:
+  pull_request:
+    paths:
+
+      - "crates/**"
+
+      - "Makefile"
+
+      - "scripts/check-rust-file-loc.sh"
+      - ".github/workflows/repo-policy.yml"
+  push:
+    branches:
+      - main
+    paths:
+
+      - "crates/**"
+
+      - "Makefile"
+
+      - "scripts/check-rust-file-loc.sh"
+      - ".github/workflows/repo-policy.yml"
+  merge_group:
+    types:
+      - checks_requested
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: repo-policy-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  no-mod-rs:
+    name: Check for disallowed mod.rs files
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Detect disallowed mod.rs files
+        run: |
+          make check-no-mod-rs
+
+  rust-file-loc:
+    name: Enforce agentic-first Rust file size policy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Check Rust file LOC policy
+        run: |
+          make check-rust-file-loc
+
+

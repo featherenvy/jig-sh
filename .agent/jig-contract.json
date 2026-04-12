@@ -2,20 +2,12 @@
   "contract_version": 1,
   "memory_schema_version": 1,
   "tool_namespace": "jig",
-  "jig_version": "<<[ jig_version ]>>",
+  "jig_version": "0.1.0",
   "required_make_targets": [
     "fmt-check",
     "clippy",
     "test",
     "test-rust-locked",
-[% if sqlx_enabled %]
-    "sqlx-check",
-    "migration-add",
-    "schema-check",
-[% endif %]
-[% if sqlx_enabled and schema_dump_enabled %]
-    "schema-dump",
-[% endif %]
     "contract-check"
   ],
   "optional_make_targets": [],
@@ -44,34 +36,6 @@
       "description": "Run make test-rust-locked.",
       "target": "test-rust-locked"
     },
-[% if sqlx_enabled %]
-    {
-      "name": "jig.schema_check",
-      "kind": "make",
-      "description": "Run make schema-check.",
-      "target": "schema-check"
-    },
-[% if schema_dump_enabled %]
-    {
-      "name": "jig.schema_dump",
-      "kind": "make",
-      "description": "Run make schema-dump.",
-      "target": "schema-dump"
-    },
-[% endif %]
-    {
-      "name": "jig.sqlx_check",
-      "kind": "make",
-      "description": "Run make sqlx-check.",
-      "target": "sqlx-check"
-    },
-    {
-      "name": "jig.migration_add",
-      "kind": "make",
-      "description": "Run make migration-add NAME=... .",
-      "target": "migration-add"
-    },
-[% endif %]
     {
       "name": "jig.contract_check",
       "kind": "make",

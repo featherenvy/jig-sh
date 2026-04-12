@@ -1,0 +1,274 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TARGET_LOW=200
+TARGET_HIGH=400
+SOFT_LIMIT_START=500
+SOFT_LIMIT_END=600
+HARD_LIMIT=800
+ABSOLUTE_MAX=1000
+EMPTY_TREE_HASH="4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+
+if [[ -t 1 ]] && [[ -z "${NO_COLOR:-}" ]]; then
+  RED=$'\033[0;31m'
+  YELLOW=$'\033[0;33m'
+  CYAN=$'\033[0;36m'
+  GREEN=$'\033[0;32m'
+  BOLD=$'\033[1m'
+  RESET=$'\033[0m'
+else
+  RED='' YELLOW='' CYAN='' GREEN='' BOLD='' RESET=''
+fi
+
+MODE=""
+COMPARE_REF=""
+PREVIOUS_REF=""
+crate_roots=( "crates" )
+
+usage() {
+  cat <<'EOF'
+Usage:
+  scripts/check-rust-file-loc.sh --staged
+  scripts/check-rust-file-loc.sh --changed-against <git-ref>
+  scripts/check-rust-file-loc.sh --all
+
+Rules:
+  - Target: 200-400 LOC (informational only).
+  - Soft limit: 500-600 LOC (warning).
+  - Hard limit: ~800 LOC (error unless legacy/non-increasing or explicit exception).
+  - Absolute max: ~1000 LOC (error unless legacy/non-increasing).
+
+Explicit exception:
+  - Add `agentic-loc-exception:` within the first 40 lines of the file
+    for rare strong-reason cases in the 801-1000 LOC range.
+EOF
+}
+
+parse_args() {
+  if [[ $# -eq 0 ]]; then
+    usage
+    exit 1
+  fi
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --staged)
+        MODE="staged"
+        ;;
+      --changed-against)
+        MODE="changed"
+        if [[ $# -lt 2 ]]; then
+          echo "--changed-against requires a git ref."
+          usage
+          exit 1
+        fi
+        COMPARE_REF="$2"
+        shift
+        ;;
+      --all)
+        MODE="all"
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      *)
+        echo "Unknown argument: $1"
+        usage
+        exit 1
+        ;;
+    esac
+    shift
+  done
+
+  if [[ -z "$MODE" ]]; then
+    echo "A mode is required."
+    usage
+    exit 1
+  fi
+}
+
+ensure_repo_root() {
+  local root_dir
+  root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  cd "$root_dir"
+}
+
+resolve_previous_ref() {
+  case "$MODE" in
+    staged)
+      if git rev-parse --verify HEAD >/dev/null 2>&1; then
+        PREVIOUS_REF="HEAD"
+      else
+        PREVIOUS_REF="$EMPTY_TREE_HASH"
+      fi
+      ;;
+    changed)
+      PREVIOUS_REF="$COMPARE_REF"
+      ;;
+    all)
+      PREVIOUS_REF="$EMPTY_TREE_HASH"
+      ;;
+  esac
+}
+
+collect_globs() {
+  local globs=()
+  local root
+  for root in "${crate_roots[@]}"; do
+    globs+=("${root}/**/*.rs")
+  done
+  printf '%s\0' "${globs[@]}"
+}
+
+list_candidate_files() {
+  mapfile -d '' -t globs < <(collect_globs)
+  case "$MODE" in
+    staged)
+      git diff --cached --name-only --diff-filter=AMRT -z -- "${globs[@]}"
+      ;;
+    changed)
+      git diff --name-only --diff-filter=AMRT -z "$COMPARE_REF" HEAD -- "${globs[@]}"
+      ;;
+    all)
+      git ls-files -z -- "${globs[@]}"
+      ;;
+  esac
+}
+
+list_rename_status() {
+  mapfile -d '' -t globs < <(collect_globs)
+  case "$MODE" in
+    staged)
+      git diff --cached --name-status --diff-filter=R -z -- "${globs[@]}"
+      ;;
+    changed)
+      git diff --name-status --diff-filter=R -z "$COMPARE_REF" HEAD -- "${globs[@]}"
+      ;;
+    all)
+      return 0
+      ;;
+  esac
+}
+
+find_renamed_source_path() {
+  local target_path="$1"
+  local status=""
+  local old_path=""
+  local new_path=""
+
+  while IFS= read -r -d '' status; do
+    IFS= read -r -d '' old_path || break
+    IFS= read -r -d '' new_path || break
+    if [[ "$new_path" == "$target_path" ]]; then
+      printf '%s\n' "$old_path"
+      return 0
+    fi
+  done < <(list_rename_status)
+
+  return 1
+}
+
+read_current_content() {
+  local file="$1"
+  if [[ "$MODE" == "staged" ]]; then
+    git show ":${file}"
+  else
+    cat "$file"
+  fi
+}
+
+current_line_count() {
+  local file="$1"
+  read_current_content "$file" | wc -l | awk '{print $1}'
+}
+
+has_exception_annotation() {
+  local file="$1"
+  if read_current_content "$file" | sed -n '1,40p' | grep -Eiq 'agentic-loc-exception:|@generated'; then
+    return 0
+  fi
+  return 1
+}
+
+previous_line_count() {
+  local file="$1"
+  local source_path="$file"
+  local renamed_source_path=""
+
+  if ! git cat-file -e "${PREVIOUS_REF}:${source_path}" 2>/dev/null; then
+    if renamed_source_path="$(find_renamed_source_path "$file" 2>/dev/null)"; then
+      source_path="$renamed_source_path"
+    fi
+  fi
+
+  if git cat-file -e "${PREVIOUS_REF}:${source_path}" 2>/dev/null; then
+    git show "${PREVIOUS_REF}:${source_path}" | wc -l | awk '{print $1}'
+    return 0
+  fi
+
+  return 1
+}
+
+parse_args "$@"
+ensure_repo_root
+resolve_previous_ref
+
+had_error=0
+had_warn=0
+
+while IFS= read -r -d '' file; do
+  [[ -f "$file" ]] || continue
+  current_count="$(current_line_count "$file")"
+  previous_count=""
+  if previous_count="$(previous_line_count "$file" 2>/dev/null)"; then
+    :
+  else
+    previous_count=0
+  fi
+
+  if (( current_count > ABSOLUTE_MAX )); then
+    if (( current_count <= previous_count && previous_count > ABSOLUTE_MAX )); then
+      echo "${YELLOW}warning${RESET}: $file remains above the absolute max at ${current_count} LOC but did not increase."
+      had_warn=1
+    else
+      echo "${RED}error${RESET}: $file is ${current_count} LOC, above the absolute max of ${ABSOLUTE_MAX}."
+      had_error=1
+    fi
+    continue
+  fi
+
+  if (( current_count > HARD_LIMIT )); then
+    if (( current_count <= previous_count && previous_count > HARD_LIMIT )); then
+      echo "${YELLOW}warning${RESET}: $file remains above the hard limit at ${current_count} LOC but did not increase."
+      had_warn=1
+    elif has_exception_annotation "$file"; then
+      echo "${YELLOW}warning${RESET}: $file is ${current_count} LOC and uses an explicit exception annotation."
+      had_warn=1
+    else
+      echo "${RED}error${RESET}: $file is ${current_count} LOC, above the hard limit of ${HARD_LIMIT}."
+      had_error=1
+    fi
+    continue
+  fi
+
+  if (( current_count > SOFT_LIMIT_END )); then
+    echo "${YELLOW}warning${RESET}: $file is ${current_count} LOC and is approaching the hard limit."
+    had_warn=1
+  elif (( current_count > SOFT_LIMIT_START )); then
+    echo "${YELLOW}warning${RESET}: $file is ${current_count} LOC and is above the soft limit."
+    had_warn=1
+  elif (( current_count > TARGET_HIGH )); then
+    echo "${CYAN}info${RESET}: $file is ${current_count} LOC and is approaching the soft limit."
+  fi
+done < <(list_candidate_files)
+
+if (( had_error > 0 )); then
+  exit 1
+fi
+
+if (( had_warn > 0 )); then
+  echo "${BOLD}Rust LOC check completed with warnings.${RESET}"
+else
+  echo "${GREEN}Rust LOC check passed.${RESET}"
+fi

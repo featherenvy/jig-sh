@@ -47,8 +47,8 @@ When `sqlx_enabled` is `true`, these additional keys are required:
 
 ## Optional Keys
 
-- `schema_dump_enabled`: when `true`, `make schema-check` executes `schema_dump_command`
-- `schema_dump_command`: command that regenerates schema docs
+- `schema_dump_enabled`: when `true` and `sqlx_enabled` is also `true`, `make schema-check` executes `schema_dump_command`
+- `schema_dump_command`: command that regenerates schema docs for SQLx-enabled repos
 - `migration_add_command`: command behind `make migration-add` when `sqlx_enabled` is `true`
 - `bootstrap_command`: implementation behind `make bootstrap`
 - `dev_command`: implementation behind `make dev`
@@ -93,8 +93,6 @@ The generated `Makefile` exposes these stable targets:
 - `test-rust`
 - `test-rust-locked`
 - `test`
-- `schema-check`
-- `schema-dump`
 - `contract-check`
 - `check-agent-map`
 - `check-agent-guides`
@@ -106,8 +104,13 @@ When `sqlx_enabled` is `true`, generated repos also expose:
 
 - `sqlx-db-setup`
 - `sqlx-check`
+- `schema-check`
 - `migration-add`
 - `check-sqlx-unchecked-non-test`
+
+When both `sqlx_enabled` and `schema_dump_enabled` are `true`, generated repos also expose:
+
+- `schema-dump`
 
 Downstream repos may add more targets, but these names should remain stable for agent tooling.
 

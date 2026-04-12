@@ -20,6 +20,7 @@ const ALWAYS_TASK_MUTATED_PATHS: &[&str] = &[".jig.yml", "agent-map.md"];
 const SQLX_PRUNED_TASK_PATHS: &[&str] = &[
     "scripts/add-migration.sh",
     "scripts/check-migration-immutability.sh",
+    "scripts/check-schema-dump.sh",
     "scripts/check-sqlx-unchecked-non-test.sh",
     "scripts/generate-sqlx-unchecked-queries-todo.sh",
 ];
@@ -190,6 +191,7 @@ struct PreparedTemplateSource {
 #[derive(Debug, Clone)]
 struct StoredTemplateState {
     src_path: String,
+    default_branch: Option<String>,
     template_mode: Option<TemplateMode>,
     template_local_path: Option<String>,
 }
@@ -338,23 +340,61 @@ pub fn run_update(opts: UpdateOpts) -> Result<Value> {
     let stored = read_stored_template_state(&answers_path)?;
     let mut update_template = None;
     let mut answers_postwrite = None;
+    let source_override_requested = opts.template.is_some() || opts.template_mode.is_some();
+    let committed_vcs_ref_update =
+        opts.vcs_ref.is_some() && stored.template_mode != Some(TemplateMode::WorkingTree);
 
-    if opts.template.is_some() || opts.template_mode.is_some() {
-        let template_arg = opts.template.as_deref().unwrap_or(&stored.src_path);
+    if source_override_requested || committed_vcs_ref_update {
+        let template_arg = opts.template.as_deref().unwrap_or_else(|| {
+            if stored.template_mode == Some(TemplateMode::WorkingTree)
+                && opts.template_mode == Some(TemplateMode::Committed)
+            {
+                stored_template_local_path(&stored)
+            } else {
+                &stored.src_path
+            }
+        });
+        let template_mode = opts.template_mode.or({
+            if is_remote_template_source(template_arg) {
+                None
+            } else {
+                stored.template_mode
+            }
+        });
         let prepared = prepare_template_source(
             template_arg,
-            opts.template_mode.or(stored.template_mode),
+            template_mode,
             opts.vcs_ref.as_deref(),
             &destination,
             true,
         )?;
-        if !stored.src_path.is_empty() && prepared.copier_template != stored.src_path {
+        if !stored.src_path.is_empty() && !template_identities_match(&stored, &prepared) {
             bail!(
                 "jig update cannot switch template source paths in-place. Re-run with the existing source path, or re-adopt the repo from the new template source."
             );
         }
-        update_template = Some(prepared);
-        answers_postwrite = update_template.clone();
+        if stored.template_mode == Some(TemplateMode::WorkingTree)
+            && prepared.private_answers.template_mode == Some(TemplateMode::Committed)
+        {
+            let template_root = absolute_path(Path::new(stored_template_local_path(&stored)))?;
+            let snapshot_root = absolute_path(Path::new(&stored.src_path))?;
+            let committed_vcs_ref = prepared.vcs_ref.as_deref().ok_or_else(|| {
+                anyhow::anyhow!("Missing committed template ref for relink update")
+            })?;
+            update_template = Some(prepare_snapshot_update_source(
+                &template_root,
+                &snapshot_root,
+                committed_vcs_ref,
+            )?);
+            answers_postwrite = Some(prepared);
+        } else {
+            update_template = Some(prepared.clone());
+            answers_postwrite = Some(final_update_template_state(&stored, &prepared));
+        }
+    } else if opts.vcs_ref.is_some() {
+        bail!(
+            "--vcs-ref requires a committed template source. Re-run with --template-mode committed when updating a working-tree template checkout."
+        );
     } else {
         if stored.template_mode == Some(TemplateMode::WorkingTree) {
             let local_path = stored.template_local_path.as_deref().ok_or_else(|| {
@@ -374,11 +414,11 @@ pub fn run_update(opts: UpdateOpts) -> Result<Value> {
             answers_postwrite = update_template.clone();
         }
     }
-
     run_copier(
         build_update_spec(
             mode,
             &destination,
+            Path::new(ANSWERS_FILE),
             update_template
                 .as_ref()
                 .and_then(|prepared| prepared.vcs_ref.as_deref())
@@ -388,7 +428,8 @@ pub fn run_update(opts: UpdateOpts) -> Result<Value> {
         Some(&destination),
         !(opts.defaults || opts.no_input),
     )?;
-    if let Some(prepared) = answers_postwrite {
+    if let Some(mut prepared) = answers_postwrite {
+        refresh_postwrite_template_metadata(&answers_path, &mut prepared)?;
         rewrite_private_template_answers(&answers_path, &prepared)?;
     }
 
@@ -436,6 +477,12 @@ fn prepare_template_source(
     }
 
     if !is_git_work_tree(&local_template) {
+        if vcs_ref.is_some() {
+            bail!(
+                "--vcs-ref only applies to remote templates or local git template paths: {}",
+                local_template.display()
+            );
+        }
         if template_mode.is_some() {
             bail!(
                 "Local template mode requires a git working tree: {}",
@@ -471,7 +518,7 @@ fn prepare_committed_template_source(
 ) -> Result<PreparedTemplateSource> {
     ensure_clean_git_work_tree(template_root)?;
     let resolved_vcs_ref = match vcs_ref {
-        Some(value) => value.to_string(),
+        Some(value) => git_stdout(template_root, ["rev-parse", &format!("{value}^{{commit}}")])?,
         None => git_stdout(template_root, ["rev-parse", "HEAD"])?,
     };
 
@@ -504,11 +551,32 @@ fn prepare_working_tree_template_source(
     })
 }
 
+fn prepare_snapshot_update_source(
+    template_root: &Path,
+    snapshot_root: &Path,
+    vcs_ref: &str,
+) -> Result<PreparedTemplateSource> {
+    ensure_clean_git_work_tree(template_root)?;
+    let snapshot_commit =
+        refresh_template_snapshot_from_ref(template_root, snapshot_root, vcs_ref, true)?;
+
+    Ok(PreparedTemplateSource {
+        copier_template: snapshot_root.display().to_string(),
+        vcs_ref: Some(snapshot_commit),
+        private_answers: PrivateAnswerOverrides::default(),
+    })
+}
+
 fn rewrite_private_template_answers(
     answers_path: &Path,
     template: &PreparedTemplateSource,
 ) -> Result<()> {
     let mut answers = read_answers_yaml(answers_path)?;
+    apply_private_template_answers(&mut answers, template);
+    write_answers_yaml(answers_path, &answers)
+}
+
+fn apply_private_template_answers(answers: &mut Mapping, template: &PreparedTemplateSource) {
     answers.insert(
         YamlValue::String("_src_path".into()),
         YamlValue::String(template.copier_template.clone()),
@@ -518,7 +586,7 @@ fn rewrite_private_template_answers(
         YamlValue::String(template.vcs_ref.clone().unwrap_or_default()),
     );
     set_optional_yaml_string(
-        &mut answers,
+        answers,
         TEMPLATE_MODE_KEY,
         template
             .private_answers
@@ -526,16 +594,16 @@ fn rewrite_private_template_answers(
             .map(TemplateMode::as_str),
     );
     set_optional_yaml_string(
-        &mut answers,
+        answers,
         TEMPLATE_LOCAL_PATH_KEY,
         template.private_answers.template_local_path.as_deref(),
     );
-    write_answers_yaml(answers_path, &answers)
 }
 
 fn read_stored_template_state(answers_path: &Path) -> Result<StoredTemplateState> {
     Ok(StoredTemplateState {
         src_path: read_optional_answer_string(answers_path, "_src_path")?.unwrap_or_default(),
+        default_branch: read_optional_answer_string(answers_path, "default_branch")?,
         template_mode: read_optional_answer_string(answers_path, TEMPLATE_MODE_KEY)?
             .as_deref()
             .map(parse_template_mode_answer)
@@ -549,6 +617,126 @@ fn parse_template_mode_answer(value: &str) -> Result<TemplateMode> {
         "committed" => Ok(TemplateMode::Committed),
         "working-tree" => Ok(TemplateMode::WorkingTree),
         other => bail!("Unsupported template mode '{other}' in {}", ANSWERS_FILE),
+    }
+}
+
+fn stored_template_local_path(stored: &StoredTemplateState) -> &str {
+    stored
+        .template_local_path
+        .as_deref()
+        .unwrap_or(&stored.src_path)
+}
+
+fn template_identities_match(
+    stored: &StoredTemplateState,
+    prepared: &PreparedTemplateSource,
+) -> bool {
+    let stored_identities = [
+        Some(stored.src_path.as_str()),
+        stored.template_local_path.as_deref(),
+    ];
+    let prepared_identities = [
+        Some(prepared.copier_template.as_str()),
+        prepared.private_answers.template_local_path.as_deref(),
+    ];
+
+    stored_identities
+        .into_iter()
+        .flatten()
+        .any(|stored_identity| {
+            prepared_identities
+                .into_iter()
+                .flatten()
+                .any(|prepared_identity| stored_identity == prepared_identity)
+        })
+}
+
+fn final_update_template_state(
+    stored: &StoredTemplateState,
+    prepared: &PreparedTemplateSource,
+) -> PreparedTemplateSource {
+    let mut final_template = prepared.clone();
+    let same_committed_template = stored.template_mode == Some(TemplateMode::Committed)
+        && template_identities_match(stored, prepared);
+
+    if same_committed_template {
+        if final_template.private_answers.template_mode.is_none() {
+            final_template.private_answers.template_mode = stored.template_mode;
+        }
+        if final_template.private_answers.template_local_path.is_none() {
+            final_template.private_answers.template_local_path = stored.template_local_path.clone();
+        }
+    }
+
+    if same_committed_template
+        && final_template.private_answers.template_mode == Some(TemplateMode::Committed)
+        && is_remote_template_source(&stored.src_path)
+        && prepared.vcs_ref.is_some()
+        && stored.default_branch.is_some()
+    {
+        let (commit, branch) = prepared
+            .vcs_ref
+            .as_deref()
+            .zip(stored.default_branch.as_deref())
+            .expect("checked above");
+        if remote_template_commit_reachability(&stored.src_path, commit, branch)
+            != RemoteCommitReachability::Unreachable
+        {
+            final_template.copier_template = stored.src_path.clone();
+        }
+    }
+    final_template
+}
+
+fn refresh_postwrite_template_metadata(
+    answers_path: &Path,
+    template: &mut PreparedTemplateSource,
+) -> Result<()> {
+    if is_remote_template_source(&template.copier_template) {
+        template.vcs_ref = read_optional_answer_string(answers_path, "_commit")?;
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RemoteCommitReachability {
+    Reachable,
+    Unreachable,
+    Unknown,
+}
+
+fn remote_template_commit_reachability(
+    source: &str,
+    commit: &str,
+    branch: &str,
+) -> RemoteCommitReachability {
+    let probe = match tempfile::tempdir() {
+        Ok(probe) => probe,
+        Err(_) => return RemoteCommitReachability::Unknown,
+    };
+    if git(probe.path(), ["init", "--bare"]).is_err() {
+        return RemoteCommitReachability::Unknown;
+    }
+    let fetch_ref = format!("refs/heads/{branch}:refs/remotes/origin/{branch}");
+    if git(probe.path(), ["fetch", "--quiet", source, &fetch_ref]).is_err() {
+        return RemoteCommitReachability::Unknown;
+    }
+
+    if git_command(
+        probe.path(),
+        [
+            "merge-base",
+            "--is-ancestor",
+            commit,
+            &format!("origin/{branch}"),
+        ],
+    )
+    .output()
+    .is_ok_and(|output| output.status.success())
+    {
+        RemoteCommitReachability::Reachable
+    } else {
+        RemoteCommitReachability::Unreachable
     }
 }
 
@@ -594,6 +782,38 @@ fn refresh_template_snapshot(
     }
 
     git_stdout(snapshot_root, ["rev-parse", "HEAD"])
+}
+
+fn refresh_template_snapshot_from_ref(
+    template_root: &Path,
+    snapshot_root: &Path,
+    vcs_ref: &str,
+    update_existing: bool,
+) -> Result<String> {
+    let worktree_root = TempDir::new().context("Failed to create temporary worktree root")?;
+    let worktree_path = worktree_root.path().join("template");
+    git(
+        template_root,
+        [
+            "worktree",
+            "add",
+            "--detach",
+            &worktree_path.display().to_string(),
+            vcs_ref,
+        ],
+    )?;
+
+    let result = refresh_template_snapshot(&worktree_path, snapshot_root, update_existing);
+    let _ = git(
+        template_root,
+        [
+            "worktree",
+            "remove",
+            "--force",
+            &worktree_path.display().to_string(),
+        ],
+    );
+    result
 }
 
 fn ensure_git_repo(path: &Path) -> Result<()> {
@@ -1052,6 +1272,7 @@ fn build_copy_spec(
 fn build_update_spec(
     mode: CopierMode,
     destination: &Path,
+    answers_file: &Path,
     vcs_ref: Option<&str>,
     defaults: bool,
 ) -> CopierCommandSpec {
@@ -1062,7 +1283,7 @@ fn build_update_spec(
         mode.as_str().into(),
         "--trust".into(),
         "--answers-file".into(),
-        ANSWERS_FILE.into(),
+        answers_file.display().to_string(),
     ];
     if defaults || mode == CopierMode::Recopy {
         args.push("--defaults".into());
@@ -1541,20 +1762,27 @@ mod tests {
             let destination_path = destination.join(entry.file_name());
             let file_type = entry.file_type().unwrap();
 
+            if entry.file_name() == ".git" {
+                continue;
+            }
+
             if file_type.is_dir() {
-                if entry.file_name() == ".git" {
-                    continue;
-                }
                 copy_dir_recursive(&source_path, &destination_path);
                 continue;
             }
 
             if file_type.is_symlink() {
+                if let Some(parent) = destination_path.parent() {
+                    fs::create_dir_all(parent).unwrap();
+                }
                 let target = fs::read_link(&source_path).unwrap();
                 create_symlink(&target, &destination_path).unwrap();
                 continue;
             }
 
+            if let Some(parent) = destination_path.parent() {
+                fs::create_dir_all(parent).unwrap();
+            }
             fs::copy(&source_path, &destination_path).unwrap();
         }
     }
@@ -1640,7 +1868,13 @@ mod tests {
 
     #[test]
     fn build_update_spec_switches_to_recopy_and_overwrite() {
-        let spec = build_update_spec(CopierMode::Recopy, Path::new("/tmp/dest"), None, false);
+        let spec = build_update_spec(
+            CopierMode::Recopy,
+            Path::new("/tmp/dest"),
+            Path::new("/tmp/dest/.jig.yml"),
+            None,
+            false,
+        );
         assert_eq!(spec.args[3], "recopy");
         assert!(spec.args.contains(&"--defaults".to_string()));
         assert!(spec.args.contains(&"--overwrite".to_string()));
@@ -2076,6 +2310,44 @@ mod tests {
         assert!(answers.contains("sqlx_enabled: true"));
     }
 
+    #[test]
+    fn adopt_with_sqlx_and_schema_dumps_disabled_hides_schema_dump_target() {
+        let _guard = lock_env();
+        let temp = tempdir().unwrap();
+        let repo = temp.path().join("repo");
+        let template = materialize_template_git_worktree();
+        fs::create_dir_all(repo.join("crates/api")).unwrap();
+        fs::write(repo.join("crates/api/AGENTS.md"), "crate guide").unwrap();
+
+        run_adopt(AdoptOpts {
+            path: repo.clone(),
+            template: template.path().display().to_string(),
+            template_mode: Some(TemplateMode::Committed),
+            vcs_ref: None,
+            force: false,
+            defaults: true,
+            no_input: true,
+            answers: AnswerOpts {
+                repo_name: Some("demo".into()),
+                sqlx_enabled: Some(true),
+                schema_dump_enabled: Some(false),
+                rust_migration_dir: Some("migrations".into()),
+                rust_sqlx_metadata_dir: Some(".sqlx".into()),
+                migration_add_command: Some("scripts/add-migration.sh".into()),
+                ..AnswerOpts::default()
+            },
+        })
+        .unwrap();
+
+        let makefile = fs::read_to_string(repo.join("Makefile")).unwrap();
+        assert!(!makefile.contains("schema-dump: ##"));
+        assert!(!makefile.contains(" schema-dump "));
+
+        let contract = fs::read_to_string(repo.join(".agent/jig-contract.json")).unwrap();
+        assert!(!contract.contains("\"schema-dump\""));
+        assert!(!contract.contains("jig.schema_dump"));
+    }
+
     fn init_git_repo_for_test(path: &Path) {
         git(path, ["init", "-b", "main"]).unwrap();
         git(path, ["config", "user.name", "Fixture"]).unwrap();
@@ -2224,5 +2496,565 @@ mod tests {
         assert!(root_guide.contains("Updated Working Tree Marker"));
         let answers = fs::read_to_string(repo.join(".jig.yml")).unwrap();
         assert!(answers.contains("_template_mode: working-tree"));
+    }
+
+    #[test]
+    fn update_can_relink_working_tree_repo_to_committed_template_mode() {
+        let temp = tempdir().unwrap();
+        let repo = temp.path().join("repo");
+        let template = materialize_template_git_worktree();
+        fs::create_dir_all(repo.join("crates/api")).unwrap();
+        fs::write(repo.join("crates/api/AGENTS.md"), "crate guide").unwrap();
+        fs::write(
+            template.path().join("templates/project/AGENTS.md.jinja"),
+            "# Working Tree Marker\n",
+        )
+        .unwrap();
+
+        run_adopt(AdoptOpts {
+            path: repo.clone(),
+            template: template.path().display().to_string(),
+            template_mode: Some(TemplateMode::WorkingTree),
+            vcs_ref: None,
+            force: false,
+            defaults: true,
+            no_input: true,
+            answers: AnswerOpts {
+                repo_name: Some("demo".into()),
+                sqlx_enabled: Some(false),
+                ..AnswerOpts::default()
+            },
+        })
+        .unwrap();
+        init_git_repo_for_test(&repo);
+        git(&repo, ["add", "."]).unwrap();
+        git(&repo, ["commit", "-m", "adopt"]).unwrap();
+        fs::write(repo.join("AGENTS.md"), "# Repo Marker\n").unwrap();
+        git(&repo, ["add", "AGENTS.md"]).unwrap();
+        git(&repo, ["commit", "-m", "repo change"]).unwrap();
+
+        git(
+            template.path(),
+            ["checkout", "--", "templates/project/AGENTS.md.jinja"],
+        )
+        .unwrap();
+
+        run_update(UpdateOpts {
+            path: repo.clone(),
+            template: Some(template.path().display().to_string()),
+            template_mode: Some(TemplateMode::Committed),
+            recopy: false,
+            vcs_ref: None,
+            defaults: true,
+            no_input: true,
+        })
+        .unwrap();
+
+        let root_guide = fs::read_to_string(repo.join("AGENTS.md")).unwrap();
+        assert!(!root_guide.contains("Working Tree Marker"));
+        assert!(root_guide.contains("Repo Marker"));
+
+        let answers = fs::read_to_string(repo.join(".jig.yml")).unwrap();
+        assert!(answers.contains("_template_mode: committed"));
+        assert!(answers.contains(&template.path().display().to_string()));
+        assert!(!answers.contains(TEMPLATE_CACHE_RELATIVE_PATH));
+    }
+
+    #[test]
+    fn update_relink_to_committed_mode_honors_requested_vcs_ref() {
+        let temp = tempdir().unwrap();
+        let repo = temp.path().join("repo");
+        let template = materialize_template_git_worktree();
+        fs::create_dir_all(repo.join("crates/api")).unwrap();
+        fs::write(repo.join("crates/api/AGENTS.md"), "crate guide").unwrap();
+
+        fs::write(
+            template.path().join("templates/project/AGENTS.md.jinja"),
+            "# Older Marker\n",
+        )
+        .unwrap();
+        git(
+            template.path(),
+            ["add", "templates/project/AGENTS.md.jinja"],
+        )
+        .unwrap();
+        git(template.path(), ["commit", "-m", "older template"]).unwrap();
+        let old_ref = git_stdout(template.path(), ["rev-parse", "HEAD"]).unwrap();
+
+        fs::write(
+            template.path().join("templates/project/AGENTS.md.jinja"),
+            "# Newer Marker\n",
+        )
+        .unwrap();
+        git(
+            template.path(),
+            ["add", "templates/project/AGENTS.md.jinja"],
+        )
+        .unwrap();
+        git(template.path(), ["commit", "-m", "newer template"]).unwrap();
+
+        run_adopt(AdoptOpts {
+            path: repo.clone(),
+            template: template.path().display().to_string(),
+            template_mode: Some(TemplateMode::WorkingTree),
+            vcs_ref: None,
+            force: false,
+            defaults: true,
+            no_input: true,
+            answers: AnswerOpts {
+                repo_name: Some("demo".into()),
+                sqlx_enabled: Some(false),
+                ..AnswerOpts::default()
+            },
+        })
+        .unwrap();
+        init_git_repo_for_test(&repo);
+        git(&repo, ["add", "."]).unwrap();
+        git(&repo, ["commit", "-m", "adopt"]).unwrap();
+
+        run_update(UpdateOpts {
+            path: repo.clone(),
+            template: Some(template.path().display().to_string()),
+            template_mode: Some(TemplateMode::Committed),
+            recopy: false,
+            vcs_ref: Some(old_ref.clone()),
+            defaults: true,
+            no_input: true,
+        })
+        .unwrap();
+
+        let root_guide = fs::read_to_string(repo.join("AGENTS.md")).unwrap();
+        assert!(root_guide.contains("Older Marker"));
+        assert!(!root_guide.contains("Newer Marker"));
+
+        let answers_path = repo.join(".jig.yml");
+        assert_eq!(
+            read_optional_answer_string(&answers_path, "_commit")
+                .unwrap()
+                .as_deref(),
+            Some(old_ref.as_str())
+        );
+    }
+
+    #[test]
+    fn update_can_relink_working_tree_repo_to_committed_mode_without_template_override() {
+        let temp = tempdir().unwrap();
+        let repo = temp.path().join("repo");
+        let template = materialize_template_git_worktree();
+        fs::create_dir_all(repo.join("crates/api")).unwrap();
+        fs::write(repo.join("crates/api/AGENTS.md"), "crate guide").unwrap();
+        fs::write(
+            template.path().join("templates/project/AGENTS.md.jinja"),
+            "# Working Tree Marker\n",
+        )
+        .unwrap();
+
+        run_adopt(AdoptOpts {
+            path: repo.clone(),
+            template: template.path().display().to_string(),
+            template_mode: Some(TemplateMode::WorkingTree),
+            vcs_ref: None,
+            force: false,
+            defaults: true,
+            no_input: true,
+            answers: AnswerOpts {
+                repo_name: Some("demo".into()),
+                sqlx_enabled: Some(false),
+                ..AnswerOpts::default()
+            },
+        })
+        .unwrap();
+        init_git_repo_for_test(&repo);
+        git(&repo, ["add", "."]).unwrap();
+        git(&repo, ["commit", "-m", "adopt"]).unwrap();
+        fs::write(repo.join("AGENTS.md"), "# Repo Marker\n").unwrap();
+        git(&repo, ["add", "AGENTS.md"]).unwrap();
+        git(&repo, ["commit", "-m", "repo change"]).unwrap();
+
+        git(
+            template.path(),
+            ["checkout", "--", "templates/project/AGENTS.md.jinja"],
+        )
+        .unwrap();
+
+        run_update(UpdateOpts {
+            path: repo.clone(),
+            template: None,
+            template_mode: Some(TemplateMode::Committed),
+            recopy: false,
+            vcs_ref: None,
+            defaults: true,
+            no_input: true,
+        })
+        .unwrap();
+
+        let root_guide = fs::read_to_string(repo.join("AGENTS.md")).unwrap();
+        assert!(!root_guide.contains("Working Tree Marker"));
+        assert!(root_guide.contains("Repo Marker"));
+
+        let answers = fs::read_to_string(repo.join(".jig.yml")).unwrap();
+        assert!(answers.contains("_template_mode: committed"));
+        assert!(
+            answers.contains(
+                &absolute_path(template.path())
+                    .unwrap()
+                    .display()
+                    .to_string()
+            )
+        );
+        assert!(!answers.contains(TEMPLATE_CACHE_RELATIVE_PATH));
+    }
+
+    #[test]
+    fn update_committed_mode_with_vcs_ref_only_updates_metadata() {
+        let temp = tempdir().unwrap();
+        let repo = temp.path().join("repo");
+        let template = materialize_template_git_worktree();
+        fs::create_dir_all(repo.join("crates/api")).unwrap();
+        fs::write(repo.join("crates/api/AGENTS.md"), "crate guide").unwrap();
+
+        fs::write(
+            template.path().join("templates/project/AGENTS.md.jinja"),
+            "# Older Marker\n",
+        )
+        .unwrap();
+        git(
+            template.path(),
+            ["add", "templates/project/AGENTS.md.jinja"],
+        )
+        .unwrap();
+        git(template.path(), ["commit", "-m", "older template"]).unwrap();
+
+        run_adopt(AdoptOpts {
+            path: repo.clone(),
+            template: template.path().display().to_string(),
+            template_mode: Some(TemplateMode::Committed),
+            vcs_ref: None,
+            force: false,
+            defaults: true,
+            no_input: true,
+            answers: AnswerOpts {
+                repo_name: Some("demo".into()),
+                sqlx_enabled: Some(false),
+                ..AnswerOpts::default()
+            },
+        })
+        .unwrap();
+        init_git_repo_for_test(&repo);
+        git(&repo, ["add", "."]).unwrap();
+        git(&repo, ["commit", "-m", "adopt"]).unwrap();
+
+        fs::write(
+            template.path().join("templates/project/AGENTS.md.jinja"),
+            "# Newer Marker\n",
+        )
+        .unwrap();
+        git(
+            template.path(),
+            ["add", "templates/project/AGENTS.md.jinja"],
+        )
+        .unwrap();
+        git(template.path(), ["commit", "-m", "newer template"]).unwrap();
+        let new_ref = git_stdout(template.path(), ["rev-parse", "HEAD"]).unwrap();
+
+        run_update(UpdateOpts {
+            path: repo.clone(),
+            template: None,
+            template_mode: None,
+            recopy: false,
+            vcs_ref: Some(new_ref.clone()),
+            defaults: true,
+            no_input: true,
+        })
+        .unwrap();
+
+        let root_guide = fs::read_to_string(repo.join("AGENTS.md")).unwrap();
+        assert!(root_guide.contains("Newer Marker"));
+        assert!(!root_guide.contains("Older Marker"));
+
+        let answers_path = repo.join(".jig.yml");
+        assert_eq!(
+            read_optional_answer_string(&answers_path, "_commit")
+                .unwrap()
+                .as_deref(),
+            Some(new_ref.as_str())
+        );
+    }
+
+    #[test]
+    fn init_rejects_vcs_ref_for_non_git_local_template() {
+        let temp = tempdir().unwrap();
+        let destination = temp.path().join("repo");
+        let template = materialize_template_worktree();
+
+        fs::remove_dir_all(template.path().join(".git")).ok();
+
+        let error = run_init(InitOpts {
+            path: destination,
+            template: template.path().display().to_string(),
+            template_mode: None,
+            vcs_ref: Some("main".into()),
+            force: false,
+            defaults: true,
+            no_input: true,
+            answers: AnswerOpts {
+                repo_name: Some("demo".into()),
+                sqlx_enabled: Some(false),
+                ..AnswerOpts::default()
+            },
+        })
+        .unwrap_err()
+        .to_string();
+
+        assert!(
+            error
+                .contains("--vcs-ref only applies to remote templates or local git template paths")
+        );
+    }
+
+    #[test]
+    fn update_committed_mode_keeps_normalized_remote_source_when_commit_is_reachable() {
+        let _guard = lock_env();
+        let temp = tempdir().unwrap();
+        let repo = temp.path().join("repo");
+        let remote = temp.path().join("template-remote.git");
+        let template = materialize_template_git_worktree();
+        let remote_url = format!("file://{}", remote.display());
+        fs::create_dir_all(repo.join("crates/api")).unwrap();
+        fs::write(repo.join("crates/api/AGENTS.md"), "crate guide").unwrap();
+        git(
+            template.path(),
+            [
+                "clone",
+                "--bare",
+                &template.path().display().to_string(),
+                &remote.display().to_string(),
+            ],
+        )
+        .unwrap();
+
+        run_adopt(AdoptOpts {
+            path: repo.clone(),
+            template: template.path().display().to_string(),
+            template_mode: Some(TemplateMode::Committed),
+            vcs_ref: None,
+            force: false,
+            defaults: true,
+            no_input: true,
+            answers: AnswerOpts {
+                repo_name: Some("demo".into()),
+                sqlx_enabled: Some(false),
+                ..AnswerOpts::default()
+            },
+        })
+        .unwrap();
+        init_git_repo_for_test(&repo);
+        git(&repo, ["add", "."]).unwrap();
+        git(&repo, ["commit", "-m", "adopt"]).unwrap();
+
+        let answers_path = repo.join(".jig.yml");
+        let mut answers = read_answers_yaml(&answers_path).unwrap();
+        answers.insert(
+            YamlValue::String("_src_path".into()),
+            YamlValue::String(remote_url.clone()),
+        );
+        write_answers_yaml(&answers_path, &answers).unwrap();
+        git(&repo, ["add", ".jig.yml"]).unwrap();
+        git(&repo, ["commit", "-m", "normalize source"]).unwrap();
+
+        fs::write(
+            template.path().join("templates/project/AGENTS.md.jinja"),
+            "# Remote Source Marker\n",
+        )
+        .unwrap();
+        git(
+            template.path(),
+            ["add", "templates/project/AGENTS.md.jinja"],
+        )
+        .unwrap();
+        git(template.path(), ["commit", "-m", "template update"]).unwrap();
+        git(
+            template.path(),
+            ["push", &remote_url, "HEAD:refs/heads/main"],
+        )
+        .unwrap();
+
+        run_update(UpdateOpts {
+            path: repo.clone(),
+            template: Some(template.path().display().to_string()),
+            template_mode: Some(TemplateMode::Committed),
+            recopy: false,
+            vcs_ref: None,
+            defaults: true,
+            no_input: true,
+        })
+        .unwrap();
+
+        let root_guide = fs::read_to_string(repo.join("AGENTS.md")).unwrap();
+        assert!(root_guide.contains("Remote Source Marker"));
+
+        let answers = fs::read_to_string(&answers_path).unwrap();
+        assert!(answers.contains(&remote_url));
+        assert!(!answers.contains(&format!("_src_path: '{}'", template.path().display())));
+    }
+
+    #[test]
+    fn update_committed_mode_accepts_explicit_normalized_remote_template_source() {
+        let _guard = lock_env();
+        let temp = tempdir().unwrap();
+        let repo = temp.path().join("repo");
+        let remote = temp.path().join("template-remote.git");
+        let template = materialize_template_git_worktree();
+        let remote_url = format!("file://{}", remote.display());
+        fs::create_dir_all(repo.join("crates/api")).unwrap();
+        fs::write(repo.join("crates/api/AGENTS.md"), "crate guide").unwrap();
+        git(
+            template.path(),
+            [
+                "clone",
+                "--bare",
+                &template.path().display().to_string(),
+                &remote.display().to_string(),
+            ],
+        )
+        .unwrap();
+
+        run_adopt(AdoptOpts {
+            path: repo.clone(),
+            template: template.path().display().to_string(),
+            template_mode: Some(TemplateMode::Committed),
+            vcs_ref: None,
+            force: false,
+            defaults: true,
+            no_input: true,
+            answers: AnswerOpts {
+                repo_name: Some("demo".into()),
+                sqlx_enabled: Some(false),
+                ..AnswerOpts::default()
+            },
+        })
+        .unwrap();
+        init_git_repo_for_test(&repo);
+        git(&repo, ["add", "."]).unwrap();
+        git(&repo, ["commit", "-m", "adopt"]).unwrap();
+
+        let answers_path = repo.join(".jig.yml");
+        let mut answers = read_answers_yaml(&answers_path).unwrap();
+        answers.insert(
+            YamlValue::String("_src_path".into()),
+            YamlValue::String(remote_url.clone()),
+        );
+        write_answers_yaml(&answers_path, &answers).unwrap();
+        git(&repo, ["add", ".jig.yml"]).unwrap();
+        git(&repo, ["commit", "-m", "normalize source"]).unwrap();
+
+        fs::write(
+            template.path().join("templates/project/AGENTS.md.jinja"),
+            "# Explicit Remote Marker\n",
+        )
+        .unwrap();
+        git(
+            template.path(),
+            ["add", "templates/project/AGENTS.md.jinja"],
+        )
+        .unwrap();
+        git(template.path(), ["commit", "-m", "template update"]).unwrap();
+        let new_commit = git_stdout(template.path(), ["rev-parse", "HEAD"]).unwrap();
+        git(
+            template.path(),
+            ["push", &remote_url, "HEAD:refs/heads/main"],
+        )
+        .unwrap();
+
+        run_update(UpdateOpts {
+            path: repo.clone(),
+            template: Some(remote_url.clone()),
+            template_mode: None,
+            recopy: false,
+            vcs_ref: Some("main".into()),
+            defaults: true,
+            no_input: true,
+        })
+        .unwrap();
+
+        let root_guide = fs::read_to_string(repo.join("AGENTS.md")).unwrap();
+        assert!(root_guide.contains("Explicit Remote Marker"));
+        let expected_local_path = absolute_path(template.path())
+            .unwrap()
+            .display()
+            .to_string();
+        let answers = read_answers_yaml(&answers_path).unwrap();
+        assert_eq!(
+            answers
+                .get(YamlValue::String("_src_path".into()))
+                .and_then(YamlValue::as_str),
+            Some(remote_url.as_str())
+        );
+        assert_eq!(
+            answers
+                .get(YamlValue::String("_commit".into()))
+                .and_then(YamlValue::as_str),
+            Some(new_commit.as_str())
+        );
+        assert_eq!(
+            answers
+                .get(YamlValue::String(TEMPLATE_MODE_KEY.into()))
+                .and_then(YamlValue::as_str),
+            Some(TemplateMode::Committed.as_str())
+        );
+        assert_eq!(
+            answers
+                .get(YamlValue::String(TEMPLATE_LOCAL_PATH_KEY.into()))
+                .and_then(YamlValue::as_str),
+            Some(expected_local_path.as_str())
+        );
+    }
+
+    #[test]
+    fn final_update_template_state_preserves_remote_source_when_probe_is_unknown() {
+        let _guard = lock_env();
+        let temp = tempdir().unwrap();
+        let bin_dir = temp.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+
+        let git_path = bin_dir.join("git-stub.sh");
+        fs::write(
+            &git_path,
+            "#!/bin/sh\nif [ \"$1\" = \"init\" ] && [ \"$2\" = \"--bare\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"fetch\" ]; then\n  printf 'transient fetch failure\\n' >&2\n  exit 1\nfi\nexit 0\n",
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&git_path, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        unsafe {
+            env::set_var(GIT_BIN_ENV, &git_path);
+        }
+
+        let stored = StoredTemplateState {
+            src_path: "https://example.com/template.git".into(),
+            default_branch: Some("main".into()),
+            template_mode: Some(TemplateMode::Committed),
+            template_local_path: Some("/tmp/template".into()),
+        };
+        let prepared = PreparedTemplateSource {
+            copier_template: "/tmp/template".into(),
+            vcs_ref: Some("deadbeef".into()),
+            private_answers: PrivateAnswerOverrides {
+                template_mode: Some(TemplateMode::Committed),
+                template_local_path: Some("/tmp/template".into()),
+            },
+        };
+
+        let final_template = final_update_template_state(&stored, &prepared);
+
+        unsafe {
+            env::remove_var(GIT_BIN_ENV);
+        }
+
+        assert_eq!(final_template.copier_template, stored.src_path);
+        assert_eq!(final_template.vcs_ref, prepared.vcs_ref);
     }
 }

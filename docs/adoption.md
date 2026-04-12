@@ -66,7 +66,7 @@ make check-sqlx-unchecked-non-test
 make sqlx-check
 ```
 
-If schema dumps are enabled:
+If SQLx and schema dumps are enabled:
 
 ```sh
 make schema-check

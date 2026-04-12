@@ -28,7 +28,7 @@ The template renders these repo-owned assets into a consumer repository:
 
 Generated repos keep `make` as the execution backend, but they also get a `scripts/jig` launcher, MCP wiring, and append-only repo memory under `.agent/state/*.jsonl`.
 
-The template does not try to generate your application code, crate-level `AGENTS.md` files, or a schema dump implementation. Those remain project-owned. SQLx and migration-specific contract pieces are optional via `sqlx_enabled`.
+The template does not try to generate your application code, crate-level `AGENTS.md` files, or a schema dump implementation. Those remain project-owned. SQLx, migration, and schema-check contract pieces are optional via `sqlx_enabled`.
 
 ## Quick Start
 
