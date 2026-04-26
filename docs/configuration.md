@@ -83,6 +83,8 @@ Each configured app directory is expected to support:
 
 ## Generated Contract
 
+The compatibility policy for generated CLI commands, MCP tools, `.agent/jig-contract.json`, and `.agent/state/*.jsonl` is defined in [Public Contract](./public-contract.md).
+
 The generated `Makefile` exposes these stable targets:
 
 - `bootstrap`

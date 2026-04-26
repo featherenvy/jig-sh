@@ -11,6 +11,8 @@
 7. Wire any missing project-owned scripts such as `scripts/dump-schema.sh` if schema dumps are enabled.
 8. Commit the generated files and then switch CI to use the new workflows.
 
+Before publishing a generated repo contract or wiring long-lived MCP clients to it, review [Public Contract](./public-contract.md) for the stable CLI, MCP, manifest, and state-file guarantees.
+
 For later template updates:
 
 ```sh

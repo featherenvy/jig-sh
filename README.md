@@ -145,7 +145,7 @@ Generated repos also expect Rust to be available for `scripts/install-jig.sh`, w
 - `copier.yml`: template configuration and questions
 - `crates/jig/`: publishable `jig` runtime and MCP server
 - `templates/project/`: files rendered into downstream repos
-- `docs/`: config and adoption guidance
+- `docs/`: config, adoption, and public-contract guidance
 - `examples/`: example answer files
 - `scripts/validate-fixtures.sh`: renders sample repos and validates the generated kit
 

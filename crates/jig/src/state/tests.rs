@@ -1,0 +1,187 @@
+use std::fs;
+use std::path::Path;
+
+use serde_json::{Value, json};
+use tempfile::tempdir;
+
+use crate::cli::{PlanAppendOpts, PlanOpenOpts, ReceiptsListOpts};
+use crate::context::RepoContext;
+
+use super::*;
+
+fn write_fixture_repo(root: &Path) {
+    fs::create_dir_all(root.join(".agent")).unwrap();
+    fs::write(
+        root.join(".jig.yml"),
+        r#"_src_path: '/tmp/template'
+_commit: 'abc123'
+repo_name: 'demo'
+default_branch: 'main'
+jig_version: '0.1.0'
+"#,
+    )
+    .unwrap();
+    fs::write(
+        root.join(".agent/jig-contract.json"),
+        serde_json::to_string_pretty(&json!({
+            "contract_version": 1,
+            "memory_schema_version": 1,
+            "tool_namespace": "jig",
+            "jig_version": "0.1.0",
+            "required_make_targets": ["fmt-check"],
+            "optional_make_targets": [],
+            "tools": [],
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+}
+
+#[test]
+fn appends_jsonl_records() {
+    let temp = tempdir().unwrap();
+    let path = temp.path().join("events.jsonl");
+    append_jsonl(&path, &json!({ "id": 1 })).unwrap();
+    append_jsonl(&path, &json!({ "id": 2 })).unwrap();
+
+    let items: Vec<Value> = read_jsonl(&path).unwrap();
+    assert_eq!(items.len(), 2);
+    assert_eq!(items[0]["id"], 1);
+    assert_eq!(items[1]["id"], 2);
+}
+
+#[test]
+fn session_summary_includes_open_plans() {
+    let temp = tempdir().unwrap();
+    write_fixture_repo(temp.path());
+    let ctx = RepoContext::load_from(temp.path()).unwrap();
+    ensure_state_layout(&ctx).unwrap();
+    append_jsonl(
+        &ctx.state_file("plans.jsonl"),
+        &PlanEvent {
+            id: "1".into(),
+            plan_id: "plan_1".into(),
+            event: "open".into(),
+            timestamp_ms: 1,
+            title: Some("Example".into()),
+            body_path: Some(".agent/plans/plan_1.md".into()),
+            resolution: None,
+        },
+    )
+    .unwrap();
+
+    let summary = build_summary(&ctx).unwrap();
+    assert_eq!(summary["open_plans"][0]["plan_id"], "plan_1");
+}
+
+#[test]
+fn truncate_handles_multibyte_boundaries() {
+    let value = format!("{}{}", "a".repeat(3999), "é");
+    let truncated = truncate(&value);
+
+    assert!(truncated.ends_with('…'));
+    assert!(truncated.starts_with(&"a".repeat(3999)));
+    assert_eq!(truncated.chars().last(), Some('…'));
+}
+
+#[test]
+fn plans_append_serializes_concurrent_writers() {
+    let temp = tempdir().unwrap();
+    write_fixture_repo(temp.path());
+    let ctx = RepoContext::load_from(temp.path()).unwrap();
+
+    plans_open(
+        &ctx,
+        PlanOpenOpts {
+            title: "Concurrent plan".into(),
+            body: Some("Initial body".into()),
+            body_file: None,
+        },
+    )
+    .unwrap();
+
+    let ctx_a = ctx.clone();
+    let ctx_b = ctx.clone();
+    let plan_id = read_jsonl::<PlanEvent>(&ctx.state_file("plans.jsonl"))
+        .unwrap()
+        .into_iter()
+        .find(|event| event.event == "open")
+        .unwrap()
+        .plan_id;
+
+    let plan_id_a = plan_id.clone();
+    let plan_id_b = plan_id.clone();
+
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            plans_append(
+                &ctx_a,
+                PlanAppendOpts {
+                    plan_id: plan_id_a,
+                    body: Some("First append".into()),
+                    body_file: None,
+                },
+            )
+            .unwrap();
+        });
+        scope.spawn(|| {
+            plans_append(
+                &ctx_b,
+                PlanAppendOpts {
+                    plan_id: plan_id_b,
+                    body: Some("Second append".into()),
+                    body_file: None,
+                },
+            )
+            .unwrap();
+        });
+    });
+
+    let body = fs::read_to_string(ctx.plan_body_path(&plan_id)).unwrap();
+    assert!(body.contains("Initial body"));
+    assert!(body.contains("First append"));
+    assert!(body.contains("Second append"));
+}
+
+#[test]
+fn receipts_list_is_read_only() {
+    let temp = tempdir().unwrap();
+    write_fixture_repo(temp.path());
+    let ctx = RepoContext::load_from(temp.path()).unwrap();
+
+    session_start(&ctx).unwrap();
+    let before = read_jsonl::<ReceiptRecord>(&ctx.state_file("receipts.jsonl")).unwrap();
+
+    let output = receipts_list(
+        &ctx,
+        ReceiptsListOpts {
+            session_id: None,
+            plan_id: None,
+            limit: 20,
+        },
+    )
+    .unwrap();
+
+    let after = read_jsonl::<ReceiptRecord>(&ctx.state_file("receipts.jsonl")).unwrap();
+    assert_eq!(before.len(), after.len());
+    assert!(output.get("receipt_id").is_none());
+}
+
+#[test]
+fn state_tool_receipts_skip_git_metadata_collection() {
+    let temp = tempdir().unwrap();
+    write_fixture_repo(temp.path());
+    let ctx = RepoContext::load_from(temp.path()).unwrap();
+
+    session_start(&ctx).unwrap();
+
+    let receipts = read_jsonl::<ReceiptRecord>(&ctx.state_file("receipts.jsonl")).unwrap();
+    let receipt = receipts
+        .iter()
+        .find(|receipt| receipt.tool_name == "jig.session_start")
+        .unwrap();
+    assert!(receipt.changed_paths.is_empty());
+    assert_eq!(receipt.diff_stat.files, 0);
+    assert!(receipt.git_status_error.is_none());
+    assert!(receipt.git_diff_stat_error.is_none());
+}
