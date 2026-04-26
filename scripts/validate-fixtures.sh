@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 TMP_DIR="$(mktemp -d)"
+JIG_YML="$ROOT_DIR/scripts/jig-yml.sh"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 json_get() {
@@ -31,59 +32,11 @@ else:
 }
 
 answers_get() {
-  local answers_file="$1"
-  local key="$2"
-
-  python3 - "$answers_file" "$key" <<'PY'
-import pathlib
-import re
-import sys
-
-answers_path = pathlib.Path(sys.argv[1])
-key = sys.argv[2]
-pattern = re.compile(rf"^{re.escape(key)}:\s*(.*)$")
-
-for line in answers_path.read_text().splitlines():
-    match = pattern.match(line)
-    if not match:
-        continue
-    raw = match.group(1).strip()
-    if raw in {"''", '""'}:
-        print("")
-    elif len(raw) >= 2 and raw[0] == "'" and raw[-1] == "'":
-        print(raw[1:-1].replace("''", "'"))
-    elif len(raw) >= 2 and raw[0] == '"' and raw[-1] == '"':
-        print(raw[1:-1])
-    else:
-        print(raw)
-    break
-PY
+  "$JIG_YML" get "$1" "$2"
 }
 
 answers_set() {
-  local answers_file="$1"
-  local key="$2"
-  local value="$3"
-
-  python3 - "$answers_file" "$key" "$value" <<'PY'
-import pathlib
-import sys
-
-answers_path = pathlib.Path(sys.argv[1])
-key = sys.argv[2]
-value = sys.argv[3]
-lines = answers_path.read_text().splitlines()
-escaped = value.replace("'", "''")
-
-for index, line in enumerate(lines):
-    if line.startswith(f"{key}: "):
-        lines[index] = f"{key}: '{escaped}'"
-        break
-else:
-    lines.append(f"{key}: '{escaped}'")
-
-answers_path.write_text("\n".join(lines) + "\n")
-PY
+  "$JIG_YML" set "$1" "$2" "$3"
 }
 
 render_fixture() {

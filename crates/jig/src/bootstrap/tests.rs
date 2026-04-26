@@ -1,0 +1,169 @@
+use super::*;
+use std::sync::{Mutex, OnceLock};
+use tempfile::{TempDir, tempdir};
+
+fn env_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+fn lock_env() -> std::sync::MutexGuard<'static, ()> {
+    env_lock()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn template_repo_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .unwrap()
+        .to_path_buf()
+}
+
+fn copy_dir_recursive(source: &Path, destination: &Path) {
+    fs::create_dir_all(destination).unwrap();
+    for entry in fs::read_dir(source).unwrap() {
+        let entry = entry.unwrap();
+        let source_path = entry.path();
+        let destination_path = destination.join(entry.file_name());
+        let file_type = entry.file_type().unwrap();
+
+        if entry.file_name() == ".git" {
+            continue;
+        }
+
+        if file_type.is_dir() {
+            copy_dir_recursive(&source_path, &destination_path);
+            continue;
+        }
+
+        if file_type.is_symlink() {
+            if let Some(parent) = destination_path.parent() {
+                fs::create_dir_all(parent).unwrap();
+            }
+            let target = fs::read_link(&source_path).unwrap();
+            create_symlink(&target, &destination_path).unwrap();
+            continue;
+        }
+
+        if let Some(parent) = destination_path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::copy(&source_path, &destination_path).unwrap();
+    }
+}
+
+fn materialize_template_worktree() -> TempDir {
+    let temp = tempdir().unwrap();
+    copy_dir_recursive(&template_repo_root(), temp.path());
+    temp
+}
+
+fn materialize_template_git_worktree() -> TempDir {
+    let temp = materialize_template_worktree();
+    init_git_repo_for_test(temp.path());
+    git(temp.path(), ["add", "."]).unwrap();
+    git(temp.path(), ["commit", "-m", "template"]).unwrap();
+    temp
+}
+
+fn init_git_repo_for_test(path: &Path) {
+    git(path, ["init", "-b", "main"]).unwrap();
+    git(path, ["config", "user.name", "Fixture"]).unwrap();
+    git(path, ["config", "user.email", "fixture@example.com"]).unwrap();
+}
+
+fn write_test_crate_guide(repo: &Path) {
+    fs::create_dir_all(repo.join("crates/api")).unwrap();
+    fs::write(repo.join("crates/api/AGENTS.md"), "crate guide").unwrap();
+}
+
+fn adopt_repo_for_test(repo: &Path, template: &Path, template_mode: TemplateMode) {
+    run_adopt(AdoptOpts {
+        path: repo.to_path_buf(),
+        template: template.display().to_string(),
+        template_mode: Some(template_mode),
+        vcs_ref: None,
+        force: false,
+        defaults: true,
+        no_input: true,
+        answers: AnswerOpts {
+            repo_name: Some("demo".into()),
+            sqlx_enabled: Some(false),
+            ..AnswerOpts::default()
+        },
+    })
+    .unwrap();
+}
+
+fn commit_template_root_guide(template: &Path, contents: &str, message: &str) -> String {
+    fs::write(template.join("templates/project/AGENTS.md.jinja"), contents).unwrap();
+    git(template, ["add", "templates/project/AGENTS.md.jinja"]).unwrap();
+    git(template, ["commit", "-m", message]).unwrap();
+    git_stdout(template, ["rev-parse", "HEAD"]).unwrap()
+}
+
+fn push_template_main(template: &Path, remote_url: &str) {
+    git(template, ["push", remote_url, "HEAD:refs/heads/main"]).unwrap();
+}
+
+struct NormalizedRemoteCommittedFixture {
+    _root: TempDir,
+    repo: PathBuf,
+    template: TempDir,
+    remote_url: String,
+    answers_path: PathBuf,
+}
+
+impl NormalizedRemoteCommittedFixture {
+    fn new(legacy_committed_state: bool) -> Self {
+        let root = tempdir().unwrap();
+        let repo = root.path().join("repo");
+        let remote = root.path().join("template-remote.git");
+        let template = materialize_template_git_worktree();
+        let remote_url = format!("file://{}", remote.display());
+
+        write_test_crate_guide(&repo);
+        git(
+            template.path(),
+            [
+                "clone",
+                "--bare",
+                &template.path().display().to_string(),
+                &remote.display().to_string(),
+            ],
+        )
+        .unwrap();
+
+        adopt_repo_for_test(&repo, template.path(), TemplateMode::Committed);
+        init_git_repo_for_test(&repo);
+        git(&repo, ["add", "."]).unwrap();
+        git(&repo, ["commit", "-m", "adopt"]).unwrap();
+
+        let answers_path = repo.join(".jig.yml");
+        let mut answers = read_answers_yaml(&answers_path).unwrap();
+        answers.insert(
+            YamlValue::String("_src_path".into()),
+            YamlValue::String(remote_url.clone()),
+        );
+        if legacy_committed_state {
+            answers.remove(YamlValue::String(TEMPLATE_LOCAL_PATH_KEY.into()));
+        }
+        write_answers_yaml(&answers_path, &answers).unwrap();
+        git(&repo, ["add", ".jig.yml"]).unwrap();
+        git(&repo, ["commit", "-m", "normalize source"]).unwrap();
+
+        Self {
+            _root: root,
+            repo,
+            template,
+            remote_url,
+            answers_path,
+        }
+    }
+}
+
+mod basic;
+mod committed;
+mod working_tree;

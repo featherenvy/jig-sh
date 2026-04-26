@@ -1,7 +1,9 @@
 use std::path::Path;
-use std::process::{Command, ExitStatus};
+use std::process::{Command, Output};
 
 use anyhow::{Context, Result, bail};
+
+use crate::process::{format_exit_status, run_checked_output_with_context};
 
 #[derive(Debug, Default, serde::Serialize, serde::Deserialize, Clone)]
 pub(crate) struct DiffStat {
@@ -37,20 +39,7 @@ pub(crate) fn collect_git_receipt_metadata(root: &Path) -> GitReceiptMetadata {
 }
 
 fn repo_changed_paths(root: &Path) -> Result<Vec<String>> {
-    let output = Command::new("git")
-        .current_dir(root)
-        .args(["status", "--short"])
-        .output()
-        .with_context(|| format!("Failed to run git status --short in {}", root.display()))?;
-    if !output.status.success() {
-        bail!(
-            "git status --short failed with {}.\nstdout:\n{}\nstderr:\n{}",
-            format_exit_status(&output.status),
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-
+    let output = git_output(root, &["status", "--short"], "git status --short")?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     Ok(stdout
         .lines()
@@ -59,22 +48,27 @@ fn repo_changed_paths(root: &Path) -> Result<Vec<String>> {
 }
 
 fn repo_diff_stat(root: &Path) -> Result<DiffStat> {
-    let output = Command::new("git")
-        .current_dir(root)
-        .args(["diff", "--numstat"])
-        .output()
-        .with_context(|| format!("Failed to run git diff --numstat in {}", root.display()))?;
-    if !output.status.success() {
-        bail!(
-            "git diff --numstat failed with {}.\nstdout:\n{}\nstderr:\n{}",
-            format_exit_status(&output.status),
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-
+    let output = git_output(root, &["diff", "--numstat"], "git diff --numstat")?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     parse_diff_stat_output(&stdout)
+}
+
+fn git_output(root: &Path, args: &[&str], label: &str) -> Result<Output> {
+    let mut command = Command::new("git");
+    command.current_dir(root).args(args);
+
+    run_checked_output_with_context(
+        &mut command,
+        || format!("Failed to run {label} in {}", root.display()),
+        |output| {
+            format!(
+                "{label} failed with {}.\nstdout:\n{}\nstderr:\n{}",
+                format_exit_status(&output.status),
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            )
+        },
+    )
 }
 
 pub(crate) fn parse_diff_stat_output(stdout: &str) -> Result<DiffStat> {
@@ -98,13 +92,6 @@ fn parse_numstat_count(field: &str, line_number: usize, kind: &str) -> Result<u6
     field.parse::<u64>().with_context(|| {
         format!("Invalid git diff --numstat {kind} count on line {line_number}: {field}")
     })
-}
-
-fn format_exit_status(status: &ExitStatus) -> String {
-    match status.code() {
-        Some(code) => format!("exit status {code}"),
-        None => "termination by signal".to_string(),
-    }
 }
 
 #[cfg(test)]

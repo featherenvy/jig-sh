@@ -3,6 +3,7 @@ mod cli;
 mod context;
 mod git_receipts;
 mod mcp;
+mod process;
 mod runtime;
 mod state;
 

@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::path::PathBuf;
 use std::process::{Command, Output};
 
@@ -5,10 +6,11 @@ use anyhow::{Context, Result, anyhow, bail};
 use serde_json::{Value, json};
 
 use crate::cli::{
-    CommandKind, DecisionAddOpts, MigrationAddOpts, PlanAppendOpts, PlanCloseOpts, PlanOpenOpts,
-    ReceiptsListOpts, RunTargetOpts, SessionEndOpts, ToolOpts,
+    CommandKind, DecisionAddOpts, PlanAppendOpts, PlanCloseOpts, PlanOpenOpts, ReceiptsListOpts,
+    SessionEndOpts,
 };
 use crate::context::{ManifestTool, RepoContext};
+use crate::process::require_success;
 use crate::state::{
     ReceiptInput, decisions_add, now_ms, plans_append, plans_close, plans_open, receipts_list,
     record_receipt, session_end, session_start,
@@ -17,42 +19,29 @@ use crate::state::{
 pub(crate) fn dispatch(ctx: &RepoContext, command: CommandKind) -> Result<Value> {
     match command {
         CommandKind::FmtCheck(opts) => {
-            execute_make_tool(ctx, "jig.fmt_check", "fmt-check", json!({}), opts.plan_id)
+            execute_manifest_make_tool(ctx, "jig.fmt_check", json!({}), opts.plan_id)
         }
         CommandKind::Clippy(opts) => {
-            execute_make_tool(ctx, "jig.clippy", "clippy", json!({}), opts.plan_id)
+            execute_manifest_make_tool(ctx, "jig.clippy", json!({}), opts.plan_id)
         }
         CommandKind::Test(opts) => {
-            execute_make_tool(ctx, "jig.test", "test", json!({}), opts.plan_id)
+            execute_manifest_make_tool(ctx, "jig.test", json!({}), opts.plan_id)
         }
-        CommandKind::TestLocked(opts) => execute_make_tool(
-            ctx,
-            "jig.test_locked",
-            "test-rust-locked",
-            json!({}),
-            opts.plan_id,
-        ),
+        CommandKind::TestLocked(opts) => {
+            execute_manifest_make_tool(ctx, "jig.test_locked", json!({}), opts.plan_id)
+        }
         CommandKind::SqlxCheck(opts) => {
-            execute_make_tool(ctx, "jig.sqlx_check", "sqlx-check", json!({}), opts.plan_id)
+            execute_manifest_make_tool(ctx, "jig.sqlx_check", json!({}), opts.plan_id)
         }
-        CommandKind::SchemaCheck(opts) => execute_make_tool(
-            ctx,
-            "jig.schema_check",
-            "schema-check",
-            json!({}),
-            opts.plan_id,
-        ),
-        CommandKind::SchemaDump(opts) => execute_make_tool(
-            ctx,
-            "jig.schema_dump",
-            "schema-dump",
-            json!({}),
-            opts.plan_id,
-        ),
-        CommandKind::MigrationAdd(opts) => execute_make_tool(
+        CommandKind::SchemaCheck(opts) => {
+            execute_manifest_make_tool(ctx, "jig.schema_check", json!({}), opts.plan_id)
+        }
+        CommandKind::SchemaDump(opts) => {
+            execute_manifest_make_tool(ctx, "jig.schema_dump", json!({}), opts.plan_id)
+        }
+        CommandKind::MigrationAdd(opts) => execute_manifest_make_tool(
             ctx,
             "jig.migration_add",
-            "migration-add",
             json!({ "name": opts.name }),
             opts.tool.plan_id,
         )
@@ -66,17 +55,12 @@ pub(crate) fn dispatch(ctx: &RepoContext, command: CommandKind) -> Result<Value>
                 "receipt_id": value["receipt_id"],
             })
         }),
-        CommandKind::ContractCheck(opts) => execute_make_tool(
-            ctx,
-            "jig.contract_check",
-            "contract-check",
-            json!({}),
-            opts.plan_id,
-        ),
-        CommandKind::RunTarget(opts) => execute_make_tool(
+        CommandKind::ContractCheck(opts) => {
+            execute_manifest_make_tool(ctx, "jig.contract_check", json!({}), opts.plan_id)
+        }
+        CommandKind::RunTarget(opts) => execute_manifest_make_tool(
             ctx,
             "jig.run_target",
-            &opts.name,
             json!({ "name": opts.name }),
             opts.tool.plan_id,
         ),
@@ -102,43 +86,13 @@ pub(crate) fn call_tool(ctx: &RepoContext, name: &str, args: Value) -> Result<Va
         .cloned()
         .unwrap_or_else(serde_json::Map::new);
 
+    if let Some(tool) = ctx.tool_spec(name)
+        && tool.kind == "make"
+    {
+        return call_manifest_make_tool(ctx, tool, &args_obj);
+    }
+
     let command = match name {
-        "jig.fmt_check" => CommandKind::FmtCheck(ToolOpts {
-            plan_id: string_arg(&args_obj, "plan_id"),
-        }),
-        "jig.clippy" => CommandKind::Clippy(ToolOpts {
-            plan_id: string_arg(&args_obj, "plan_id"),
-        }),
-        "jig.test" => CommandKind::Test(ToolOpts {
-            plan_id: string_arg(&args_obj, "plan_id"),
-        }),
-        "jig.test_locked" => CommandKind::TestLocked(ToolOpts {
-            plan_id: string_arg(&args_obj, "plan_id"),
-        }),
-        "jig.sqlx_check" => CommandKind::SqlxCheck(ToolOpts {
-            plan_id: string_arg(&args_obj, "plan_id"),
-        }),
-        "jig.schema_check" => CommandKind::SchemaCheck(ToolOpts {
-            plan_id: string_arg(&args_obj, "plan_id"),
-        }),
-        "jig.schema_dump" => CommandKind::SchemaDump(ToolOpts {
-            plan_id: string_arg(&args_obj, "plan_id"),
-        }),
-        "jig.migration_add" => CommandKind::MigrationAdd(MigrationAddOpts {
-            name: required_string_arg(&args_obj, "name")?,
-            tool: ToolOpts {
-                plan_id: string_arg(&args_obj, "plan_id"),
-            },
-        }),
-        "jig.contract_check" => CommandKind::ContractCheck(ToolOpts {
-            plan_id: string_arg(&args_obj, "plan_id"),
-        }),
-        "jig.run_target" => CommandKind::RunTarget(RunTargetOpts {
-            name: required_string_arg(&args_obj, "name")?,
-            tool: ToolOpts {
-                plan_id: string_arg(&args_obj, "plan_id"),
-            },
-        }),
         "jig.session_start" => CommandKind::SessionStart,
         "jig.session_end" => CommandKind::SessionEnd(SessionEndOpts {
             session_id: string_arg(&args_obj, "session_id"),
@@ -176,6 +130,51 @@ pub(crate) fn call_tool(ctx: &RepoContext, name: &str, args: Value) -> Result<Va
     dispatch(ctx, command)
 }
 
+fn call_manifest_make_tool(
+    ctx: &RepoContext,
+    tool: &ManifestTool,
+    args_obj: &serde_json::Map<String, Value>,
+) -> Result<Value> {
+    let plan_id = string_arg(args_obj, "plan_id");
+    let args = make_tool_args(tool, args_obj)?;
+
+    execute_manifest_make_tool(ctx, &tool.name, args, plan_id)
+}
+
+fn make_tool_args(tool: &ManifestTool, args_obj: &serde_json::Map<String, Value>) -> Result<Value> {
+    if tool.name == "jig.migration_add" || tool.target.is_none() {
+        return Ok(json!({ "name": required_string_arg(args_obj, "name")? }));
+    }
+
+    Ok(json!({}))
+}
+
+fn execute_manifest_make_tool(
+    ctx: &RepoContext,
+    tool_name: &str,
+    args: Value,
+    plan_id: Option<String>,
+) -> Result<Value> {
+    let tool = ctx
+        .tool_spec(tool_name)
+        .ok_or_else(|| anyhow!("Tool is not declared in .agent/jig-contract.json: {tool_name}"))?;
+    if tool.kind != "make" {
+        bail!("Tool is not a make-backed tool: {tool_name}");
+    }
+
+    let target = match tool.target.as_deref() {
+        Some(target) => Cow::Borrowed(target),
+        None => args
+            .get("name")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow!("{tool_name} requires a name argument"))?
+            .to_string()
+            .into(),
+    };
+
+    execute_make_tool(ctx, &tool.name, target.as_ref(), args, plan_id)
+}
+
 fn execute_make_tool(
     ctx: &RepoContext,
     tool_name: &str,
@@ -203,12 +202,15 @@ fn execute_make_tool(
             stdout: &stdout,
             stderr: &stderr,
             session_override: None,
+            collect_git_metadata: true,
         },
     )?;
 
-    if !output.status.success() {
-        bail!("{tool_name} failed with status {exit_status}\nstdout:\n{stdout}\nstderr:\n{stderr}");
-    }
+    require_success(&output, |_| {
+        format!(
+            "{tool_name} failed with status {exit_status}\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        )
+    })?;
 
     Ok(json!({
         "ok": true,
@@ -266,4 +268,82 @@ fn string_list_arg(map: &serde_json::Map<String, Value>, key: &str) -> Vec<Strin
                 .collect()
         })
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::Path;
+
+    use super::*;
+    use tempfile::tempdir;
+
+    fn write_fixture_repo(root: &Path) {
+        fs::create_dir_all(root.join(".agent")).unwrap();
+        fs::write(
+            root.join(".jig.yml"),
+            r#"_src_path: '/tmp/template'
+_commit: 'abc123'
+repo_name: 'demo'
+default_branch: 'main'
+jig_version: '0.1.0'
+"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("Makefile"),
+            "custom-check:\n\t@printf 'manifest target ran\\n'\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join(".agent/jig-contract.json"),
+            serde_json::to_string_pretty(&json!({
+                "contract_version": 1,
+                "memory_schema_version": 1,
+                "tool_namespace": "jig",
+                "jig_version": "0.1.0",
+                "required_make_targets": ["custom-check"],
+                "optional_make_targets": [],
+                "tools": [
+                    {
+                        "name": "jig.custom_check",
+                        "kind": "make",
+                        "description": "Run make custom-check.",
+                        "target": "custom-check"
+                    }
+                ],
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn mcp_call_dispatches_make_tool_declared_only_in_manifest() {
+        let temp = tempdir().unwrap();
+        write_fixture_repo(temp.path());
+        let ctx = RepoContext::load_from(temp.path()).unwrap();
+
+        let output = call_tool(&ctx, "jig.custom_check", json!({})).unwrap();
+
+        assert_eq!(output["ok"], true);
+        assert_eq!(output["target"], "custom-check");
+        assert_eq!(output["result"]["stdout"], "manifest target ran\n");
+    }
+
+    #[test]
+    fn make_cli_dispatch_requires_manifest_tool_declaration() {
+        let temp = tempdir().unwrap();
+        write_fixture_repo(temp.path());
+        let ctx = RepoContext::load_from(temp.path()).unwrap();
+
+        let error = dispatch(
+            &ctx,
+            CommandKind::FmtCheck(crate::cli::ToolOpts { plan_id: None }),
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("Tool is not declared in .agent/jig-contract.json"));
+    }
 }

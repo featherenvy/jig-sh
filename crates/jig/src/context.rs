@@ -101,6 +101,10 @@ impl RepoContext {
         &self.manifest.tools
     }
 
+    pub(crate) fn tool_spec(&self, name: &str) -> Option<&ManifestTool> {
+        self.manifest.tools.iter().find(|tool| tool.name == name)
+    }
+
     pub(crate) fn root(&self) -> &Path {
         &self.root
     }

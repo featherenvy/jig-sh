@@ -115,30 +115,17 @@ fn tool_descriptor(tool: &ManifestTool) -> Value {
     json!({
         "name": tool.name,
         "description": tool.description,
-        "inputSchema": input_schema(&tool.name)
+        "inputSchema": input_schema(tool)
     })
 }
 
-fn input_schema(name: &str) -> Value {
-    match name {
-        "jig.migration_add" => json!({
-            "type": "object",
-            "properties": {
-                "name": { "type": "string" },
-                "plan_id": { "type": "string" }
-            },
-            "required": ["name"],
-            "additionalProperties": false
-        }),
-        "jig.run_target" => json!({
-            "type": "object",
-            "properties": {
-                "name": { "type": "string" },
-                "plan_id": { "type": "string" }
-            },
-            "required": ["name"],
-            "additionalProperties": false
-        }),
+fn input_schema(tool: &ManifestTool) -> Value {
+    if tool.kind == "make" {
+        return make_input_schema(tool);
+    }
+
+    match tool.name.as_str() {
+        "jig.session_start" => empty_input_schema(),
         "jig.session_end" => json!({
             "type": "object",
             "properties": {
@@ -200,14 +187,46 @@ fn input_schema(name: &str) -> Value {
             "required": ["title", "selected_option", "rationale"],
             "additionalProperties": false
         }),
-        _ => json!({
-            "type": "object",
-            "properties": {
-                "plan_id": { "type": "string" }
-            },
-            "additionalProperties": false
-        }),
+        _ => empty_input_schema(),
     }
+}
+
+fn make_input_schema(tool: &ManifestTool) -> Value {
+    match tool.name.as_str() {
+        "jig.migration_add" => named_make_input_schema(),
+        _ if tool.target.is_none() => named_make_input_schema(),
+        _ => plan_id_input_schema(),
+    }
+}
+
+fn empty_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+    })
+}
+
+fn plan_id_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "plan_id": { "type": "string" }
+        },
+        "additionalProperties": false
+    })
+}
+
+fn named_make_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "name": { "type": "string" },
+            "plan_id": { "type": "string" }
+        },
+        "required": ["name"],
+        "additionalProperties": false
+    })
 }
 
 fn read_message(reader: &mut dyn BufRead) -> Result<Option<Value>> {

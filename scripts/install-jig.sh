@@ -3,33 +3,10 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 ANSWERS_FILE="$ROOT_DIR/.jig.yml"
+JIG_YML="$ROOT_DIR/scripts/jig-yml.sh"
 
 read_field() {
-  local key="$1"
-  python3 - "$ANSWERS_FILE" "$key" <<'PY'
-import pathlib
-import re
-import sys
-
-answers_path = pathlib.Path(sys.argv[1])
-key = sys.argv[2]
-pattern = re.compile(rf"^{re.escape(key)}:\s*(.*)$")
-
-for line in answers_path.read_text().splitlines():
-    match = pattern.match(line)
-    if not match:
-        continue
-    raw = match.group(1).strip()
-    if raw in {"''", '""'}:
-        print("")
-    elif len(raw) >= 2 and raw[0] == "'" and raw[-1] == "'":
-        print(raw[1:-1].replace("''", "'"))
-    elif len(raw) >= 2 and raw[0] == '"' and raw[-1] == '"':
-        print(raw[1:-1])
-    else:
-        print(raw)
-    break
-PY
+  "$JIG_YML" get "$ANSWERS_FILE" "$1"
 }
 
 JIG_VERSION="$(read_field jig_version)"

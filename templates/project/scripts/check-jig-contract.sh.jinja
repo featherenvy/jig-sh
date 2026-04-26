@@ -8,6 +8,7 @@ python3 - "$ROOT_DIR" <<'PY'
 import json
 import pathlib
 import re
+import subprocess
 import sys
 
 root = pathlib.Path(sys.argv[1])
@@ -17,22 +18,35 @@ makefile_path = root / "Makefile"
 mcp_path = root / ".mcp.json"
 jig_script = root / "scripts" / "jig"
 install_script = root / "scripts" / "install-jig.sh"
+jig_yml_script = root / "scripts" / "jig-yml.sh"
 
 manifest = json.loads(manifest_path.read_text())
-answers_text = answers_path.read_text()
 makefile_text = makefile_path.read_text()
 
 errors = []
 
-match = re.search(r'^jig_version:\s*[\'"]?([^\'"\n]+)[\'"]?$', answers_text, re.MULTILINE)
-if not match:
-    errors.append("Missing jig_version in .jig.yml.")
+if not jig_yml_script.exists():
+    errors.append("Missing scripts/jig-yml.sh helper.")
 else:
-    answers_version = match.group(1)
-    if answers_version != manifest["jig_version"]:
-        errors.append(
-            f"jig_version mismatch: .jig.yml has {answers_version}, manifest has {manifest['jig_version']}."
+    try:
+        version_result = subprocess.run(
+            [str(jig_yml_script), "get", str(answers_path), "jig_version"],
+            capture_output=True,
+            text=True,
+            check=False,
         )
+    except OSError as error:
+        errors.append(f"Failed to run scripts/jig-yml.sh helper: {error}")
+    else:
+        answers_version = version_result.stdout.rstrip("\n")
+        if version_result.returncode != 0:
+            errors.append("Failed to read jig_version from .jig.yml.")
+        elif not answers_version:
+            errors.append("Missing jig_version in .jig.yml.")
+        elif answers_version != manifest["jig_version"]:
+            errors.append(
+                f"jig_version mismatch: .jig.yml has {answers_version}, manifest has {manifest['jig_version']}."
+            )
 
 targets = set(re.findall(r"^([A-Za-z0-9._-]+):", makefile_text, re.MULTILINE))
 missing_targets = [target for target in manifest["required_make_targets"] if target not in targets]

@@ -14,7 +14,7 @@ use crate::cli::{
     DecisionAddOpts, PlanAppendOpts, PlanCloseOpts, PlanOpenOpts, ReceiptsListOpts, SessionEndOpts,
 };
 use crate::context::RepoContext;
-use crate::git_receipts::{DiffStat, collect_git_receipt_metadata};
+use crate::git_receipts::{DiffStat, GitReceiptMetadata, collect_git_receipt_metadata};
 
 #[derive(Debug, Serialize, serde::Deserialize, Clone)]
 struct SessionEvent {
@@ -81,6 +81,7 @@ pub(crate) struct ReceiptInput<'a> {
     pub(crate) stdout: &'a str,
     pub(crate) stderr: &'a str,
     pub(crate) session_override: Option<String>,
+    pub(crate) collect_git_metadata: bool,
 }
 
 pub(crate) fn session_start(ctx: &RepoContext) -> Result<Value> {
@@ -98,18 +99,13 @@ pub(crate) fn session_start(ctx: &RepoContext) -> Result<Value> {
     append_jsonl(&ctx.state_file("sessions.jsonl"), &event)?;
     write_current_session(ctx, Some(&session_id))?;
 
-    let receipt_id = record_receipt(
+    let receipt_id = record_successful_state_tool(
         ctx,
-        ReceiptInput {
+        StateToolReceipt {
             tool_name: "jig.session_start",
             args: json!({}),
-            invoked_make_target: None,
-            plan_id: None,
             started_at_ms: event.timestamp_ms,
-            ended_at_ms: now_ms(),
-            exit_status: 0,
-            stdout: "",
-            stderr: "",
+            plan_id: None,
             session_override: Some(session_id.clone()),
         },
     )?;
@@ -141,21 +137,16 @@ pub(crate) fn session_end(ctx: &RepoContext, opts: SessionEndOpts) -> Result<Val
         write_current_session(ctx, None)?;
     }
 
-    let receipt_id = record_receipt(
+    let receipt_id = record_successful_state_tool(
         ctx,
-        ReceiptInput {
+        StateToolReceipt {
             tool_name: "jig.session_end",
             args: json!({
                 "session_id": session_id,
                 "outcome": opts.outcome,
             }),
-            invoked_make_target: None,
-            plan_id: None,
             started_at_ms: event.timestamp_ms,
-            ended_at_ms: now_ms(),
-            exit_status: 0,
-            stdout: "",
-            stderr: "",
+            plan_id: None,
             session_override: Some(event.session_id.clone()),
         },
     )?;
@@ -188,18 +179,13 @@ pub(crate) fn plans_open(ctx: &RepoContext, opts: PlanOpenOpts) -> Result<Value>
     };
     append_jsonl(&ctx.state_file("plans.jsonl"), &event)?;
 
-    let receipt_id = record_receipt(
+    let receipt_id = record_successful_state_tool(
         ctx,
-        ReceiptInput {
+        StateToolReceipt {
             tool_name: "jig.plans_open",
             args: json!({ "title": opts.title }),
-            invoked_make_target: None,
-            plan_id: Some(plan_id.clone()),
             started_at_ms: event.timestamp_ms,
-            ended_at_ms: now_ms(),
-            exit_status: 0,
-            stdout: "",
-            stderr: "",
+            plan_id: Some(plan_id.clone()),
             session_override: None,
         },
     )?;
@@ -229,18 +215,13 @@ pub(crate) fn plans_append(ctx: &RepoContext, opts: PlanAppendOpts) -> Result<Va
     };
     append_jsonl(&ctx.state_file("plans.jsonl"), &event)?;
 
-    let receipt_id = record_receipt(
+    let receipt_id = record_successful_state_tool(
         ctx,
-        ReceiptInput {
+        StateToolReceipt {
             tool_name: "jig.plans_append",
             args: json!({ "plan_id": opts.plan_id }),
-            invoked_make_target: None,
-            plan_id: Some(event.plan_id.clone()),
             started_at_ms: event.timestamp_ms,
-            ended_at_ms: now_ms(),
-            exit_status: 0,
-            stdout: "",
-            stderr: "",
+            plan_id: Some(event.plan_id.clone()),
             session_override: None,
         },
     )?;
@@ -265,21 +246,16 @@ pub(crate) fn plans_close(ctx: &RepoContext, opts: PlanCloseOpts) -> Result<Valu
     };
     append_jsonl(&ctx.state_file("plans.jsonl"), &event)?;
 
-    let receipt_id = record_receipt(
+    let receipt_id = record_successful_state_tool(
         ctx,
-        ReceiptInput {
+        StateToolReceipt {
             tool_name: "jig.plans_close",
             args: json!({
                 "plan_id": opts.plan_id,
                 "resolution": opts.resolution,
             }),
-            invoked_make_target: None,
-            plan_id: Some(event.plan_id.clone()),
             started_at_ms: event.timestamp_ms,
-            ended_at_ms: now_ms(),
-            exit_status: 0,
-            stdout: "",
-            stderr: "",
+            plan_id: Some(event.plan_id.clone()),
             session_override: None,
         },
     )?;
@@ -294,39 +270,13 @@ pub(crate) fn plans_close(ctx: &RepoContext, opts: PlanCloseOpts) -> Result<Valu
 pub(crate) fn receipts_list(ctx: &RepoContext, opts: ReceiptsListOpts) -> Result<Value> {
     ensure_state_layout(ctx)?;
     let mut receipts = read_jsonl::<ReceiptRecord>(&ctx.state_file("receipts.jsonl"))?;
-    if let Some(session_id) = &opts.session_id {
-        receipts.retain(|receipt| receipt.session_id.as_ref() == Some(session_id));
-    }
-    if let Some(plan_id) = &opts.plan_id {
-        receipts.retain(|receipt| receipt.plan_id.as_ref() == Some(plan_id));
-    }
+    receipts.retain(|receipt| receipt_matches_filters(receipt, &opts));
     receipts.reverse();
     receipts.truncate(opts.limit);
-
-    let receipt_id = record_receipt(
-        ctx,
-        ReceiptInput {
-            tool_name: "jig.receipts_list",
-            args: json!({
-                "session_id": opts.session_id,
-                "plan_id": opts.plan_id,
-                "limit": opts.limit,
-            }),
-            invoked_make_target: None,
-            plan_id: None,
-            started_at_ms: now_ms(),
-            ended_at_ms: now_ms(),
-            exit_status: 0,
-            stdout: "",
-            stderr: "",
-            session_override: None,
-        },
-    )?;
 
     Ok(json!({
         "ok": true,
         "receipts": receipts,
-        "receipt_id": receipt_id,
     }))
 }
 
@@ -344,22 +294,17 @@ pub(crate) fn decisions_add(ctx: &RepoContext, opts: DecisionAddOpts) -> Result<
     };
     append_jsonl(&ctx.state_file("decisions.jsonl"), &record)?;
 
-    let receipt_id = record_receipt(
+    let receipt_id = record_successful_state_tool(
         ctx,
-        ReceiptInput {
+        StateToolReceipt {
             tool_name: "jig.decisions_add",
             args: json!({
                 "title": opts.title,
                 "selected_option": opts.selected_option,
                 "plan_id": opts.plan_id,
             }),
-            invoked_make_target: None,
-            plan_id: record.plan_id.clone(),
             started_at_ms: record.timestamp_ms,
-            ended_at_ms: now_ms(),
-            exit_status: 0,
-            stdout: "",
-            stderr: "",
+            plan_id: record.plan_id.clone(),
             session_override: record.session_id.clone(),
         },
     )?;
@@ -373,7 +318,7 @@ pub(crate) fn decisions_add(ctx: &RepoContext, opts: DecisionAddOpts) -> Result<
 
 pub(crate) fn record_receipt(ctx: &RepoContext, input: ReceiptInput<'_>) -> Result<String> {
     ensure_state_layout(ctx)?;
-    let git_metadata = collect_git_receipt_metadata(ctx.root());
+    let git_metadata = receipt_git_metadata(ctx, input.collect_git_metadata);
     let receipt = ReceiptRecord {
         id: new_id("receipt"),
         session_id: match input.session_override {
@@ -397,6 +342,54 @@ pub(crate) fn record_receipt(ctx: &RepoContext, input: ReceiptInput<'_>) -> Resu
     let receipt_id = receipt.id.clone();
     append_jsonl(&ctx.state_file("receipts.jsonl"), &receipt)?;
     Ok(receipt_id)
+}
+
+fn receipt_matches_filters(receipt: &ReceiptRecord, opts: &ReceiptsListOpts) -> bool {
+    let session_matches = opts
+        .session_id
+        .as_ref()
+        .is_none_or(|session_id| receipt.session_id.as_ref() == Some(session_id));
+    let plan_matches = opts
+        .plan_id
+        .as_ref()
+        .is_none_or(|plan_id| receipt.plan_id.as_ref() == Some(plan_id));
+
+    session_matches && plan_matches
+}
+
+fn receipt_git_metadata(ctx: &RepoContext, collect_git_metadata: bool) -> GitReceiptMetadata {
+    if collect_git_metadata {
+        collect_git_receipt_metadata(ctx.root())
+    } else {
+        GitReceiptMetadata::default()
+    }
+}
+
+struct StateToolReceipt<'a> {
+    tool_name: &'a str,
+    args: Value,
+    started_at_ms: u64,
+    plan_id: Option<String>,
+    session_override: Option<String>,
+}
+
+fn record_successful_state_tool(ctx: &RepoContext, input: StateToolReceipt<'_>) -> Result<String> {
+    record_receipt(
+        ctx,
+        ReceiptInput {
+            tool_name: input.tool_name,
+            args: input.args,
+            invoked_make_target: None,
+            plan_id: input.plan_id,
+            started_at_ms: input.started_at_ms,
+            ended_at_ms: now_ms(),
+            exit_status: 0,
+            stdout: "",
+            stderr: "",
+            session_override: input.session_override,
+            collect_git_metadata: false,
+        },
+    )
 }
 
 pub(crate) fn ensure_state_layout(ctx: &RepoContext) -> Result<()> {
@@ -755,5 +748,48 @@ jig_version: '0.1.0'
         assert!(body.contains("Initial body"));
         assert!(body.contains("First append"));
         assert!(body.contains("Second append"));
+    }
+
+    #[test]
+    fn receipts_list_is_read_only() {
+        let temp = tempdir().unwrap();
+        write_fixture_repo(temp.path());
+        let ctx = RepoContext::load_from(temp.path()).unwrap();
+
+        session_start(&ctx).unwrap();
+        let before = read_jsonl::<ReceiptRecord>(&ctx.state_file("receipts.jsonl")).unwrap();
+
+        let output = receipts_list(
+            &ctx,
+            ReceiptsListOpts {
+                session_id: None,
+                plan_id: None,
+                limit: 20,
+            },
+        )
+        .unwrap();
+
+        let after = read_jsonl::<ReceiptRecord>(&ctx.state_file("receipts.jsonl")).unwrap();
+        assert_eq!(before.len(), after.len());
+        assert!(output.get("receipt_id").is_none());
+    }
+
+    #[test]
+    fn state_tool_receipts_skip_git_metadata_collection() {
+        let temp = tempdir().unwrap();
+        write_fixture_repo(temp.path());
+        let ctx = RepoContext::load_from(temp.path()).unwrap();
+
+        session_start(&ctx).unwrap();
+
+        let receipts = read_jsonl::<ReceiptRecord>(&ctx.state_file("receipts.jsonl")).unwrap();
+        let receipt = receipts
+            .iter()
+            .find(|receipt| receipt.tool_name == "jig.session_start")
+            .unwrap();
+        assert!(receipt.changed_paths.is_empty());
+        assert_eq!(receipt.diff_stat.files, 0);
+        assert!(receipt.git_status_error.is_none());
+        assert!(receipt.git_diff_stat_error.is_none());
     }
 }
