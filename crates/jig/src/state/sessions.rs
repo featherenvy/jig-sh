@@ -11,7 +11,9 @@ use super::events::{
     new_id, now_ms, read_jsonl,
 };
 use super::plans::open_plans;
-use super::receipts::{StateToolReceipt, record_successful_state_tool};
+use super::receipts::{StateToolReceipt, receipt_diff_summary, record_successful_state_tool};
+
+const STATE_SUMMARY_RECENT_LIMIT: usize = 10;
 
 pub(crate) fn session_start(ctx: &RepoContext) -> Result<Value> {
     ensure_state_layout(ctx)?;
@@ -144,6 +146,86 @@ pub(super) fn build_summary(ctx: &RepoContext) -> Result<Value> {
         "recent_receipts": recent_receipts,
         "recent_decisions": recent_decisions,
     }))
+}
+
+pub(crate) fn state_summary(ctx: &RepoContext) -> Result<Value> {
+    ensure_state_layout(ctx)?;
+    let sessions = read_jsonl::<SessionEvent>(&ctx.state_file("sessions.jsonl"))?;
+    let plans = read_jsonl::<PlanEvent>(&ctx.state_file("plans.jsonl"))?;
+    let receipts = read_jsonl::<ReceiptRecord>(&ctx.state_file("receipts.jsonl"))?;
+    let decisions = read_jsonl::<DecisionRecord>(&ctx.state_file("decisions.jsonl"))?;
+
+    let open_plans = open_plans(&plans);
+    let session_count = sessions
+        .iter()
+        .filter(|session| session.event == "start")
+        .count();
+    let plan_count = plans.iter().filter(|plan| plan.event == "open").count();
+    let failed_receipts = receipts
+        .iter()
+        .filter(|receipt| receipt.exit_status != 0)
+        .count();
+    let recent_receipts = receipts
+        .iter()
+        .rev()
+        .take(STATE_SUMMARY_RECENT_LIMIT)
+        .map(receipt_summary)
+        .collect::<Vec<_>>();
+    let recent_decisions = decisions
+        .iter()
+        .rev()
+        .take(STATE_SUMMARY_RECENT_LIMIT)
+        .map(decision_summary)
+        .collect::<Vec<_>>();
+
+    Ok(json!({
+        "ok": true,
+        "repo": {
+            "name": ctx.repo_name(),
+            "default_branch": ctx.default_branch(),
+            "source_commit": ctx.source_commit(),
+            "source_path": ctx.source_path(),
+        },
+        "current_session_id": current_session(ctx)?,
+        "counts": {
+            "sessions": session_count,
+            "session_events": sessions.len(),
+            "plans": plan_count,
+            "plan_events": plans.len(),
+            "open_plans": open_plans.len(),
+            "receipts": receipts.len(),
+            "failed_receipts": failed_receipts,
+            "decisions": decisions.len(),
+        },
+        "open_plans": open_plans,
+        "recent_receipts": recent_receipts,
+        "recent_decisions": recent_decisions,
+    }))
+}
+
+fn receipt_summary(receipt: &ReceiptRecord) -> Value {
+    json!({
+        "id": receipt.id,
+        "session_id": receipt.session_id,
+        "plan_id": receipt.plan_id,
+        "tool_name": receipt.tool_name,
+        "invoked_make_target": receipt.invoked_make_target,
+        "exit_status": receipt.exit_status,
+        "started_at_ms": receipt.started_at_ms,
+        "ended_at_ms": receipt.ended_at_ms,
+        "diff_summary": receipt_diff_summary(receipt),
+    })
+}
+
+fn decision_summary(decision: &DecisionRecord) -> Value {
+    json!({
+        "id": decision.id,
+        "title": decision.title,
+        "selected_option": decision.selected_option,
+        "plan_id": decision.plan_id,
+        "session_id": decision.session_id,
+        "timestamp_ms": decision.timestamp_ms,
+    })
 }
 
 fn write_current_session(ctx: &RepoContext, session_id: Option<&str>) -> Result<()> {

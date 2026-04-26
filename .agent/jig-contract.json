@@ -85,6 +85,12 @@
       "target": null
     },
     {
+      "name": "jig.state_summary",
+      "kind": "memory",
+      "description": "Summarize structured jig state.",
+      "target": null
+    },
+    {
       "name": "jig.decisions_add",
       "kind": "memory",
       "description": "Append a structured decision record.",

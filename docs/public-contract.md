@@ -74,6 +74,7 @@ The following tool names are stable in contract version 1 when declared in the m
 - `jig.plans_append`
 - `jig.plans_close`
 - `jig.receipts_list`
+- `jig.state_summary`
 - `jig.decisions_add`
 
 SQLx-specific tools are stable when `sqlx_enabled` rendered them into the manifest:
@@ -110,8 +111,11 @@ Memory tools return operation-specific identifiers and state data. Current stabl
 - `plan_id` for plan commands
 - `decision_id` for decision commands
 - `receipts` for `jig.receipts_list`
+- `counts`, `open_plans`, `recent_receipts`, and `recent_decisions` for `jig.state_summary`
 
-`jig.receipts_list` is read-only and does not create a receipt for the list operation.
+`jig.receipts_list` supports optional `session_id`, `plan_id`, `tool_name`, `failed_only`, and `limit` filters. Receipt list entries include the persisted receipt fields plus an additive `diff_summary` presentation field.
+
+`jig.receipts_list` and `jig.state_summary` are read-only and do not create receipts for the query operation.
 
 ## State Files
 

@@ -17,7 +17,7 @@ pub(crate) use plans::{plans_append, plans_close, plans_open};
 pub(crate) use receipts::{ReceiptInput, receipts_list, record_receipt};
 use receipts::{StateToolReceipt, record_successful_state_tool};
 use sessions::current_session;
-pub(crate) use sessions::{session_end, session_start};
+pub(crate) use sessions::{session_end, session_start, state_summary};
 
 #[cfg(test)]
 use events::{PlanEvent, ReceiptRecord, read_jsonl, truncate};

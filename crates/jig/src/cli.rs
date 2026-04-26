@@ -6,6 +6,8 @@ use clap::{Args, Parser, Subcommand};
 
 use crate::{bootstrap, context::RepoContext, mcp, runtime};
 
+pub(crate) const DEFAULT_RECEIPTS_LIMIT: usize = 20;
+
 #[derive(Debug, Parser)]
 #[command(
     name = "jig",
@@ -57,6 +59,8 @@ pub(crate) enum CommandKind {
     PlansClose(PlanCloseOpts),
     #[command(name = "receipts-list")]
     ReceiptsList(ReceiptsListOpts),
+    #[command(name = "state-summary")]
+    StateSummary,
     #[command(name = "decisions-add")]
     DecisionsAdd(DecisionAddOpts),
     #[command(name = "mcp")]
@@ -125,8 +129,24 @@ pub(crate) struct ReceiptsListOpts {
     pub(crate) session_id: Option<String>,
     #[arg(long)]
     pub(crate) plan_id: Option<String>,
-    #[arg(long, default_value_t = 20)]
+    #[arg(long)]
+    pub(crate) tool_name: Option<String>,
+    #[arg(long)]
+    pub(crate) failed_only: bool,
+    #[arg(long, default_value_t = DEFAULT_RECEIPTS_LIMIT)]
     pub(crate) limit: usize,
+}
+
+impl Default for ReceiptsListOpts {
+    fn default() -> Self {
+        Self {
+            session_id: None,
+            plan_id: None,
+            tool_name: None,
+            failed_only: false,
+            limit: DEFAULT_RECEIPTS_LIMIT,
+        }
+    }
 }
 
 #[derive(Debug, Args)]
@@ -235,6 +255,45 @@ mod tests {
                 assert_eq!(template_mode, Some(bootstrap::TemplateMode::Committed));
             }
             other => panic!("expected update command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_receipts_list_filters() {
+        let cli = Cli::try_parse_from([
+            "jig",
+            "receipts-list",
+            "--session-id",
+            "session_1",
+            "--plan-id",
+            "plan_1",
+            "--tool-name",
+            "jig.test",
+            "--failed-only",
+            "--limit",
+            "5",
+        ])
+        .unwrap();
+
+        match cli.command {
+            CommandKind::ReceiptsList(opts) => {
+                assert_eq!(opts.session_id.as_deref(), Some("session_1"));
+                assert_eq!(opts.plan_id.as_deref(), Some("plan_1"));
+                assert_eq!(opts.tool_name.as_deref(), Some("jig.test"));
+                assert!(opts.failed_only);
+                assert_eq!(opts.limit, 5);
+            }
+            other => panic!("expected receipts-list command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_state_summary_command() {
+        let cli = Cli::try_parse_from(["jig", "state-summary"]).unwrap();
+
+        match cli.command {
+            CommandKind::StateSummary => {}
+            other => panic!("expected state-summary command, got {other:?}"),
         }
     }
 }

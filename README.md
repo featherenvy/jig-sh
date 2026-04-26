@@ -92,6 +92,13 @@ jig update \
   --template-mode committed
 ```
 
+When changing the `jig` runtime itself, build a dev binary and point the launcher at it so the repo-local cache cannot mask current code:
+
+```sh
+cargo build -p jig-sh --bin jig
+JIG_DEV_BIN=target/debug/jig scripts/jig state-summary
+```
+
 If you edit `.jig.yml` and want a full re-render from the stored answers:
 
 ```sh

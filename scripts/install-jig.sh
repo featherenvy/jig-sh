@@ -94,12 +94,12 @@ install_from_git_source() {
   assert_exact_version "$BIN_PATH"
 }
 
-if [[ -x "$BIN_PATH" ]] && assert_exact_version "$BIN_PATH"; then
+if install_from_dev_bin; then
   printf '%s\n' "$BIN_PATH"
   exit 0
 fi
 
-if install_from_dev_bin; then
+if [[ -x "$BIN_PATH" ]] && assert_exact_version "$BIN_PATH"; then
   printf '%s\n' "$BIN_PATH"
   exit 0
 fi

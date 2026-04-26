@@ -34,10 +34,13 @@ pub(super) struct StateToolReceipt<'a> {
 
 pub(crate) fn receipts_list(ctx: &RepoContext, opts: ReceiptsListOpts) -> Result<Value> {
     ensure_state_layout(ctx)?;
-    let mut receipts = read_jsonl::<ReceiptRecord>(&ctx.state_file("receipts.jsonl"))?;
-    receipts.retain(|receipt| receipt_matches_filters(receipt, &opts));
-    receipts.reverse();
-    receipts.truncate(opts.limit);
+    let receipts = read_jsonl::<ReceiptRecord>(&ctx.state_file("receipts.jsonl"))?
+        .into_iter()
+        .rev()
+        .filter(|receipt| receipt_matches_filters(receipt, &opts))
+        .take(opts.limit)
+        .map(receipt_list_value)
+        .collect::<Result<Vec<_>>>()?;
 
     Ok(json!({
         "ok": true,
@@ -104,8 +107,40 @@ fn receipt_matches_filters(receipt: &ReceiptRecord, opts: &ReceiptsListOpts) -> 
         .plan_id
         .as_ref()
         .is_none_or(|plan_id| receipt.plan_id.as_ref() == Some(plan_id));
+    let tool_matches = opts
+        .tool_name
+        .as_ref()
+        .is_none_or(|tool_name| receipt.tool_name == *tool_name);
+    let failure_matches = !opts.failed_only || receipt.exit_status != 0;
 
-    session_matches && plan_matches
+    session_matches && plan_matches && tool_matches && failure_matches
+}
+
+fn receipt_list_value(receipt: ReceiptRecord) -> Result<Value> {
+    let diff_summary = receipt_diff_summary(&receipt);
+    let mut value = serde_json::to_value(receipt)?;
+    if let Some(object) = value.as_object_mut() {
+        object.insert("diff_summary".to_string(), Value::String(diff_summary));
+    }
+    Ok(value)
+}
+
+pub(super) fn receipt_diff_summary(receipt: &ReceiptRecord) -> String {
+    if receipt.git_status_error.is_some() || receipt.git_diff_stat_error.is_some() {
+        return "git metadata unavailable".to_string();
+    }
+
+    let stat = &receipt.diff_stat;
+    if stat.files == 0 && stat.insertions == 0 && stat.deletions == 0 {
+        "no changes".to_string()
+    } else {
+        let file_count = if stat.files == 1 {
+            "1 file".to_string()
+        } else {
+            format!("{} files", stat.files)
+        };
+        format!("{file_count}, +{} -{}", stat.insertions, stat.deletions)
+    }
 }
 
 fn receipt_git_metadata(ctx: &RepoContext, collect_git_metadata: bool) -> GitReceiptMetadata {

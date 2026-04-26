@@ -31,11 +31,14 @@
 - Treat `.agent/state/*.jsonl` as append-only unless a migration path is explicit.
 - Keep make-backed tools aligned with the generated contract manifest and template outputs.
 - Do not make template update flows switch source identity implicitly.
+- When editing the runtime, build `target/debug/jig` and dogfood through `JIG_DEV_BIN=target/debug/jig scripts/jig ...` so the cached repo-local binary cannot mask current code.
 
 ## Common commands
 
 - `cargo test -p jig-sh`
 - `cargo test --workspace`
+- `cargo build -p jig-sh --bin jig`
+- `JIG_DEV_BIN=target/debug/jig scripts/jig state-summary`
 - `make contract-check`
 - `make check-agent-guides`
 - `make check-agent-map`

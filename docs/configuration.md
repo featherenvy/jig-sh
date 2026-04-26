@@ -129,6 +129,8 @@ The generated `scripts/jig` launcher enforces the exact `jig_version` pinned in 
 - MCP tools such as `jig.fmt_check`
 - append-only memory under `.agent/state/*.jsonl`
 
+For local runtime development, set `JIG_DEV_BIN` to an already-built `jig` binary. The installer uses that explicit binary before any cached exact-version binary, while still verifying that its reported version matches `.jig.yml`.
+
 ## SQLx Metadata Directory
 
 This section applies only when `sqlx_enabled` is `true`.

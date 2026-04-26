@@ -6,14 +6,14 @@ use anyhow::{Context, Result, anyhow, bail};
 use serde_json::{Value, json};
 
 use crate::cli::{
-    CommandKind, DecisionAddOpts, PlanAppendOpts, PlanCloseOpts, PlanOpenOpts, ReceiptsListOpts,
-    SessionEndOpts,
+    CommandKind, DEFAULT_RECEIPTS_LIMIT, DecisionAddOpts, PlanAppendOpts, PlanCloseOpts,
+    PlanOpenOpts, ReceiptsListOpts, SessionEndOpts,
 };
 use crate::context::{ManifestTool, RepoContext};
 use crate::process::require_success;
 use crate::state::{
     ReceiptInput, decisions_add, now_ms, plans_append, plans_close, plans_open, receipts_list,
-    record_receipt, session_end, session_start,
+    record_receipt, session_end, session_start, state_summary,
 };
 
 pub(crate) fn dispatch(ctx: &RepoContext, command: CommandKind) -> Result<Value> {
@@ -70,6 +70,7 @@ pub(crate) fn dispatch(ctx: &RepoContext, command: CommandKind) -> Result<Value>
         CommandKind::PlansAppend(opts) => plans_append(ctx, opts),
         CommandKind::PlansClose(opts) => plans_close(ctx, opts),
         CommandKind::ReceiptsList(opts) => receipts_list(ctx, opts),
+        CommandKind::StateSummary => state_summary(ctx),
         CommandKind::DecisionsAdd(opts) => decisions_add(ctx, opts),
         CommandKind::Init(_) | CommandKind::Adopt(_) | CommandKind::Update(_) => unreachable!(),
         CommandKind::Mcp => unreachable!(),
@@ -112,11 +113,8 @@ pub(crate) fn call_tool(ctx: &RepoContext, name: &str, args: Value) -> Result<Va
             plan_id: required_string_arg(&args_obj, "plan_id")?,
             resolution: string_arg(&args_obj, "resolution"),
         }),
-        "jig.receipts_list" => CommandKind::ReceiptsList(ReceiptsListOpts {
-            session_id: string_arg(&args_obj, "session_id"),
-            plan_id: string_arg(&args_obj, "plan_id"),
-            limit: usize_arg(&args_obj, "limit").unwrap_or(20),
-        }),
+        "jig.receipts_list" => CommandKind::ReceiptsList(receipts_list_opts(&args_obj)),
+        "jig.state_summary" => CommandKind::StateSummary,
         "jig.decisions_add" => CommandKind::DecisionsAdd(DecisionAddOpts {
             title: required_string_arg(&args_obj, "title")?,
             selected_option: required_string_arg(&args_obj, "selected_option")?,
@@ -147,6 +145,16 @@ fn make_tool_args(tool: &ManifestTool, args_obj: &serde_json::Map<String, Value>
     }
 
     Ok(json!({}))
+}
+
+fn receipts_list_opts(args_obj: &serde_json::Map<String, Value>) -> ReceiptsListOpts {
+    ReceiptsListOpts {
+        session_id: string_arg(args_obj, "session_id"),
+        plan_id: string_arg(args_obj, "plan_id"),
+        tool_name: string_arg(args_obj, "tool_name"),
+        failed_only: bool_arg(args_obj, "failed_only").unwrap_or_default(),
+        limit: usize_arg(args_obj, "limit").unwrap_or(DEFAULT_RECEIPTS_LIMIT),
+    }
 }
 
 fn execute_manifest_make_tool(
@@ -255,6 +263,10 @@ fn usize_arg(map: &serde_json::Map<String, Value>, key: &str) -> Option<usize> {
     map.get(key)
         .and_then(Value::as_u64)
         .map(|value| value as usize)
+}
+
+fn bool_arg(map: &serde_json::Map<String, Value>, key: &str) -> Option<bool> {
+    map.get(key).and_then(Value::as_bool)
 }
 
 fn string_list_arg(map: &serde_json::Map<String, Value>, key: &str) -> Vec<String> {

@@ -69,6 +69,7 @@ required_tools = {
     "jig.session_start",
     "jig.plans_open",
     "jig.receipts_list",
+    "jig.state_summary",
     "jig.decisions_add",
 }
 if "schema-check" in manifest["required_make_targets"]:

@@ -168,10 +168,13 @@ fn input_schema(tool: &ManifestTool) -> Value {
             "properties": {
                 "session_id": { "type": "string" },
                 "plan_id": { "type": "string" },
+                "tool_name": { "type": "string" },
+                "failed_only": { "type": "boolean" },
                 "limit": { "type": "integer", "minimum": 1 }
             },
             "additionalProperties": false
         }),
+        "jig.state_summary" => empty_input_schema(),
         "jig.decisions_add" => json!({
             "type": "object",
             "properties": {

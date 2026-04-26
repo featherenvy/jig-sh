@@ -6,6 +6,7 @@ use tempfile::tempdir;
 
 use crate::cli::{PlanAppendOpts, PlanOpenOpts, ReceiptsListOpts};
 use crate::context::RepoContext;
+use crate::git_receipts::DiffStat;
 
 use super::*;
 
@@ -152,19 +153,103 @@ fn receipts_list_is_read_only() {
     session_start(&ctx).unwrap();
     let before = read_jsonl::<ReceiptRecord>(&ctx.state_file("receipts.jsonl")).unwrap();
 
-    let output = receipts_list(
-        &ctx,
-        ReceiptsListOpts {
-            session_id: None,
-            plan_id: None,
-            limit: 20,
-        },
-    )
-    .unwrap();
+    let output = receipts_list(&ctx, ReceiptsListOpts::default()).unwrap();
 
     let after = read_jsonl::<ReceiptRecord>(&ctx.state_file("receipts.jsonl")).unwrap();
     assert_eq!(before.len(), after.len());
     assert!(output.get("receipt_id").is_none());
+}
+
+#[test]
+fn receipts_list_filters_by_tool_and_failure_and_adds_diff_summary() {
+    let temp = tempdir().unwrap();
+    write_fixture_repo(temp.path());
+    let ctx = RepoContext::load_from(temp.path()).unwrap();
+    ensure_state_layout(&ctx).unwrap();
+    append_jsonl(
+        &ctx.state_file("receipts.jsonl"),
+        &receipt_record(
+            "receipt_failed",
+            "jig.test",
+            1,
+            DiffStat {
+                files: 1,
+                insertions: 2,
+                deletions: 3,
+            },
+        ),
+    )
+    .unwrap();
+    append_jsonl(
+        &ctx.state_file("receipts.jsonl"),
+        &receipt_record("receipt_success", "jig.clippy", 0, DiffStat::default()),
+    )
+    .unwrap();
+
+    let output = receipts_list(
+        &ctx,
+        ReceiptsListOpts {
+            tool_name: Some("jig.test".into()),
+            failed_only: true,
+            ..ReceiptsListOpts::default()
+        },
+    )
+    .unwrap();
+    let receipts = output["receipts"].as_array().unwrap();
+
+    assert_eq!(receipts.len(), 1);
+    assert_eq!(receipts[0]["id"], "receipt_failed");
+    assert_eq!(receipts[0]["diff_summary"], "1 file, +2 -3");
+}
+
+fn receipt_record(
+    id: &str,
+    tool_name: &str,
+    exit_status: i32,
+    diff_stat: DiffStat,
+) -> ReceiptRecord {
+    ReceiptRecord {
+        id: id.into(),
+        session_id: Some("session_1".into()),
+        plan_id: Some("plan_1".into()),
+        tool_name: tool_name.into(),
+        args: json!({}),
+        invoked_make_target: None,
+        started_at_ms: 1,
+        ended_at_ms: 2,
+        exit_status,
+        stdout_preview: String::new(),
+        stderr_preview: String::new(),
+        changed_paths: Vec::new(),
+        diff_stat,
+        git_status_error: None,
+        git_diff_stat_error: None,
+    }
+}
+
+#[test]
+fn state_summary_is_read_only_and_counts_state_records() {
+    let temp = tempdir().unwrap();
+    write_fixture_repo(temp.path());
+    let ctx = RepoContext::load_from(temp.path()).unwrap();
+
+    session_start(&ctx).unwrap();
+    let before = read_jsonl::<ReceiptRecord>(&ctx.state_file("receipts.jsonl")).unwrap();
+
+    let output = state_summary(&ctx).unwrap();
+
+    let after = read_jsonl::<ReceiptRecord>(&ctx.state_file("receipts.jsonl")).unwrap();
+    assert_eq!(before.len(), after.len());
+    assert!(output.get("receipt_id").is_none());
+    assert_eq!(output["ok"], true);
+    assert_eq!(output["counts"]["sessions"], 1);
+    assert_eq!(output["counts"]["plans"], 0);
+    assert_eq!(output["counts"]["receipts"], 1);
+    assert_eq!(output["counts"]["failed_receipts"], 0);
+    assert_eq!(
+        output["recent_receipts"][0]["tool_name"],
+        "jig.session_start"
+    );
 }
 
 #[test]
