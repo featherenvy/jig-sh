@@ -8,7 +8,7 @@ Fast jump index for agent-facing guidance in this repository.
 
 ## Nested guides
 
-_None yet_
+- [crates/jig](./crates/jig/AGENTS.md)
 
 ## Suggested usage pattern
 

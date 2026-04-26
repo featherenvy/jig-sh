@@ -1,0 +1,196 @@
+#!/usr/bin/env bash
+
+if ! declare -F json_get >/dev/null; then
+  source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/lib.sh"
+fi
+
+validate_jig_mcp_smoke() {
+  local repo_dir="$1"
+  local expect_schema_dump="$2"
+  local expect_sqlx="$3"
+
+  REPO_DIR="$repo_dir" EXPECT_SCHEMA_DUMP="$expect_schema_dump" EXPECT_SQLX="$expect_sqlx" python3 <<'PY'
+import json
+import os
+import pathlib
+import subprocess
+
+repo_dir = pathlib.Path(os.environ["REPO_DIR"])
+expect_schema_dump = os.environ["EXPECT_SCHEMA_DUMP"] == "1"
+expect_sqlx = os.environ["EXPECT_SQLX"] == "1"
+proc = subprocess.Popen(
+    [str(repo_dir / "scripts" / "jig"), "mcp"],
+    cwd=repo_dir,
+    stdin=subprocess.PIPE,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+)
+
+def send(message):
+    body = json.dumps(message).encode()
+    proc.stdin.write(f"Content-Length: {len(body)}\r\n\r\n".encode() + body)
+    proc.stdin.flush()
+
+def recv():
+    headers = {}
+    while True:
+        line = proc.stdout.readline()
+        if not line:
+            raise RuntimeError("MCP server closed stdout unexpectedly")
+        if line == b"\r\n":
+            break
+        name, value = line.decode().split(":", 1)
+        headers[name.lower()] = value.strip()
+
+    body = proc.stdout.read(int(headers["content-length"]))
+    return json.loads(body)
+
+send({
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "initialize",
+    "params": {
+        "protocolVersion": "2025-06-18",
+        "capabilities": {},
+        "clientInfo": {"name": "fixture", "version": "1"},
+    },
+})
+response = recv()
+assert response["result"]["serverInfo"]["name"] == "jig", response
+
+send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+send({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
+response = recv()
+tool_names = {tool["name"] for tool in response["result"]["tools"]}
+assert "jig.fmt_check" in tool_names, tool_names
+assert ("jig.schema_check" in tool_names) == expect_sqlx, tool_names
+assert ("jig.schema_dump" in tool_names) == expect_schema_dump, tool_names
+assert ("jig.sqlx_check" in tool_names) == expect_sqlx, tool_names
+assert ("jig.migration_add" in tool_names) == expect_sqlx, tool_names
+assert "jig.session_start" in tool_names, tool_names
+
+send({
+    "jsonrpc": "2.0",
+    "id": 3,
+    "method": "tools/call",
+    "params": {"name": "jig.session_start", "arguments": {}},
+})
+response = recv()
+content = response["result"]["structuredContent"]
+assert content["session_id"], response
+
+proc.terminate()
+proc.wait(timeout=5)
+PY
+}
+
+validate_jig_runtime() {
+  local repo_dir="$1"
+  local expect_schema_dump="$2"
+  local expect_sqlx="$3"
+  local migration_name="${4:-}"
+
+  (
+    cd "$repo_dir"
+    [[ -f .mcp.json ]]
+    [[ -f .agent/jig-contract.json ]]
+    make contract-check >/dev/null
+
+    EXPECT_SCHEMA_DUMP="$expect_schema_dump" EXPECT_SQLX="$expect_sqlx" python3 <<'PY'
+import json
+import os
+import pathlib
+
+manifest = json.loads(pathlib.Path(".agent/jig-contract.json").read_text())
+expect_schema_dump = os.environ["EXPECT_SCHEMA_DUMP"] == "1"
+expect_sqlx = os.environ["EXPECT_SQLX"] == "1"
+targets = set(manifest["required_make_targets"])
+tools = {tool["name"] for tool in manifest["tools"]}
+
+assert ("schema-dump" in targets) == expect_schema_dump, manifest
+assert ("schema-check" in targets) == expect_sqlx, manifest
+assert ("jig.schema_dump" in tools) == expect_schema_dump, manifest
+assert ("jig.schema_check" in tools) == expect_sqlx, manifest
+assert ("sqlx-check" in targets) == expect_sqlx, manifest
+assert ("migration-add" in targets) == expect_sqlx, manifest
+assert ("jig.sqlx_check" in tools) == expect_sqlx, manifest
+assert ("jig.migration_add" in tools) == expect_sqlx, manifest
+PY
+
+    local session_json
+    local session_id
+    local plan_json
+    local plan_id
+    local receipts_json
+    local receipt_count
+    local expected_receipt_count
+
+    rm -rf .git/jig-tools .agent/.cache
+    env -u JIG_DEV_BIN scripts/install-jig.sh >/dev/null
+    validate_jig_mcp_smoke "$repo_dir" "$expect_schema_dump" "$expect_sqlx"
+
+    session_json="$(scripts/jig session-start)"
+    session_id="$(printf '%s' "$session_json" | json_get session_id)"
+
+    plan_json="$(scripts/jig plans-open --title "Fixture runtime plan" --body "## Fixture\nRuntime validation.")"
+    plan_id="$(printf '%s' "$plan_json" | json_get plan_id)"
+
+    scripts/jig fmt-check --plan-id "$plan_id" >/dev/null
+    scripts/jig contract-check --plan-id "$plan_id" >/dev/null
+    scripts/jig test --plan-id "$plan_id" >/dev/null
+    if [[ "$expect_sqlx" == "1" ]]; then
+      scripts/jig schema-check --plan-id "$plan_id" >/dev/null
+    fi
+
+    if [[ "$expect_schema_dump" == "1" ]]; then
+      scripts/jig schema-dump --plan-id "$plan_id" >/dev/null
+    fi
+
+    if [[ "$expect_sqlx" == "1" ]]; then
+      scripts/jig migration-add "$migration_name" --plan-id "$plan_id" >/dev/null
+    fi
+    scripts/jig decisions-add \
+      --title "Fixture decision" \
+      --selected-option "Use jig" \
+      --rationale "Runtime contract is wired and validated." \
+      --plan-id "$plan_id" \
+      --alternatives "Plain make" \
+      >/dev/null
+
+    receipts_json="$(scripts/jig receipts-list --plan-id "$plan_id" --limit 20)"
+    receipt_count="$(printf '%s' "$receipts_json" | json_get receipts | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')"
+    expected_receipt_count=3
+    if [[ "$expect_sqlx" == "1" ]]; then
+      expected_receipt_count=$((expected_receipt_count + 1))
+    fi
+    if [[ "$expect_schema_dump" == "1" ]]; then
+      expected_receipt_count=$((expected_receipt_count + 1))
+    fi
+    if [[ "$receipt_count" -lt "$expected_receipt_count" ]]; then
+      echo "Expected at least $expected_receipt_count receipts for plan $plan_id, found $receipt_count." >&2
+      exit 1
+    fi
+
+    scripts/jig plans-close --plan-id "$plan_id" --resolution "fixture complete" >/dev/null
+    scripts/jig session-end --session-id "$session_id" --outcome success >/dev/null
+
+    [[ -f ".agent/plans/${plan_id}.md" ]]
+    rg -q "Runtime validation" ".agent/plans/${plan_id}.md"
+    [[ -f .agent/state/receipts.jsonl ]]
+    [[ -f .agent/state/decisions.jsonl ]]
+    [[ -f ".git/jig-tools/0.1.0/bin/jig" ]]
+    if [[ "$expect_sqlx" == "1" ]]; then
+      find crates/acme-db/migrations -name "*_${migration_name}.up.sql" | grep -q .
+    fi
+  )
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  set -euo pipefail
+  if [[ "$#" -lt 3 || "$#" -gt 4 ]]; then
+    echo "Usage: $0 REPO_DIR EXPECT_SCHEMA_DUMP EXPECT_SQLX [MIGRATION_NAME]" >&2
+    exit 2
+  fi
+
+  validate_jig_runtime "$@"
+fi

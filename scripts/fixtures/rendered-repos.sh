@@ -1,0 +1,144 @@
+#!/usr/bin/env bash
+
+if ! declare -F render_fixture >/dev/null; then
+  source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/lib.sh"
+fi
+if ! declare -F validate_jig_runtime >/dev/null; then
+  source "$ROOT_DIR/scripts/fixtures/runtime-smoke.sh"
+fi
+if ! declare -F write_backend_stub_repo >/dev/null; then
+  source "$ROOT_DIR/scripts/fixtures/stub-repos.sh"
+fi
+
+validate_backend_fixture() {
+  local repo_dir="$1"
+
+  write_backend_stub_repo "$repo_dir"
+  (
+    cd "$repo_dir"
+    [[ -f .jig.yml ]]
+    git init -b main >/dev/null
+    git config user.name "Fixture"
+    git config user.email "fixture@example.com"
+    scripts/generate-agent-map.sh
+    git add .
+    git commit -m "fixture" >/dev/null
+    make help >/dev/null
+    bash scripts/check-agent-map.sh
+    bash scripts/check-agent-guides.sh
+    bash scripts/check-rust-file-loc.sh --all >/dev/null
+    bash scripts/check-migration-immutability.sh --changed-against HEAD
+    bash scripts/check-sqlx-unchecked-non-test.sh >/dev/null
+    coverage_dir="$(mktemp -d)"
+    COVERAGE_DIR="$coverage_dir" COVERAGE_THRESHOLD=0 node scripts/enforce-coverage.js >/dev/null
+    rm -rf "$coverage_dir"
+    perl -0pi -e "s/default_branch: 'main'/default_branch: 'dev'/" .jig.yml
+    git add .jig.yml
+    git commit -m "change answers" >/dev/null
+    uvx --from copier copier recopy --trust --defaults --overwrite --answers-file .jig.yml >/dev/null
+    grep -q '^DEFAULT_BRANCH ?= dev$' Makefile
+    grep -q '^JIG_VERSION ?= 0.1.0$' Makefile
+    if [[ -f .github/workflows/webapp-checks.yml ]]; then
+      rg -q "No web apps configured" .github/workflows/webapp-checks.yml
+    fi
+    validate_jig_runtime "$repo_dir" 0 1 "fixture_backend_runtime"
+  )
+}
+
+validate_full_stack_fixture() {
+  local repo_dir="$1"
+
+  write_full_stack_stub_repo "$repo_dir"
+  (
+    cd "$repo_dir"
+    [[ -f .jig.yml ]]
+    git init -b main >/dev/null
+    git config user.name "Fixture"
+    git config user.email "fixture@example.com"
+    scripts/generate-agent-map.sh
+    git add .
+    git commit -m "fixture" >/dev/null
+    make help >/dev/null
+    bash scripts/check-agent-map.sh
+    bash scripts/check-agent-guides.sh
+    bash scripts/check-rust-file-loc.sh --all >/dev/null
+    bash scripts/check-migration-immutability.sh --changed-against HEAD
+    bash scripts/check-sqlx-unchecked-non-test.sh >/dev/null
+    bash scripts/check-schema-dump.sh >/dev/null
+    uvx --from copier copier recopy --trust --defaults --overwrite --answers-file .jig.yml >/dev/null
+    rg -q "frontend" .github/workflows/webapp-checks.yml
+    rg -q "admin-panel" .github/workflows/webapp-checks.yml
+    rg -q "40" .github/workflows/webapp-checks.yml
+    validate_jig_runtime "$repo_dir" 1 1 "fixture_full_stack_runtime"
+  )
+}
+
+validate_tooling_only_fixture() {
+  local repo_dir="$1"
+
+  write_tooling_only_stub_repo "$repo_dir"
+  (
+    cd "$repo_dir"
+    [[ -f .jig.yml ]]
+    git init -b main >/dev/null
+    git config user.name "Fixture"
+    git config user.email "fixture@example.com"
+    scripts/generate-agent-map.sh
+    git add .
+    git commit -m "fixture" >/dev/null
+    make help >/dev/null
+    bash scripts/check-agent-map.sh
+    bash scripts/check-agent-guides.sh
+    bash scripts/check-rust-file-loc.sh --all >/dev/null
+    coverage_dir="$(mktemp -d)"
+    COVERAGE_DIR="$coverage_dir" COVERAGE_THRESHOLD=0 node scripts/enforce-coverage.js >/dev/null
+    rm -rf "$coverage_dir"
+    [[ ! -f scripts/add-migration.sh ]]
+    [[ ! -f scripts/check-migration-immutability.sh ]]
+    [[ ! -f scripts/check-schema-dump.sh ]]
+    [[ ! -f scripts/check-sqlx-unchecked-non-test.sh ]]
+    [[ ! -f scripts/generate-sqlx-unchecked-queries-todo.sh ]]
+    ! rg -q '^sqlx-db-setup:' Makefile
+    ! rg -q '^sqlx-check:' Makefile
+    ! rg -q '^schema-check:' Makefile
+    ! rg -q '^schema-dump:' Makefile
+    ! rg -q '^migration-add:' Makefile
+    ! rg -q '^check-sqlx-unchecked-non-test:' Makefile
+    ! rg -q '"jig\\.sqlx_check"' .agent/jig-contract.json
+    ! rg -q '"jig\\.schema_check"' .agent/jig-contract.json
+    ! rg -q '"jig\\.schema_dump"' .agent/jig-contract.json
+    ! rg -q '"jig\\.migration_add"' .agent/jig-contract.json
+    ! rg -q 'sqlx-unchecked-queries:' .github/workflows/repo-policy.yml
+    ! rg -q 'migration-immutability:' .github/workflows/repo-policy.yml
+    perl -0pi -e "s/default_branch: 'main'/default_branch: 'dev'/" .jig.yml
+    git add .jig.yml
+    git commit -m "change answers" >/dev/null
+    uvx --from copier copier recopy --trust --defaults --overwrite --answers-file .jig.yml >/dev/null
+    grep -q '^DEFAULT_BRANCH ?= dev$' Makefile
+    [[ ! -f scripts/add-migration.sh ]]
+    [[ ! -f scripts/check-migration-immutability.sh ]]
+    [[ ! -f scripts/check-schema-dump.sh ]]
+    [[ ! -f scripts/check-sqlx-unchecked-non-test.sh ]]
+    [[ ! -f scripts/generate-sqlx-unchecked-queries-todo.sh ]]
+    validate_jig_runtime "$repo_dir" 0 0
+  )
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  set -euo pipefail
+  fixture_create_tmp_dir_if_needed
+
+  backend_dir="$TMP_DIR/backend-only"
+  full_stack_dir="$TMP_DIR/full-stack"
+  tooling_only_dir="$TMP_DIR/tooling-only"
+
+  render_fixture "$ROOT_DIR/tests/fixtures/backend-only.yaml" "$backend_dir"
+  render_fixture "$ROOT_DIR/tests/fixtures/full-stack.yaml" "$full_stack_dir"
+  render_fixture "$ROOT_DIR/tests/fixtures/tooling-only.yaml" "$tooling_only_dir"
+
+  validate_backend_fixture "$backend_dir"
+  validate_full_stack_fixture "$full_stack_dir"
+  validate_tooling_only_fixture "$tooling_only_dir"
+
+  echo "Rendered fixture validation passed."
+fi
