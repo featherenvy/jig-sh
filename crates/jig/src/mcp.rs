@@ -3,8 +3,9 @@ use std::io::{self, BufRead, Write};
 use anyhow::{Context, Result, anyhow};
 use serde_json::{Value, json};
 
-use crate::context::{ManifestTool, RepoContext};
-use crate::runtime::{call_tool, tool_specs};
+use crate::context::RepoContext;
+use crate::runtime::call_tool;
+use crate::tool_defs;
 
 pub fn serve(ctx: &RepoContext) -> Result<()> {
     let stdin = io::stdin();
@@ -51,7 +52,7 @@ pub fn serve(ctx: &RepoContext) -> Result<()> {
                 "jsonrpc": "2.0",
                 "id": id,
                 "result": {
-                    "tools": tool_specs(ctx).iter().map(tool_descriptor).collect::<Vec<_>>()
+                    "tools": tool_defs::tool_descriptors(ctx.tool_specs())
                 }
             })),
             "tools/call" => Some(handle_tool_call(ctx, id, params)),
@@ -109,127 +110,6 @@ fn handle_tool_call(ctx: &RepoContext, id: Option<Value>, params: Value) -> Valu
             }
         }),
     }
-}
-
-fn tool_descriptor(tool: &ManifestTool) -> Value {
-    json!({
-        "name": tool.name,
-        "description": tool.description,
-        "inputSchema": input_schema(tool)
-    })
-}
-
-fn input_schema(tool: &ManifestTool) -> Value {
-    if tool.kind == "make" {
-        return make_input_schema(tool);
-    }
-
-    match tool.name.as_str() {
-        "jig.session_start" => empty_input_schema(),
-        "jig.session_end" => json!({
-            "type": "object",
-            "properties": {
-                "session_id": { "type": "string" },
-                "outcome": { "type": "string" }
-            },
-            "additionalProperties": false
-        }),
-        "jig.plans_open" => json!({
-            "type": "object",
-            "properties": {
-                "title": { "type": "string" },
-                "body": { "type": "string" },
-                "body_file": { "type": "string" }
-            },
-            "required": ["title"],
-            "additionalProperties": false
-        }),
-        "jig.plans_append" => json!({
-            "type": "object",
-            "properties": {
-                "plan_id": { "type": "string" },
-                "body": { "type": "string" },
-                "body_file": { "type": "string" }
-            },
-            "required": ["plan_id"],
-            "additionalProperties": false
-        }),
-        "jig.plans_close" => json!({
-            "type": "object",
-            "properties": {
-                "plan_id": { "type": "string" },
-                "resolution": { "type": "string" }
-            },
-            "required": ["plan_id"],
-            "additionalProperties": false
-        }),
-        "jig.receipts_list" => json!({
-            "type": "object",
-            "properties": {
-                "session_id": { "type": "string" },
-                "plan_id": { "type": "string" },
-                "tool_name": { "type": "string" },
-                "failed_only": { "type": "boolean" },
-                "limit": { "type": "integer", "minimum": 1 }
-            },
-            "additionalProperties": false
-        }),
-        "jig.state_summary" => empty_input_schema(),
-        "jig.decisions_add" => json!({
-            "type": "object",
-            "properties": {
-                "title": { "type": "string" },
-                "selected_option": { "type": "string" },
-                "rationale": { "type": "string" },
-                "alternatives": {
-                    "type": "array",
-                    "items": { "type": "string" }
-                },
-                "plan_id": { "type": "string" }
-            },
-            "required": ["title", "selected_option", "rationale"],
-            "additionalProperties": false
-        }),
-        _ => empty_input_schema(),
-    }
-}
-
-fn make_input_schema(tool: &ManifestTool) -> Value {
-    match tool.name.as_str() {
-        "jig.migration_add" => named_make_input_schema(),
-        _ if tool.target.is_none() => named_make_input_schema(),
-        _ => plan_id_input_schema(),
-    }
-}
-
-fn empty_input_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {},
-        "additionalProperties": false
-    })
-}
-
-fn plan_id_input_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "plan_id": { "type": "string" }
-        },
-        "additionalProperties": false
-    })
-}
-
-fn named_make_input_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "name": { "type": "string" },
-            "plan_id": { "type": "string" }
-        },
-        "required": ["name"],
-        "additionalProperties": false
-    })
 }
 
 fn read_message(reader: &mut dyn BufRead) -> Result<Option<Value>> {

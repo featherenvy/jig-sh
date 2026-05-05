@@ -5,6 +5,7 @@ use serde_json::{Value, json};
 
 use crate::cli::SessionEndOpts;
 use crate::context::RepoContext;
+use crate::tool_defs::tool;
 
 use super::events::{
     DecisionRecord, PlanEvent, ReceiptRecord, SessionEvent, append_jsonl, ensure_state_layout,
@@ -33,7 +34,7 @@ pub(crate) fn session_start(ctx: &RepoContext) -> Result<Value> {
     let receipt_id = record_successful_state_tool(
         ctx,
         StateToolReceipt {
-            tool_name: "jig.session_start",
+            tool_name: tool::SESSION_START,
             args: json!({}),
             started_at_ms: event.timestamp_ms,
             plan_id: None,
@@ -71,7 +72,7 @@ pub(crate) fn session_end(ctx: &RepoContext, opts: SessionEndOpts) -> Result<Val
     let receipt_id = record_successful_state_tool(
         ctx,
         StateToolReceipt {
-            tool_name: "jig.session_end",
+            tool_name: tool::SESSION_END,
             args: json!({
                 "session_id": session_id,
                 "outcome": opts.outcome,

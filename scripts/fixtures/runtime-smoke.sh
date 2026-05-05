@@ -115,6 +115,7 @@ assert ("sqlx-check" in targets) == expect_sqlx, manifest
 assert ("migration-add" in targets) == expect_sqlx, manifest
 assert ("jig.sqlx_check" in tools) == expect_sqlx, manifest
 assert ("jig.migration_add" in tools) == expect_sqlx, manifest
+assert "jig.session_start" not in tools, manifest
 PY
 
     local session_json

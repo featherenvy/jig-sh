@@ -335,7 +335,7 @@ fn resolve_update_template_source_prefers_stored_local_checkout_for_explicit_com
         no_input: true,
     };
 
-    let resolved = resolve_update_template_source(&opts, &stored, Path::new(".jig.yml")).unwrap();
+    let resolved = resolve_update_template_source(&opts, &stored).unwrap();
 
     assert_eq!(resolved.template, "/tmp/template");
     assert_eq!(resolved.template_mode, Some(TemplateMode::Committed));
@@ -358,7 +358,7 @@ fn resolve_update_template_source_falls_back_to_remote_for_legacy_committed_repo
         no_input: true,
     };
 
-    let resolved = resolve_update_template_source(&opts, &stored, Path::new(".jig.yml")).unwrap();
+    let resolved = resolve_update_template_source(&opts, &stored).unwrap();
 
     assert_eq!(resolved.template, "https://example.com/template.git");
     assert_eq!(resolved.template_mode, None);

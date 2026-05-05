@@ -25,6 +25,9 @@ makefile_text = makefile_path.read_text()
 
 errors = []
 
+if "memory_schema_version" in manifest:
+    errors.append("Remove memory_schema_version; runtime-owned state is not versioned in .agent/jig-contract.json.")
+
 if not jig_yml_script.exists():
     errors.append("Missing scripts/jig-yml.sh helper.")
 else:
@@ -61,16 +64,17 @@ if not install_script.exists():
     errors.append("Missing scripts/install-jig.sh installer.")
 
 tool_names = [tool["name"] for tool in manifest["tools"]]
+memory_tools = [tool["name"] for tool in manifest["tools"] if tool.get("kind") == "memory"]
+if memory_tools:
+    errors.append(
+        "Runtime state tools must not be declared in .agent/jig-contract.json: "
+        + ", ".join(sorted(memory_tools))
+    )
 required_tools = {
     "jig.fmt_check",
     "jig.clippy",
     "jig.test",
     "jig.contract_check",
-    "jig.session_start",
-    "jig.plans_open",
-    "jig.receipts_list",
-    "jig.state_summary",
-    "jig.decisions_add",
 }
 if "schema-check" in manifest["required_make_targets"]:
     required_tools.add("jig.schema_check")

@@ -1,6 +1,8 @@
-use super::*;
 use std::sync::{Mutex, OnceLock};
+
 use tempfile::{TempDir, tempdir};
+
+use super::*;
 
 fn env_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -166,4 +168,4 @@ impl NormalizedRemoteCommittedFixture {
 
 mod basic;
 mod committed;
-mod working_tree;
+mod template_mode;

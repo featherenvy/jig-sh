@@ -1,44 +1,36 @@
 # Public Contract
 
-`jig` exposes one repo contract through three surfaces:
+`jig` exposes a make-backed repo contract through three surfaces:
 
 - CLI commands from `scripts/jig`
-- MCP tools from `scripts/jig mcp`
+- make-backed MCP tools from `scripts/jig mcp`
 - `.agent/jig-contract.json`
 
 Generated repositories may rely on the contract described here when they pin a `jig_version` in `.jig.yml` and keep `scripts/jig`, `.mcp.json`, and `.agent/jig-contract.json` in sync with that version.
 
-## Contract Versions
+Session, plan, receipt, decision, and state-summary commands are runtime-owned conveniences. They may be available through the CLI and MCP server, but they are not part of contract version `1` and are not declared in `.agent/jig-contract.json`.
 
-`.agent/jig-contract.json` has two independent schema versions:
+## Contract Version
 
-- `contract_version`: version of the tool manifest, make-target wiring, and command surface
-- `memory_schema_version`: version of files under `.agent/state/*.jsonl`
+`.agent/jig-contract.json` has one schema version:
 
-Version `1` is the current stable contract. A compatible change may add optional fields, optional tools, optional make targets, or new CLI/MCP commands. A breaking change must increment the relevant version before generated repos depend on it.
+- `contract_version`: version of the generated tool manifest, make-target wiring, and make-backed command surface
+
+Version `1` is the current stable make-backed contract. A compatible change may add optional fields, optional tools, optional make targets, or new make-backed CLI/MCP commands. A breaking change must increment `contract_version` before generated repos depend on it.
 
 Breaking `contract_version` changes include:
 
-- removing or renaming a stable tool
+- removing or renaming a stable make-backed tool
 - removing or renaming a stable generated make target
-- changing a stable command argument from optional to required
-- changing the meaning or type of a stable JSON request or response field
+- changing a stable make-backed command argument from optional to required
+- changing the meaning or type of a stable make-backed JSON request or response field
 - changing `.agent/jig-contract.json` in a way older runtimes cannot ignore
-
-Breaking `memory_schema_version` changes include:
-
-- removing or renaming fields in existing `.agent/state/*.jsonl` records
-- changing the type or meaning of existing state fields
-- requiring old state records to be rewritten before reads succeed
-
-Additive state changes should use optional fields with tolerant readers. Readers must continue to accept older records that lack newly added fields.
 
 ## Stable Manifest Fields
 
 Generated repos and MCP clients may rely on these top-level fields in `.agent/jig-contract.json`:
 
 - `contract_version`
-- `memory_schema_version`
 - `tool_namespace`
 - `jig_version`
 - `required_make_targets`
@@ -54,13 +46,11 @@ Each tool entry has these stable fields:
 
 For `kind: "make"` tools, `target` is either the generated make target to invoke or `null` for tools that accept a target-like argument, such as `jig.run_target`.
 
-For `kind: "memory"` tools, `target` is `null` and the runtime handles the operation without shelling out to `make`.
-
 Consumers should ignore unknown top-level manifest fields and unknown fields inside tool entries.
 
 ## Stable Tools
 
-The following tool names are stable in contract version 1 when declared in the manifest:
+The following make-backed tool names are stable in contract version `1` when declared in the manifest:
 
 - `jig.fmt_check`
 - `jig.clippy`
@@ -68,14 +58,6 @@ The following tool names are stable in contract version 1 when declared in the m
 - `jig.test_locked`
 - `jig.contract_check`
 - `jig.run_target`
-- `jig.session_start`
-- `jig.session_end`
-- `jig.plans_open`
-- `jig.plans_append`
-- `jig.plans_close`
-- `jig.receipts_list`
-- `jig.state_summary`
-- `jig.decisions_add`
 
 SQLx-specific tools are stable when `sqlx_enabled` rendered them into the manifest:
 
@@ -84,11 +66,11 @@ SQLx-specific tools are stable when `sqlx_enabled` rendered them into the manife
 - `jig.schema_dump`
 - `jig.migration_add`
 
-A generated repo may omit optional tools that do not apply to its configuration. Clients must discover available tools from `.agent/jig-contract.json` or MCP tool listing instead of assuming SQLx or schema-dump support.
+A generated repo may omit optional tools that do not apply to its configuration. Clients must discover available make-backed tools from `.agent/jig-contract.json` or MCP tool listing instead of assuming SQLx or schema-dump support.
 
 ## Stable JSON Behavior
 
-All successful CLI and MCP command responses are JSON objects. Stable response fields are additive: existing fields should keep their names, types, and meanings for the current contract version, and new fields may be added.
+All successful stable CLI and MCP command responses are JSON objects. Stable response fields are additive: existing fields should keep their names, types, and meanings for the current contract version, and new fields may be added.
 
 Stable common response fields:
 
@@ -105,19 +87,7 @@ Make-backed tools return:
 - `result.stderr`
 - `receipt_id`
 
-Memory tools return operation-specific identifiers and state data. Current stable identifiers include:
-
-- `session_id` for session commands
-- `plan_id` for plan commands
-- `decision_id` for decision commands
-- `receipts` for `jig.receipts_list`
-- `counts`, `open_plans`, `recent_receipts`, and `recent_decisions` for `jig.state_summary`
-
-`jig.receipts_list` supports optional `session_id`, `plan_id`, `tool_name`, `failed_only`, and `limit` filters. Receipt list entries include the persisted receipt fields plus an additive `diff_summary` presentation field.
-
-`jig.receipts_list` and `jig.state_summary` are read-only and do not create receipts for the query operation.
-
-## State Files
+## Runtime State
 
 `.agent/state/*.jsonl` is runtime-owned append-only memory. Generated repos may back up, inspect, or remove these files intentionally, but application code should not edit individual records in place.
 
@@ -140,15 +110,15 @@ Use this sequence for public contract changes:
 2. Update `.agent/jig-contract.json.jinja`, runtime dispatch, MCP exposure, and docs in the same change.
 3. Keep old fields and commands working for the current contract version.
 4. Run `make contract-check` and fixture validation before release.
-5. Only remove or redefine stable behavior after incrementing `contract_version` or `memory_schema_version`.
+5. Only remove or redefine stable behavior after incrementing `contract_version`.
 
 Generated repos can rely on:
 
 - `scripts/jig` enforcing the exact `jig_version` from `.jig.yml`
 - `make contract-check` detecting missing generated runtime wiring
 - stable make target names listed in `required_make_targets`
-- tool availability being discoverable from `.agent/jig-contract.json` and MCP
-- state files remaining append-only within a memory schema version
+- make-backed tool availability being discoverable from `.agent/jig-contract.json` and MCP
+- state files being runtime-owned append-only records
 
 Generated repos should not rely on:
 
@@ -157,3 +127,4 @@ Generated repos should not rely on:
 - undocumented JSON fields
 - physical ordering of fields in JSON objects
 - SQLx or schema-dump tools unless present in the manifest
+- versioned state-file schemas under `.agent/state/*.jsonl`

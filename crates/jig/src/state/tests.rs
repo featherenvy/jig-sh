@@ -4,11 +4,11 @@ use std::path::Path;
 use serde_json::{Value, json};
 use tempfile::tempdir;
 
+use super::*;
 use crate::cli::{PlanAppendOpts, PlanOpenOpts, ReceiptsListOpts};
 use crate::context::RepoContext;
 use crate::git_receipts::DiffStat;
-
-use super::*;
+use crate::tool_defs::tool;
 
 fn write_fixture_repo(root: &Path) {
     fs::create_dir_all(root.join(".agent")).unwrap();
@@ -26,7 +26,6 @@ jig_version: '0.1.0'
         root.join(".agent/jig-contract.json"),
         serde_json::to_string_pretty(&json!({
             "contract_version": 1,
-            "memory_schema_version": 1,
             "tool_namespace": "jig",
             "jig_version": "0.1.0",
             "required_make_targets": ["fmt-check"],
@@ -170,7 +169,7 @@ fn receipts_list_filters_by_tool_and_failure_and_adds_diff_summary() {
         &ctx.state_file("receipts.jsonl"),
         &receipt_record(
             "receipt_failed",
-            "jig.test",
+            tool::TEST,
             1,
             DiffStat {
                 files: 1,
@@ -182,14 +181,14 @@ fn receipts_list_filters_by_tool_and_failure_and_adds_diff_summary() {
     .unwrap();
     append_jsonl(
         &ctx.state_file("receipts.jsonl"),
-        &receipt_record("receipt_success", "jig.clippy", 0, DiffStat::default()),
+        &receipt_record("receipt_success", tool::CLIPPY, 0, DiffStat::default()),
     )
     .unwrap();
 
     let output = receipts_list(
         &ctx,
         ReceiptsListOpts {
-            tool_name: Some("jig.test".into()),
+            tool_name: Some(tool::TEST.into()),
             failed_only: true,
             ..ReceiptsListOpts::default()
         },
@@ -248,7 +247,7 @@ fn state_summary_is_read_only_and_counts_state_records() {
     assert_eq!(output["counts"]["failed_receipts"], 0);
     assert_eq!(
         output["recent_receipts"][0]["tool_name"],
-        "jig.session_start"
+        tool::SESSION_START
     );
 }
 
@@ -263,7 +262,7 @@ fn state_tool_receipts_skip_git_metadata_collection() {
     let receipts = read_jsonl::<ReceiptRecord>(&ctx.state_file("receipts.jsonl")).unwrap();
     let receipt = receipts
         .iter()
-        .find(|receipt| receipt.tool_name == "jig.session_start")
+        .find(|receipt| receipt.tool_name == tool::SESSION_START)
         .unwrap();
     assert!(receipt.changed_paths.is_empty());
     assert_eq!(receipt.diff_stat.files, 0);

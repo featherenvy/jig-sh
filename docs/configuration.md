@@ -16,7 +16,7 @@ To move onto a newer version of the template while keeping the stored answers, r
 jig update
 ```
 
-The file contains both public settings and the private `_src_path` / `_commit` fields that `copier update` requires. Local-template repos may also store `_template_mode` and `_template_local_path` for `jig`'s local snapshot handling.
+The file contains both public settings and the private `_src_path` / `_commit` fields that `copier update` requires. Repos rendered from local committed template checkouts may also store `_template_mode` and `_template_local_path`.
 
 `jig` shells out to Copier via `uvx --from copier copier ...`. Direct Copier usage remains available if needed:
 
@@ -25,10 +25,10 @@ uvx --from copier copier recopy --trust --defaults --overwrite --answers-file .j
 uvx --from copier copier update --trust --answers-file .jig.yml
 ```
 
-For local git template checkouts, `jig init` / `jig adopt` require:
+For local git template checkouts, `jig init` / `jig adopt` use a committed source:
 
-- `--template-mode committed`: use the clean local `HEAD`
-- `--template-mode working-tree`: snapshot the exact current checkout, including uncommitted changes
+- `--template-mode committed`: explicitly use the clean local `HEAD`
+- omit `--template-mode`: use the same committed local-template behavior
 
 ## Required Keys
 
@@ -83,7 +83,7 @@ Each configured app directory is expected to support:
 
 ## Generated Contract
 
-The compatibility policy for generated CLI commands, MCP tools, `.agent/jig-contract.json`, and `.agent/state/*.jsonl` is defined in [Public Contract](./public-contract.md).
+The compatibility policy for generated make-backed CLI commands, MCP tools, and `.agent/jig-contract.json` is defined in [Public Contract](./public-contract.md).
 
 The generated `Makefile` exposes these stable targets:
 
@@ -123,11 +123,12 @@ Generated repos also get these runtime-owned files:
 - `scripts/jig`
 - `scripts/install-jig.sh`
 
-The generated `scripts/jig` launcher enforces the exact `jig_version` pinned in `.jig.yml`. On first use it installs that version into a repo-local cache and then exposes the same contract as:
+The generated `scripts/jig` launcher enforces the exact `jig_version` pinned in `.jig.yml`. On first use it installs that version into a repo-local cache and then exposes the make-backed contract as:
 
 - CLI commands such as `scripts/jig fmt-check`
 - MCP tools such as `jig.fmt_check`
-- append-only memory under `.agent/state/*.jsonl`
+
+It also provides runtime-owned append-only memory under `.agent/state/*.jsonl`.
 
 For local runtime development, set `JIG_DEV_BIN` to an already-built `jig` binary. The installer uses that explicit binary before any cached exact-version binary, while still verifying that its reported version matches `.jig.yml`.
 
@@ -153,6 +154,4 @@ When `template_source_url` is set, the generated normalization step validates it
 
 If any of those checks fail, `copier` exits instead of saving an unusable remote template source into `.jig.yml`.
 
-If `template_source_url` is blank, the post-copy normalization step may rewrite a local `_src_path` to the template repo's `origin` URL, but only when the current `_commit` is already reachable from the local `origin/<default_branch>` tracking ref. Otherwise it leaves the local path unchanged to avoid recording an unreachable remote commit.
-
-When `_template_mode` is `working-tree`, `jig` stores a repo-local git snapshot under `.agent/.cache/template-source` and skips remote rewrite. That keeps the adopted repo updateable from the exact local template checkout until you intentionally relink it to a committed source.
+If `template_source_url` is blank, the post-copy normalization step may rewrite a local `_src_path` to the template repo's `origin` URL, but only when the current `_commit` is already reachable from the local `origin/<default_branch>` tracking ref. Otherwise it leaves the local committed checkout path unchanged to avoid recording an unreachable remote commit.

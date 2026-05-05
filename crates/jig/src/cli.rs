@@ -4,7 +4,9 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
 
-use crate::{bootstrap, context::RepoContext, mcp, runtime};
+#[cfg(test)]
+use crate::tool_defs::tool;
+use crate::{bootstrap, context::RepoContext, mcp, runtime, tool_defs};
 
 pub(crate) const DEFAULT_RECEIPTS_LIMIT: usize = 20;
 
@@ -21,73 +23,73 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum CommandKind {
-    #[command(name = "init")]
+    #[command(name = tool_defs::cli_command::INIT)]
     Init(bootstrap::InitOpts),
-    #[command(name = "adopt")]
+    #[command(name = tool_defs::cli_command::ADOPT)]
     Adopt(bootstrap::AdoptOpts),
-    #[command(name = "update")]
+    #[command(name = tool_defs::cli_command::UPDATE)]
     Update(bootstrap::UpdateOpts),
-    #[command(name = "fmt-check")]
+    #[command(name = tool_defs::cli_command::FMT_CHECK)]
     FmtCheck(ToolOpts),
-    #[command(name = "clippy")]
+    #[command(name = tool_defs::cli_command::CLIPPY)]
     Clippy(ToolOpts),
-    #[command(name = "test")]
+    #[command(name = tool_defs::cli_command::TEST)]
     Test(ToolOpts),
-    #[command(name = "test-locked")]
+    #[command(name = tool_defs::cli_command::TEST_LOCKED)]
     TestLocked(ToolOpts),
-    #[command(name = "sqlx-check")]
+    #[command(name = tool_defs::cli_command::SQLX_CHECK)]
     SqlxCheck(ToolOpts),
-    #[command(name = "schema-check")]
+    #[command(name = tool_defs::cli_command::SCHEMA_CHECK)]
     SchemaCheck(ToolOpts),
-    #[command(name = "schema-dump")]
+    #[command(name = tool_defs::cli_command::SCHEMA_DUMP)]
     SchemaDump(ToolOpts),
-    #[command(name = "migration-add")]
+    #[command(name = tool_defs::cli_command::MIGRATION_ADD)]
     MigrationAdd(MigrationAddOpts),
-    #[command(name = "contract-check")]
+    #[command(name = tool_defs::cli_command::CONTRACT_CHECK)]
     ContractCheck(ToolOpts),
-    #[command(name = "run-target")]
+    #[command(name = tool_defs::cli_command::RUN_TARGET)]
     RunTarget(RunTargetOpts),
-    #[command(name = "session-start")]
+    #[command(name = tool_defs::cli_command::SESSION_START)]
     SessionStart,
-    #[command(name = "session-end")]
+    #[command(name = tool_defs::cli_command::SESSION_END)]
     SessionEnd(SessionEndOpts),
-    #[command(name = "plans-open")]
+    #[command(name = tool_defs::cli_command::PLANS_OPEN)]
     PlansOpen(PlanOpenOpts),
-    #[command(name = "plans-append")]
+    #[command(name = tool_defs::cli_command::PLANS_APPEND)]
     PlansAppend(PlanAppendOpts),
-    #[command(name = "plans-close")]
+    #[command(name = tool_defs::cli_command::PLANS_CLOSE)]
     PlansClose(PlanCloseOpts),
-    #[command(name = "receipts-list")]
+    #[command(name = tool_defs::cli_command::RECEIPTS_LIST)]
     ReceiptsList(ReceiptsListOpts),
-    #[command(name = "state-summary")]
+    #[command(name = tool_defs::cli_command::STATE_SUMMARY)]
     StateSummary,
-    #[command(name = "decisions-add")]
+    #[command(name = tool_defs::cli_command::DECISIONS_ADD)]
     DecisionsAdd(DecisionAddOpts),
-    #[command(name = "mcp")]
+    #[command(name = tool_defs::cli_command::MCP)]
     Mcp,
 }
 
-#[derive(Debug, Args, Clone, Default)]
+#[derive(Args, Clone, Debug, Default)]
 pub(crate) struct ToolOpts {
     #[arg(long)]
     pub(crate) plan_id: Option<String>,
 }
 
-#[derive(Debug, Args)]
+#[derive(Args, Debug)]
 pub(crate) struct MigrationAddOpts {
     pub(crate) name: String,
     #[command(flatten)]
     pub(crate) tool: ToolOpts,
 }
 
-#[derive(Debug, Args)]
+#[derive(Args, Debug)]
 pub(crate) struct RunTargetOpts {
     pub(crate) name: String,
     #[command(flatten)]
     pub(crate) tool: ToolOpts,
 }
 
-#[derive(Debug, Args)]
+#[derive(Args, Debug)]
 pub(crate) struct SessionEndOpts {
     #[arg(long)]
     pub(crate) session_id: Option<String>,
@@ -95,7 +97,7 @@ pub(crate) struct SessionEndOpts {
     pub(crate) outcome: Option<String>,
 }
 
-#[derive(Debug, Args)]
+#[derive(Args, Debug)]
 pub(crate) struct PlanOpenOpts {
     #[arg(long)]
     pub(crate) title: String,
@@ -105,7 +107,7 @@ pub(crate) struct PlanOpenOpts {
     pub(crate) body_file: Option<PathBuf>,
 }
 
-#[derive(Debug, Args)]
+#[derive(Args, Debug)]
 pub(crate) struct PlanAppendOpts {
     #[arg(long)]
     pub(crate) plan_id: String,
@@ -115,7 +117,7 @@ pub(crate) struct PlanAppendOpts {
     pub(crate) body_file: Option<PathBuf>,
 }
 
-#[derive(Debug, Args)]
+#[derive(Args, Debug)]
 pub(crate) struct PlanCloseOpts {
     #[arg(long)]
     pub(crate) plan_id: String,
@@ -123,7 +125,7 @@ pub(crate) struct PlanCloseOpts {
     pub(crate) resolution: Option<String>,
 }
 
-#[derive(Debug, Args)]
+#[derive(Args, Debug)]
 pub(crate) struct ReceiptsListOpts {
     #[arg(long)]
     pub(crate) session_id: Option<String>,
@@ -149,7 +151,7 @@ impl Default for ReceiptsListOpts {
     }
 }
 
-#[derive(Debug, Args)]
+#[derive(Args, Debug)]
 pub(crate) struct DecisionAddOpts {
     #[arg(long)]
     pub(crate) title: String,
@@ -202,7 +204,7 @@ mod tests {
             "--template",
             "/tmp/template",
             "--template-mode",
-            "working-tree",
+            "committed",
             "--repo-name",
             "demo",
             "--rust-migration-dir",
@@ -222,12 +224,30 @@ mod tests {
                 answers,
                 ..
             }) => {
-                assert_eq!(template_mode, Some(bootstrap::TemplateMode::WorkingTree));
+                assert_eq!(template_mode, Some(bootstrap::TemplateMode::Committed));
                 assert_eq!(answers.rust_crate_roots, vec!["crates", "libs"]);
                 assert_eq!(answers.frontend_apps.len(), 1);
             }
             other => panic!("expected init command, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn rejects_working_tree_template_mode() {
+        let error = Cli::try_parse_from([
+            "jig",
+            "init",
+            "/tmp/demo",
+            "--template",
+            "/tmp/template",
+            "--template-mode",
+            "working-tree",
+        ])
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("invalid value 'working-tree'"));
+        assert!(error.contains("committed"));
     }
 
     #[test]
@@ -268,7 +288,7 @@ mod tests {
             "--plan-id",
             "plan_1",
             "--tool-name",
-            "jig.test",
+            tool::TEST,
             "--failed-only",
             "--limit",
             "5",
@@ -279,7 +299,7 @@ mod tests {
             CommandKind::ReceiptsList(opts) => {
                 assert_eq!(opts.session_id.as_deref(), Some("session_1"));
                 assert_eq!(opts.plan_id.as_deref(), Some("plan_1"));
-                assert_eq!(opts.tool_name.as_deref(), Some("jig.test"));
+                assert_eq!(opts.tool_name.as_deref(), Some(tool::TEST));
                 assert!(opts.failed_only);
                 assert_eq!(opts.limit, 5);
             }

@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 const CURRENT_SESSION_FILE: &str = "jig-current-session.txt";
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 struct RepoConfig {
     #[serde(rename = "_src_path")]
     src_path: String,
@@ -18,10 +18,9 @@ struct RepoConfig {
     jig_version: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 struct ContractManifest {
     contract_version: u32,
-    memory_schema_version: u32,
     tool_namespace: String,
     jig_version: String,
     required_make_targets: Vec<String>,
@@ -30,7 +29,7 @@ struct ContractManifest {
     tools: Vec<ManifestTool>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct ManifestTool {
     pub(crate) name: String,
     pub(crate) kind: String,
@@ -38,7 +37,7 @@ pub(crate) struct ManifestTool {
     pub(crate) target: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct RepoContext {
     root: PathBuf,
     current_session_path: PathBuf,
@@ -65,12 +64,6 @@ impl RepoContext {
             bail!(
                 "Unsupported jig contract version: {}",
                 manifest.contract_version
-            );
-        }
-        if manifest.memory_schema_version != 1 {
-            bail!(
-                "Unsupported jig memory schema version: {}",
-                manifest.memory_schema_version
             );
         }
         if manifest.tool_namespace != "jig" {

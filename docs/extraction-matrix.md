@@ -7,11 +7,11 @@ This matrix captures what was extracted from OneSales and how it was treated in 
 | `AGENTS.md` | Templated | Converted to generic repo-wide guidance with configurable paths and commands. |
 | `agent-map.md` | Templated + generated | Rendered as a starter file, then refreshed by `scripts/generate-agent-map.sh`. |
 | `.agent/PLANS.md` | Templated | Preserved as the generic ExecPlan contract. |
-| `.agent/jig-contract.json` | Templated | Declares the typed repo contract for CLI and MCP consumers, with SQLx tools gated by `sqlx_enabled`. |
+| `.agent/jig-contract.json` | Templated | Declares the make-backed repo contract for CLI and MCP consumers, with SQLx tools gated by `sqlx_enabled`. |
 | `.agent/state/*.jsonl` | Runtime-owned | Append-only repo memory populated by `jig`. |
 | `.mcp.json` | Templated | Repo-local MCP entrypoint that launches `scripts/jig mcp`. |
 | `Makefile` | Templated subset | Kept the stable agent-facing command contract; removed OneSales-specific ops flows and now gates SQLx/migration targets behind `sqlx_enabled`. |
-| `crates/jig` | Added | Publishable runtime that exposes the typed CLI/MCP surface over the generated contract. |
+| `crates/jig` | Added | Publishable runtime that exposes the typed CLI/MCP surface over the generated make-backed contract and runtime-owned state. |
 | `scripts/check-agent-map.sh` | Extracted | Mostly unchanged; remains generic. |
 | `scripts/check-agent-guides.sh` | Extracted + simplified | Kept structural checks; removed OneSales wording rules. |
 | `scripts/check-rust-file-loc.sh` | Extracted | Preserved as a generic repo policy check. |

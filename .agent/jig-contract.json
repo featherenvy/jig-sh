@@ -1,6 +1,5 @@
 {
   "contract_version": 1,
-  "memory_schema_version": 1,
   "tool_namespace": "jig",
   "jig_version": "0.1.0",
   "required_make_targets": [
@@ -46,54 +45,6 @@
       "name": "jig.run_target",
       "kind": "make",
       "description": "Run an arbitrary make target by name.",
-      "target": null
-    },
-    {
-      "name": "jig.session_start",
-      "kind": "memory",
-      "description": "Open a new jig session and return recent repo context.",
-      "target": null
-    },
-    {
-      "name": "jig.session_end",
-      "kind": "memory",
-      "description": "Close a jig session.",
-      "target": null
-    },
-    {
-      "name": "jig.plans_open",
-      "kind": "memory",
-      "description": "Open a structured plan and create its Markdown body.",
-      "target": null
-    },
-    {
-      "name": "jig.plans_append",
-      "kind": "memory",
-      "description": "Append to a structured plan body.",
-      "target": null
-    },
-    {
-      "name": "jig.plans_close",
-      "kind": "memory",
-      "description": "Close a structured plan.",
-      "target": null
-    },
-    {
-      "name": "jig.receipts_list",
-      "kind": "memory",
-      "description": "List structured receipts.",
-      "target": null
-    },
-    {
-      "name": "jig.state_summary",
-      "kind": "memory",
-      "description": "Summarize structured jig state.",
-      "target": null
-    },
-    {
-      "name": "jig.decisions_add",
-      "kind": "memory",
-      "description": "Append a structured decision record.",
       "target": null
     }
   ]

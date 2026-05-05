@@ -1,6 +1,7 @@
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context, Result, bail};
 use serde_yaml::{Mapping, Value as YamlValue};
@@ -14,6 +15,8 @@ use super::{
     ANSWERS_FILE, AnswerOpts, TEMPLATE_LOCAL_PATH_KEY, TEMPLATE_MODE_KEY, TemplateMode,
     read_optional_answer_string,
 };
+
+static UNIQUE_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 pub(super) struct BootstrapCopyRequest<'a> {
     pub(super) destination: &'a Path,
@@ -256,5 +259,6 @@ fn unique_id(prefix: &str) -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
-    format!("jig-{prefix}-{nanos}")
+    let sequence = UNIQUE_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("jig-{prefix}-{nanos}-{sequence}")
 }

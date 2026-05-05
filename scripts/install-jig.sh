@@ -11,8 +11,6 @@ read_field() {
 
 JIG_VERSION="$(read_field jig_version)"
 SRC_PATH="$(read_field _src_path)"
-TEMPLATE_MODE="$(read_field _template_mode)"
-TEMPLATE_LOCAL_PATH="$(read_field _template_local_path)"
 TEMPLATE_SOURCE_URL="$(read_field template_source_url)"
 
 if [[ -z "$JIG_VERSION" ]]; then
@@ -106,8 +104,6 @@ fi
 
 if [[ -d "$SRC_PATH/crates/jig" ]] || [[ "$SRC_PATH" == /* && -d "$SRC_PATH" ]]; then
   install_from_local_source "$SRC_PATH"
-elif [[ "$TEMPLATE_MODE" == "working-tree" && -n "$TEMPLATE_LOCAL_PATH" && -d "$TEMPLATE_LOCAL_PATH/crates/jig" ]]; then
-  install_from_local_source "$TEMPLATE_LOCAL_PATH"
 elif [[ -n "$TEMPLATE_SOURCE_URL" ]]; then
   SRC_PATH="$TEMPLATE_SOURCE_URL"
   install_from_git_source
@@ -115,11 +111,7 @@ elif is_remote_source "$SRC_PATH"; then
   install_from_git_source
 else
   echo "Cannot resolve jig source from _src_path='$SRC_PATH'." >&2
-  if [[ "$TEMPLATE_MODE" == "working-tree" ]]; then
-    echo "The working-tree template snapshot is unavailable and _template_local_path='$TEMPLATE_LOCAL_PATH' is not usable." >&2
-  else
-    echo "Re-render from an absolute template path or set template_source_url." >&2
-  fi
+  echo "Re-render from an absolute committed template path or set template_source_url." >&2
   exit 1
 fi
 

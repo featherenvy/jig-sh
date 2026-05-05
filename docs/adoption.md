@@ -4,14 +4,14 @@
 
 1. Start with an existing repository that already has a stable Cargo workspace and CI.
 2. Render the kit into that repo with `jig adopt --template /path/to/jig-sh --template-mode committed .`. For tooling-only repos, pass `--sqlx-enabled false` during the initial adopt instead of rendering SQLx files first and recopying them away.
-3. For local dogfooding against an in-progress template checkout, use `--template-mode working-tree` instead. That mode snapshots the local template checkout into `.agent/.cache/template-source` so later `jig update` runs stay local-first without manual tarballs or ad hoc snapshot repos.
+3. For local dogfooding, commit or stash template checkout changes before rendering. If you need to test in-progress template edits, make a temporary local commit and update from that committed source.
 4. Confirm `.jig.yml` was generated with the intended profile. If the repo will be shared across machines, set `template_source_url` to a git source where `refs/heads/<default_branch>` already contains the generated `_commit`, then review the remaining paths and commands before committing.
 5. Add or adapt crate-level `AGENTS.md` files for each backend crate.
 6. Run the generated local checks and `make contract-check`.
 7. Wire any missing project-owned scripts such as `scripts/dump-schema.sh` if schema dumps are enabled.
 8. Commit the generated files and then switch CI to use the new workflows.
 
-Before publishing a generated repo contract or wiring long-lived MCP clients to it, review [Public Contract](./public-contract.md) for the stable CLI, MCP, manifest, and state-file guarantees.
+Before publishing a generated repo contract or wiring long-lived MCP clients to it, review [Public Contract](./public-contract.md) for the stable make-backed CLI, MCP, and manifest guarantees.
 
 For later template updates:
 
@@ -19,9 +19,7 @@ For later template updates:
 jig update
 ```
 
-If the repo was adopted from a local working tree, `jig update` refreshes the stored local snapshot automatically.
-
-To relink a local-first repo onto a clean committed checkout, run:
+If the repo was adopted from a local committed checkout, update that checkout to the desired commit and run:
 
 ```sh
 jig update --template /path/to/jig-sh --template-mode committed

@@ -3,35 +3,11 @@ use std::process::Command;
 
 use anyhow::{Context, Result, bail};
 
-use crate::process::{require_success, run_checked_output, run_checked_stdout_trimmed};
+#[cfg(test)]
+use crate::process::run_checked_output;
+use crate::process::{require_success, run_checked_stdout_trimmed};
 
 use super::{GIT_BIN_ENV, external_program};
-
-pub(super) fn ensure_git_repo(path: &Path) -> Result<()> {
-    if path.join(".git").exists() {
-        return Ok(());
-    }
-
-    let git_program = external_program(GIT_BIN_ENV, "git");
-    let output = Command::new(&git_program)
-        .current_dir(path)
-        .args(["init", "-b", "main"])
-        .output()
-        .with_context(|| format!("Failed to start {}", git_program))?;
-    if output.status.success() {
-        return Ok(());
-    }
-    if !git_init_branch_flag_unsupported(&output) {
-        bail!(
-            "git init -b main failed.\nstdout:\n{}\nstderr:\n{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-
-    git(path, ["init"])?;
-    set_git_head_branch(path, &git_program, "main")
-}
 
 pub(super) fn is_git_work_tree(path: &Path) -> bool {
     git_command(path, ["rev-parse", "--is-inside-work-tree"])
@@ -44,13 +20,14 @@ pub(super) fn ensure_clean_git_work_tree(path: &Path) -> Result<()> {
     if !status.is_empty() {
         bail!(
             "Local committed template mode requires a clean git working tree: {}\n\
-             Commit or stash template changes, or re-run with --template-mode working-tree.",
+             Commit or stash template changes before using this template source.",
             path.display()
         );
     }
     Ok(())
 }
 
+#[cfg(test)]
 pub(super) fn git(path: &Path, args: impl IntoIterator<Item = impl AsRef<str>>) -> Result<()> {
     let mut command = git_command(path, args);
     run_checked_output(&mut command, |output| {

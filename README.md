@@ -65,17 +65,6 @@ jig adopt . \
 
 For a tooling-only repo, replace the migration flag with `--sqlx-enabled false`.
 
-For local dogfooding from an in-progress template checkout, use the working tree directly:
-
-```sh
-cd /path/to/target-repo
-jig adopt . \
-  --template /path/to/jig-sh \
-  --template-mode working-tree \
-  --repo-name target-repo \
-  --sqlx-enabled false
-```
-
 Update an adopted repo while preserving local diffs when possible:
 
 ```sh
@@ -83,7 +72,7 @@ cd /path/to/target-repo
 jig update
 ```
 
-For repos adopted from a local working tree, `jig update` refreshes the repo-local snapshot automatically. To move back onto a clean committed template checkout, re-run update against that checkout:
+For repos adopted from a local committed template checkout, update that checkout to the desired commit and run:
 
 ```sh
 cd /path/to/target-repo
@@ -121,7 +110,7 @@ uvx --from copier copier recopy --trust --defaults --overwrite --answers-file .j
 
 Set `template_source_url` in `.jig.yml` if you want portable recopy/update behavior across machines. The value is validated before `_src_path` is rewritten: it must be fetchable with git, and the current `_commit` must already be reachable from `refs/heads/<default_branch>` at that source.
 
-Without `template_source_url`, the post-copy normalization step only rewrites `_src_path` from a local checkout path to the template repo's `origin` URL when the current `_commit` is already contained in the local `origin/<default_branch>` tracking ref. Otherwise it keeps the local path to avoid stamping an unreachable remote commit. Repos adopted with `--template-mode working-tree` stay local-first on purpose: they keep a repo-local template snapshot and skip remote rewrite until you relink them to a committed template source.
+Without `template_source_url`, the post-copy normalization step only rewrites `_src_path` from a local checkout path to the template repo's `origin` URL when the current `_commit` is already contained in the local `origin/<default_branch>` tracking ref. Otherwise it keeps the local committed checkout path to avoid stamping an unreachable remote commit.
 
 ## Required Repo Conventions
 

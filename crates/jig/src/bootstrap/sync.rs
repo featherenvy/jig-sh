@@ -5,10 +5,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use tempfile::TempDir;
 
-use crate::process::run_checked_output_with_context;
-
 use super::copier::{CopySpecOptions, build_copy_spec, run_copier};
-use super::git::git_command;
 use super::{
     ALWAYS_TASK_MUTATED_PATHS, ANSWERS_FILE, SQLX_PRUNED_TASK_PATHS, read_optional_answer_bool,
     read_optional_answer_string,
@@ -196,55 +193,6 @@ fn copy_agent_guides_recursive(
 
 fn copy_preview_guide(source_path: &Path, destination_path: &Path) -> Result<()> {
     let metadata = prepare_copy_destination_and_read_metadata(source_path, destination_path)?;
-    copy_file_or_symlink_with_permissions(source_path, destination_path, &metadata)
-}
-
-pub(super) fn copy_working_tree_snapshot(template_root: &Path, snapshot_root: &Path) -> Result<()> {
-    let mut command = git_command(
-        template_root,
-        [
-            "ls-files",
-            "-z",
-            "--cached",
-            "--others",
-            "--exclude-standard",
-        ],
-    );
-    let output = run_checked_output_with_context(
-        &mut command,
-        || format!("Failed to start git in {}", template_root.display()),
-        |output| {
-            format!(
-                "git ls-files failed for {}\nstdout:\n{}\nstderr:\n{}",
-                template_root.display(),
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
-            )
-        },
-    )?;
-
-    for relative in output
-        .stdout
-        .split(|byte| *byte == 0)
-        .filter(|entry| !entry.is_empty())
-    {
-        let relative = std::str::from_utf8(relative)
-            .with_context(|| format!("Non-UTF-8 git path under {}", template_root.display()))?;
-        let source_path = template_root.join(relative);
-        let destination_path = snapshot_root.join(relative);
-        copy_path_entry(&source_path, &destination_path)?;
-    }
-    Ok(())
-}
-
-fn copy_path_entry(source_path: &Path, destination_path: &Path) -> Result<()> {
-    let metadata = prepare_copy_destination_and_read_metadata(source_path, destination_path)?;
-    if metadata.file_type().is_dir() {
-        fs::create_dir_all(destination_path)
-            .with_context(|| format!("Failed to create {}", destination_path.display()))?;
-        return Ok(());
-    }
-
     copy_file_or_symlink_with_permissions(source_path, destination_path, &metadata)
 }
 

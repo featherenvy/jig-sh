@@ -15,7 +15,6 @@ read_field() {
 
 src_path="$(read_field _src_path)"
 commit_ref="$(read_field _commit)"
-template_mode="$(read_field _template_mode)"
 default_branch="$(read_field default_branch)"
 template_source_url="$(read_field template_source_url)"
 sqlx_enabled="$(read_field sqlx_enabled)"
@@ -70,10 +69,6 @@ prune_sqlx_artifacts() {
 }
 
 prune_sqlx_artifacts
-
-if [[ "$template_mode" == "working-tree" ]]; then
-  exit 0
-fi
 
 if [[ -n "$template_source_url" ]]; then
   if [[ -z "$commit_ref" || -z "$default_branch" ]]; then

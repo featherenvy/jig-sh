@@ -1,11 +1,3 @@
-mod copier;
-mod git;
-mod initial_copy;
-mod sync;
-mod template_source;
-#[cfg(test)]
-mod tests;
-
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -30,17 +22,19 @@ use sync::rendered_conflicts;
 #[cfg(test)]
 use sync::{create_symlink, seed_preview_workspace};
 #[cfg(test)]
-use template_source::PreparedTemplateSource;
-#[cfg(test)]
 use template_source::PrivateAnswerOverrides;
-#[cfg(test)]
-use template_source::StoredTemplateState;
 use template_source::{
-    final_update_template_state, prepare_snapshot_update_source, prepare_template_source,
-    prepare_update_answers_file, read_stored_template_state, refresh_postwrite_template_metadata,
-    required_prepared_vcs_ref, required_stored_template_local_path, resolve_update_template_source,
-    stored_template_local_path, template_identities_match, write_final_template_answers,
+    PreparedTemplateSource, StoredTemplateState, final_update_template_state,
+    prepare_default_update_template_source, prepare_template_source, prepare_update_answers_file,
+    read_stored_template_state, refresh_postwrite_template_metadata,
+    resolve_update_template_source, template_identities_match, write_final_template_answers,
 };
+
+mod copier;
+mod git;
+mod initial_copy;
+mod sync;
+mod template_source;
 
 const ANSWERS_FILE: &str = ".jig.yml";
 const UVX_BIN_ENV: &str = "JIG_UVX_BIN";
@@ -57,9 +51,8 @@ const SQLX_PRUNED_TASK_PATHS: &[&str] = &[
 ];
 const TEMPLATE_MODE_KEY: &str = "_template_mode";
 const TEMPLATE_LOCAL_PATH_KEY: &str = "_template_local_path";
-const TEMPLATE_CACHE_RELATIVE_PATH: &str = ".agent/.cache/template-source";
 
-#[derive(Debug, Args, Clone, Default)]
+#[derive(Args, Clone, Debug, Default)]
 pub struct AnswerOpts {
     #[arg(long)]
     pub repo_name: Option<String>,
@@ -103,7 +96,7 @@ pub struct AnswerOpts {
     pub frontend_apps: Vec<FrontendApp>,
 }
 
-#[derive(Debug, Args, Clone)]
+#[derive(Args, Clone, Debug)]
 pub struct InitOpts {
     pub path: PathBuf,
     #[arg(long)]
@@ -122,7 +115,7 @@ pub struct InitOpts {
     pub answers: AnswerOpts,
 }
 
-#[derive(Debug, Args, Clone)]
+#[derive(Args, Clone, Debug)]
 pub struct AdoptOpts {
     #[arg(default_value = ".")]
     pub path: PathBuf,
@@ -142,7 +135,7 @@ pub struct AdoptOpts {
     pub answers: AnswerOpts,
 }
 
-#[derive(Debug, Args, Clone)]
+#[derive(Args, Clone, Debug)]
 pub struct UpdateOpts {
     #[arg(default_value = ".")]
     pub path: PathBuf,
@@ -160,25 +153,23 @@ pub struct UpdateOpts {
     pub no_input: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct FrontendApp {
     pub name: String,
     pub dir: String,
     pub coverage_threshold: u32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ValueEnum)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, ValueEnum)]
 #[serde(rename_all = "kebab-case")]
 pub enum TemplateMode {
     Committed,
-    WorkingTree,
 }
 
 impl TemplateMode {
     fn as_str(self) -> &'static str {
         match self {
             Self::Committed => "committed",
-            Self::WorkingTree => "working-tree",
         }
     }
 }
@@ -186,13 +177,8 @@ impl TemplateMode {
 pub fn run_init(opts: InitOpts) -> Result<Value> {
     let destination = absolute_path(&opts.path)?;
     validate_init_destination(&destination, opts.force)?;
-    let template = prepare_template_source(
-        &opts.template,
-        opts.template_mode,
-        opts.vcs_ref.as_deref(),
-        &destination,
-        false,
-    )?;
+    let template =
+        prepare_template_source(&opts.template, opts.template_mode, opts.vcs_ref.as_deref())?;
 
     let copy_result = render_and_copy_bootstrap_template(BootstrapCopyRequest {
         destination: &destination,
@@ -222,13 +208,8 @@ pub fn run_init(opts: InitOpts) -> Result<Value> {
 pub fn run_adopt(opts: AdoptOpts) -> Result<Value> {
     let destination = absolute_path(&opts.path)?;
     validate_adopt_destination(&destination)?;
-    let template = prepare_template_source(
-        &opts.template,
-        opts.template_mode,
-        opts.vcs_ref.as_deref(),
-        &destination,
-        false,
-    )?;
+    let template =
+        prepare_template_source(&opts.template, opts.template_mode, opts.vcs_ref.as_deref())?;
 
     render_and_copy_bootstrap_template(BootstrapCopyRequest {
         destination: &destination,
@@ -261,58 +242,10 @@ pub fn run_update(opts: UpdateOpts) -> Result<Value> {
     };
     let answers_path = destination.join(ANSWERS_FILE);
     let stored = read_stored_template_state(&answers_path)?;
-    let mut update_template = None;
-    let mut answers_postwrite = None;
-    let source_override_requested = opts.template.is_some() || opts.template_mode.is_some();
-    let committed_vcs_ref_update =
-        opts.vcs_ref.is_some() && stored.template_mode != Some(TemplateMode::WorkingTree);
-
-    if source_override_requested || committed_vcs_ref_update {
-        let resolved_source = resolve_update_template_source(&opts, &stored, &answers_path)?;
-        let prepared = prepare_template_source(
-            resolved_source.template,
-            resolved_source.template_mode,
-            opts.vcs_ref.as_deref(),
-            &destination,
-            true,
-        )?;
-        if !stored.src_path.is_empty() && !template_identities_match(&stored, &prepared) {
-            bail!(
-                "jig update cannot switch template source paths in-place. Re-run with the existing source path, or re-adopt the repo from the new template source."
-            );
-        }
-        if stored.template_mode == Some(TemplateMode::WorkingTree)
-            && prepared.private_answers.template_mode == Some(TemplateMode::Committed)
-        {
-            let template_root = absolute_path(Path::new(stored_template_local_path(&stored)))?;
-            let snapshot_root = absolute_path(Path::new(&stored.src_path))?;
-            let committed_vcs_ref = required_prepared_vcs_ref(&prepared)?;
-            update_template = Some(prepare_snapshot_update_source(
-                &template_root,
-                &snapshot_root,
-                committed_vcs_ref,
-            )?);
-            answers_postwrite = Some(prepared);
-        } else {
-            answers_postwrite = Some(final_update_template_state(&stored, &prepared));
-            update_template = Some(prepared);
-        }
-    } else if opts.vcs_ref.is_some() {
-        bail!(
-            "--vcs-ref requires a committed template source. Re-run with --template-mode committed when updating a working-tree template checkout."
-        );
-    } else if stored.template_mode == Some(TemplateMode::WorkingTree) {
-        let local_path = required_stored_template_local_path(&stored, &answers_path)?;
-        let prepared = prepare_template_source(
-            local_path,
-            Some(TemplateMode::WorkingTree),
-            None,
-            &destination,
-            true,
-        )?;
-        answers_postwrite = Some(prepared.clone());
-        update_template = Some(prepared);
-    }
+    let update_template = prepare_update_template_source(&opts, &stored)?;
+    let answers_postwrite = update_template
+        .as_ref()
+        .map(|template| final_update_template_state(&stored, template));
     let update_answers =
         prepare_update_answers_file(&destination, &answers_path, update_template.as_ref())?;
     let update_result = (|| -> Result<()> {
@@ -352,6 +285,38 @@ pub fn run_update(opts: UpdateOpts) -> Result<Value> {
         "answers_file": ANSWERS_FILE,
         "git_initialized": false,
     }))
+}
+
+fn prepare_update_template_source(
+    opts: &UpdateOpts,
+    stored: &StoredTemplateState,
+) -> Result<Option<PreparedTemplateSource>> {
+    let source_override_requested = opts.template.is_some() || opts.template_mode.is_some();
+    if !source_override_requested && opts.vcs_ref.is_none() {
+        return prepare_default_update_template_source(stored);
+    }
+
+    let resolved_source = resolve_update_template_source(opts, stored)?;
+    let prepared = prepare_template_source(
+        resolved_source.template,
+        resolved_source.template_mode,
+        opts.vcs_ref.as_deref(),
+    )?;
+    ensure_update_template_identity(stored, &prepared)?;
+    Ok(Some(prepared))
+}
+
+fn ensure_update_template_identity(
+    stored: &StoredTemplateState,
+    prepared: &PreparedTemplateSource,
+) -> Result<()> {
+    if stored.src_path.is_empty() || template_identities_match(stored, prepared) {
+        return Ok(());
+    }
+
+    bail!(
+        "jig update cannot switch template source paths in-place. Re-run with the existing source path, or re-adopt the repo from the new template source."
+    )
 }
 
 fn read_optional_answer_bool(answers_path: &Path, key: &str) -> Result<Option<bool>> {
@@ -475,3 +440,6 @@ fn absolute_path(path: &Path) -> Result<PathBuf> {
         Ok(resolved)
     }
 }
+
+#[cfg(test)]
+mod tests;

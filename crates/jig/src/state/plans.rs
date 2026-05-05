@@ -7,6 +7,7 @@ use serde_json::{Value, json};
 
 use crate::cli::{PlanAppendOpts, PlanCloseOpts, PlanOpenOpts};
 use crate::context::RepoContext;
+use crate::tool_defs::tool;
 
 use super::events::{
     PlanEvent, append_jsonl, append_text, ensure_state_layout, new_id, now_ms, rel_path,
@@ -37,7 +38,7 @@ pub(crate) fn plans_open(ctx: &RepoContext, opts: PlanOpenOpts) -> Result<Value>
     let receipt_id = record_successful_state_tool(
         ctx,
         StateToolReceipt {
-            tool_name: "jig.plans_open",
+            tool_name: tool::PLANS_OPEN,
             args: json!({ "title": opts.title }),
             started_at_ms: event.timestamp_ms,
             plan_id: Some(plan_id.clone()),
@@ -73,7 +74,7 @@ pub(crate) fn plans_append(ctx: &RepoContext, opts: PlanAppendOpts) -> Result<Va
     let receipt_id = record_successful_state_tool(
         ctx,
         StateToolReceipt {
-            tool_name: "jig.plans_append",
+            tool_name: tool::PLANS_APPEND,
             args: json!({ "plan_id": opts.plan_id }),
             started_at_ms: event.timestamp_ms,
             plan_id: Some(event.plan_id.clone()),
@@ -104,7 +105,7 @@ pub(crate) fn plans_close(ctx: &RepoContext, opts: PlanCloseOpts) -> Result<Valu
     let receipt_id = record_successful_state_tool(
         ctx,
         StateToolReceipt {
-            tool_name: "jig.plans_close",
+            tool_name: tool::PLANS_CLOSE,
             args: json!({
                 "plan_id": opts.plan_id,
                 "resolution": opts.resolution,

@@ -1,27 +1,26 @@
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use serde_yaml::{Mapping, Value as YamlValue};
-use tempfile::{NamedTempFile, TempDir};
+use tempfile::NamedTempFile;
 
-use super::git::{
-    ensure_clean_git_work_tree, ensure_git_repo, git, git_command, git_stdout, is_git_work_tree,
-};
-use super::sync::copy_working_tree_snapshot;
+use super::git::{ensure_clean_git_work_tree, git_stdout, is_git_work_tree};
 use super::{
-    ANSWERS_FILE, TEMPLATE_CACHE_RELATIVE_PATH, TEMPLATE_LOCAL_PATH_KEY, TEMPLATE_MODE_KEY,
-    TemplateMode, UpdateOpts, absolute_path, read_answers_yaml, read_optional_answer_string,
-    set_optional_yaml_string, write_answers_yaml,
+    ANSWERS_FILE, TEMPLATE_LOCAL_PATH_KEY, TEMPLATE_MODE_KEY, TemplateMode, UpdateOpts,
+    absolute_path, read_answers_yaml, read_optional_answer_string, set_optional_yaml_string,
+    write_answers_yaml,
 };
 
-#[derive(Debug, Clone, Default)]
+const COMMIT_KEY: &str = "_commit";
+const SRC_PATH_KEY: &str = "_src_path";
+
+#[derive(Clone, Debug, Default)]
 pub(super) struct PrivateAnswerOverrides {
     pub(super) template_mode: Option<TemplateMode>,
     pub(super) template_local_path: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub(super) struct PreparedTemplateSource {
     pub(super) copier_template: String,
     pub(super) vcs_ref: Option<String>,
@@ -38,7 +37,7 @@ impl PreparedTemplateSource {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub(super) struct StoredTemplateState {
     pub(super) src_path: String,
     pub(super) template_mode: Option<TemplateMode>,
@@ -93,8 +92,6 @@ pub(super) fn prepare_template_source(
     template: &str,
     template_mode: Option<TemplateMode>,
     vcs_ref: Option<&str>,
-    destination: &Path,
-    update_existing: bool,
 ) -> Result<PreparedTemplateSource> {
     if is_remote_template_source(template) {
         if template_mode.is_some() {
@@ -142,26 +139,7 @@ pub(super) fn prepare_template_source(
         });
     }
 
-    let mode = template_mode.ok_or_else(|| {
-        anyhow::anyhow!(
-            "Local git template paths require --template-mode committed or --template-mode working-tree.\n\
-             Example: jig adopt . --template {} --template-mode working-tree",
-            local_template.display()
-        )
-    })?;
-
-    match mode {
-        TemplateMode::Committed => prepare_committed_template_source(&local_template, vcs_ref),
-        TemplateMode::WorkingTree => {
-            if vcs_ref.is_some() {
-                bail!(
-                    "--vcs-ref is not supported with --template-mode working-tree: {}",
-                    local_template.display()
-                );
-            }
-            prepare_working_tree_template_source(&local_template, destination, update_existing)
-        }
-    }
+    prepare_committed_template_source(&local_template, vcs_ref)
 }
 
 fn prepare_committed_template_source(
@@ -173,49 +151,15 @@ fn prepare_committed_template_source(
         Some(value) => git_stdout(template_root, ["rev-parse", &format!("{value}^{{commit}}")])?,
         None => git_stdout(template_root, ["rev-parse", "HEAD"])?,
     };
+    let template_path = template_root.display().to_string();
 
     Ok(PreparedTemplateSource {
-        copier_template: template_root.display().to_string(),
+        copier_template: template_path.clone(),
         vcs_ref: Some(resolved_vcs_ref),
         private_answers: PrivateAnswerOverrides {
             template_mode: Some(TemplateMode::Committed),
-            template_local_path: Some(template_root.display().to_string()),
+            template_local_path: Some(template_path),
         },
-    })
-}
-
-fn prepare_working_tree_template_source(
-    template_root: &Path,
-    destination: &Path,
-    update_existing: bool,
-) -> Result<PreparedTemplateSource> {
-    let snapshot_root = template_cache_root(destination);
-    let snapshot_commit =
-        refresh_template_snapshot(template_root, &snapshot_root, update_existing)?;
-
-    Ok(PreparedTemplateSource {
-        copier_template: snapshot_root.display().to_string(),
-        vcs_ref: Some(snapshot_commit),
-        private_answers: PrivateAnswerOverrides {
-            template_mode: Some(TemplateMode::WorkingTree),
-            template_local_path: Some(template_root.display().to_string()),
-        },
-    })
-}
-
-pub(super) fn prepare_snapshot_update_source(
-    template_root: &Path,
-    snapshot_root: &Path,
-    vcs_ref: &str,
-) -> Result<PreparedTemplateSource> {
-    ensure_clean_git_work_tree(template_root)?;
-    let snapshot_commit =
-        refresh_template_snapshot_from_ref(template_root, snapshot_root, vcs_ref, true)?;
-
-    Ok(PreparedTemplateSource {
-        copier_template: snapshot_root.display().to_string(),
-        vcs_ref: Some(snapshot_commit),
-        private_answers: PrivateAnswerOverrides::default(),
     })
 }
 
@@ -230,11 +174,11 @@ pub(super) fn rewrite_private_template_answers(
 
 fn apply_private_template_answers(answers: &mut Mapping, template: &PreparedTemplateSource) {
     answers.insert(
-        YamlValue::String("_src_path".into()),
+        YamlValue::String(SRC_PATH_KEY.into()),
         YamlValue::String(template.copier_template.clone()),
     );
     answers.insert(
-        YamlValue::String("_commit".into()),
+        YamlValue::String(COMMIT_KEY.into()),
         YamlValue::String(template.vcs_ref.clone().unwrap_or_default()),
     );
     set_optional_yaml_string(
@@ -253,14 +197,24 @@ fn apply_private_template_answers(answers: &mut Mapping, template: &PreparedTemp
 }
 
 pub(super) fn read_stored_template_state(answers_path: &Path) -> Result<StoredTemplateState> {
+    let answers = read_answers_yaml(answers_path)?;
+    let template_mode = optional_answer_string(&answers, TEMPLATE_MODE_KEY)
+        .map(|value| parse_template_mode_answer(&value))
+        .transpose()?;
+
     Ok(StoredTemplateState {
-        src_path: read_optional_answer_string(answers_path, "_src_path")?.unwrap_or_default(),
-        template_mode: read_optional_answer_string(answers_path, TEMPLATE_MODE_KEY)?
-            .as_deref()
-            .map(parse_template_mode_answer)
-            .transpose()?,
-        template_local_path: read_optional_answer_string(answers_path, TEMPLATE_LOCAL_PATH_KEY)?,
+        src_path: optional_answer_string(&answers, SRC_PATH_KEY).unwrap_or_default(),
+        template_mode,
+        template_local_path: optional_answer_string(&answers, TEMPLATE_LOCAL_PATH_KEY),
     })
+}
+
+fn optional_answer_string(answers: &Mapping, key: &str) -> Option<String> {
+    answers
+        .get(YamlValue::String(key.to_string()))
+        .and_then(YamlValue::as_str)
+        .map(str::to_string)
+        .filter(|value| !value.is_empty())
 }
 
 pub(super) fn prepare_update_answers_file(
@@ -324,14 +278,14 @@ fn copier_answers_file_argument(destination: &Path, answers_path: &Path) -> Path
 
 fn apply_copier_update_source_answer(answers: &mut Mapping, template: &PreparedTemplateSource) {
     answers.insert(
-        YamlValue::String("_src_path".into()),
+        YamlValue::String(SRC_PATH_KEY.into()),
         YamlValue::String(template.copier_template.clone()),
     );
 }
 
 fn copier_update_source_matches(answers: &Mapping, template: &PreparedTemplateSource) -> bool {
     answers
-        .get(YamlValue::String("_src_path".into()))
+        .get(YamlValue::String(SRC_PATH_KEY.into()))
         .and_then(YamlValue::as_str)
         == Some(template.copier_template.as_str())
 }
@@ -346,17 +300,9 @@ pub(super) fn write_final_template_answers(
     write_answers_yaml(destination_answers_path, &answers)
 }
 
-pub(super) fn required_prepared_vcs_ref(prepared: &PreparedTemplateSource) -> Result<&str> {
-    prepared
-        .vcs_ref
-        .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("Missing committed template ref for relink update"))
-}
-
 pub(super) fn resolve_update_template_source<'a>(
     opts: &'a UpdateOpts,
     stored: &'a StoredTemplateState,
-    answers_path: &Path,
 ) -> Result<ResolvedUpdateTemplateSource<'a>> {
     if let Some(template) = opts.template.as_deref() {
         return Ok(ResolvedUpdateTemplateSource::new(
@@ -366,13 +312,6 @@ pub(super) fn resolve_update_template_source<'a>(
     }
 
     if opts.template_mode == Some(TemplateMode::Committed) {
-        if stored.template_mode == Some(TemplateMode::WorkingTree) {
-            return Ok(ResolvedUpdateTemplateSource::new(
-                required_stored_template_local_path(stored, answers_path)?,
-                Some(TemplateMode::Committed),
-            ));
-        }
-
         if let Some(template) = stored.template_local_path.as_deref() {
             return Ok(ResolvedUpdateTemplateSource::new(
                 template,
@@ -391,6 +330,20 @@ pub(super) fn resolve_update_template_source<'a>(
     ))
 }
 
+pub(super) fn prepare_default_update_template_source(
+    stored: &StoredTemplateState,
+) -> Result<Option<PreparedTemplateSource>> {
+    let Some(TemplateMode::Committed) = stored.template_mode else {
+        return Ok(None);
+    };
+
+    if stored.src_path.is_empty() || is_remote_template_source(&stored.src_path) {
+        return Ok(None);
+    }
+
+    prepare_template_source(&stored.src_path, stored.template_mode, None).map(Some)
+}
+
 fn inherited_update_template_mode(
     template: &str,
     requested_mode: Option<TemplateMode>,
@@ -406,63 +359,36 @@ fn inherited_update_template_mode(
 fn parse_template_mode_answer(value: &str) -> Result<TemplateMode> {
     match value {
         "committed" => Ok(TemplateMode::Committed),
-        "working-tree" => Ok(TemplateMode::WorkingTree),
+        "working-tree" => bail!(
+            "Unsupported legacy template mode 'working-tree' in {ANSWERS_FILE}. Re-adopt the repo or update it from a committed template source before running jig update."
+        ),
         other => bail!("Unsupported template mode '{other}' in {}", ANSWERS_FILE),
     }
-}
-
-pub(super) fn stored_template_local_path(stored: &StoredTemplateState) -> &str {
-    stored
-        .template_local_path
-        .as_deref()
-        .unwrap_or(&stored.src_path)
-}
-
-pub(super) fn required_stored_template_local_path<'a>(
-    stored: &'a StoredTemplateState,
-    answers_path: &Path,
-) -> Result<&'a str> {
-    stored.template_local_path.as_deref().ok_or_else(|| {
-        anyhow::anyhow!(
-            "Missing {TEMPLATE_LOCAL_PATH_KEY} in {} for working-tree template mode",
-            answers_path.display()
-        )
-    })
 }
 
 pub(super) fn template_identities_match(
     stored: &StoredTemplateState,
     prepared: &PreparedTemplateSource,
 ) -> bool {
-    let uses_working_tree_identity = stored.template_mode == Some(TemplateMode::WorkingTree)
-        || prepared.private_answers.template_mode == Some(TemplateMode::WorkingTree);
-    if uses_working_tree_identity
-        && let (Some(stored_local_path), Some(prepared_local_path)) = (
-            stored.template_local_path.as_deref(),
-            prepared.private_answers.template_local_path.as_deref(),
-        )
-    {
-        return stored_local_path == prepared_local_path;
-    }
-
-    let stored_identities = [
-        Some(stored.src_path.as_str()),
-        stored.template_local_path.as_deref(),
-    ];
     let prepared_identities = [
         Some(prepared.copier_template.as_str()),
         prepared.private_answers.template_local_path.as_deref(),
     ];
 
-    stored_identities
+    [
+        Some(stored.src_path.as_str()),
+        stored.template_local_path.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .any(|stored_identity| identity_matches(stored_identity, prepared_identities))
+}
+
+fn identity_matches(stored_identity: &str, prepared_identities: [Option<&str>; 2]) -> bool {
+    prepared_identities
         .into_iter()
         .flatten()
-        .any(|stored_identity| {
-            prepared_identities
-                .into_iter()
-                .flatten()
-                .any(|prepared_identity| stored_identity == prepared_identity)
-        })
+        .any(|prepared_identity| stored_identity == prepared_identity)
 }
 
 pub(super) fn final_update_template_state(
@@ -499,100 +425,6 @@ pub(super) fn refresh_postwrite_template_metadata(
 
 fn is_full_git_commit(value: &str) -> bool {
     value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
-}
-
-fn template_cache_root(destination: &Path) -> PathBuf {
-    destination.join(TEMPLATE_CACHE_RELATIVE_PATH)
-}
-
-fn refresh_template_snapshot(
-    template_root: &Path,
-    snapshot_root: &Path,
-    update_existing: bool,
-) -> Result<String> {
-    fs::create_dir_all(snapshot_root)
-        .with_context(|| format!("Failed to create {}", snapshot_root.display()))?;
-    ensure_git_repo(snapshot_root)?;
-    clear_snapshot_worktree(snapshot_root)?;
-    copy_working_tree_snapshot(template_root, snapshot_root)?;
-    git(snapshot_root, ["add", "-A"])?;
-
-    let has_changes = !git_stdout(snapshot_root, ["status", "--porcelain"])?.is_empty();
-    let has_head = git_command(snapshot_root, ["rev-parse", "--verify", "HEAD"])
-        .output()
-        .is_ok_and(|output| output.status.success());
-
-    if has_changes || !has_head {
-        let message = if update_existing {
-            format!("Refresh template snapshot from {}", template_root.display())
-        } else {
-            format!("Create template snapshot from {}", template_root.display())
-        };
-        git(
-            snapshot_root,
-            [
-                "-c",
-                "user.name=jig",
-                "-c",
-                "user.email=jig@local.invalid",
-                "commit",
-                "-m",
-                &message,
-            ],
-        )?;
-    }
-
-    git_stdout(snapshot_root, ["rev-parse", "HEAD"])
-}
-
-fn refresh_template_snapshot_from_ref(
-    template_root: &Path,
-    snapshot_root: &Path,
-    vcs_ref: &str,
-    update_existing: bool,
-) -> Result<String> {
-    let worktree_root = TempDir::new().context("Failed to create temporary worktree root")?;
-    let worktree_path = worktree_root.path().join("template");
-    git(
-        template_root,
-        [
-            "worktree",
-            "add",
-            "--detach",
-            &worktree_path.display().to_string(),
-            vcs_ref,
-        ],
-    )?;
-
-    let result = refresh_template_snapshot(&worktree_path, snapshot_root, update_existing);
-    let _ = git(
-        template_root,
-        [
-            "worktree",
-            "remove",
-            "--force",
-            &worktree_path.display().to_string(),
-        ],
-    );
-    result
-}
-
-fn clear_snapshot_worktree(snapshot_root: &Path) -> Result<()> {
-    for entry in fs::read_dir(snapshot_root)? {
-        let entry = entry?;
-        if entry.file_name() == ".git" {
-            continue;
-        }
-        let entry_path = entry.path();
-        if entry.file_type()?.is_dir() {
-            fs::remove_dir_all(&entry_path)
-                .with_context(|| format!("Failed to remove {}", entry_path.display()))?;
-        } else {
-            fs::remove_file(&entry_path)
-                .with_context(|| format!("Failed to remove {}", entry_path.display()))?;
-        }
-    }
-    Ok(())
 }
 
 fn is_remote_template_source(template: &str) -> bool {
