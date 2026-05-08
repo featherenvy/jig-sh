@@ -1,2 +1,4 @@
 {"id":"plan-event_01KQ5R13M23K2YNRW849VRAPGX","plan_id":"plan_01KQ5R13M195MVS2A0BSXZ1369","event":"open","timestamp_ms":1777235693186,"title":"Dogfood jig-sh harness","body_path":".agent/plans/plan_01KQ5R13M195MVS2A0BSXZ1369.md","resolution":null}
 {"id":"plan-event_01KQ5R6QZNJ4XNS0BV9KC7J6Q6","plan_id":"plan_01KQ5R13M195MVS2A0BSXZ1369","event":"close","timestamp_ms":1777235877877,"title":null,"body_path":null,"resolution":"dogfood verification passed"}
+{"id":"plan-event_01KQW4JDMGD4H9R22JDFCX2FP9","plan_id":"plan_01KQW4JDMGH0DKKK75M4ZKVHRX","event":"open","timestamp_ms":1777987040912,"title":"Native renderer validation","body_path":".agent/plans/plan_01KQW4JDMGH0DKKK75M4ZKVHRX.md","resolution":null}
+{"id":"plan-event_01KQW4JPPH0JDSEB3A36GND8JD","plan_id":"plan_01KQW4JDMGH0DKKK75M4ZKVHRX","event":"close","timestamp_ms":1777987050193,"title":null,"body_path":null,"resolution":"complete"}

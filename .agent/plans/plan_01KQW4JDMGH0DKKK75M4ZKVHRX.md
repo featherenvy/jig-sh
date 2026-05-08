@@ -1,0 +1,1 @@
+Validate native template rendering and update conflict handling through the jig launcher.

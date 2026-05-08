@@ -3,68 +3,111 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
-use tempfile::TempDir;
 
-use super::copier::{CopySpecOptions, build_copy_spec, run_copier};
-use super::{
-    ALWAYS_TASK_MUTATED_PATHS, ANSWERS_FILE, SQLX_PRUNED_TASK_PATHS, read_optional_answer_bool,
-    read_optional_answer_string,
+use super::ANSWERS_FILE;
+use super::file_copy::{
+    copy_file_or_symlink_with_permissions, path_exists, prepare_copy_destination_and_read_metadata,
 };
+use super::staged_render::StagedRender;
+#[cfg(test)]
+use super::{ALWAYS_TASK_MUTATED_PATHS, SQLX_PRUNED_TASK_PATHS, read_optional_answer_bool};
 
-pub(super) struct StagedRender {
-    pub(super) _root: TempDir,
-    pub(super) destination: PathBuf,
-    pub(super) answers_path: PathBuf,
-    pub(super) resolved_vcs_ref: Option<String>,
+pub(super) struct ApplyRenderOptions<'a> {
+    pub(super) force: bool,
+    pub(super) allow_answers_overwrite: bool,
+    pub(super) conflict_message: &'a str,
 }
 
-pub(super) fn stage_render(
-    template: &str,
-    vcs_ref: Option<&str>,
-    answers_data_path: Option<&Path>,
-    seed_repo_path: Option<&Path>,
-    non_interactive_defaults: bool,
-    interactive: bool,
-) -> Result<StagedRender> {
-    let root = TempDir::new().context("Failed to create staging directory")?;
-    let destination = root.path().join("render");
-    if let Some(seed_repo_path) = seed_repo_path {
-        seed_preview_workspace(seed_repo_path, &destination)?;
+pub(super) fn apply_staged_render(
+    staged: &StagedRender,
+    destination: &Path,
+    options: ApplyRenderOptions<'_>,
+) -> Result<()> {
+    if !options.force {
+        let conflicts =
+            staged_render_conflicts(staged, destination, options.allow_answers_overwrite)?;
+        if !conflicts.is_empty() {
+            bail!("{}\n{}", options.conflict_message, conflicts.join("\n"));
+        }
     }
-    run_copier(
-        build_copy_spec(
-            template,
-            &destination,
-            CopySpecOptions {
-                answers_data_path,
-                vcs_ref,
-                overwrite: seed_repo_path.is_some(),
-                use_defaults: non_interactive_defaults,
-                skip_tasks: true,
-                ..CopySpecOptions::default()
-            },
-        ),
-        None,
-        interactive,
-    )?;
 
-    let answers_path = destination.join(ANSWERS_FILE);
-    if !answers_path.exists() {
-        bail!(
-            "Staging render did not produce {} in {}",
-            ANSWERS_FILE,
-            destination.display()
-        );
+    for relative in &staged.managed_paths {
+        let rendered_path = staged.destination.join(relative);
+        let destination_path = destination.join(relative);
+        if path_exists(&rendered_path) {
+            copy_rendered_path(&rendered_path, &destination_path)?;
+        } else if path_exists(&destination_path) {
+            remove_destination_path(&destination_path)?;
+        }
     }
-    let resolved_vcs_ref = read_optional_answer_string(&answers_path, "_commit")?;
-    Ok(StagedRender {
-        _root: root,
-        destination,
-        answers_path,
-        resolved_vcs_ref,
-    })
+    Ok(())
 }
 
+fn staged_render_conflicts(
+    staged: &StagedRender,
+    destination: &Path,
+    allow_answers_overwrite: bool,
+) -> Result<Vec<String>> {
+    let mut conflicts = BTreeSet::new();
+    for relative in &staged.managed_paths {
+        if allow_answers_overwrite && relative == Path::new(ANSWERS_FILE) {
+            continue;
+        }
+
+        let rendered_path = staged.destination.join(relative);
+        let destination_path = destination.join(relative);
+        if let Some(blocking_ancestor) = blocking_ancestor(destination, &destination_path) {
+            conflicts.insert(relative_to_string(destination, &blocking_ancestor));
+            continue;
+        }
+
+        if path_exists(&rendered_path) {
+            if path_exists(&destination_path) && !files_match(&rendered_path, &destination_path)? {
+                conflicts.insert(relative.display().to_string());
+            }
+        } else if path_exists(&destination_path) {
+            conflicts.insert(relative.display().to_string());
+        }
+    }
+    Ok(conflicts.into_iter().collect())
+}
+
+fn blocking_ancestor(root: &Path, path: &Path) -> Option<PathBuf> {
+    let mut current = path.parent()?;
+    while current != root {
+        if current.exists() && !current.is_dir() {
+            return Some(current.to_path_buf());
+        }
+        current = current.parent()?;
+    }
+    None
+}
+
+fn relative_to_string(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .map(|relative| relative.display().to_string())
+        .unwrap_or_else(|_| path.display().to_string())
+}
+
+fn copy_rendered_path(rendered_path: &Path, destination_path: &Path) -> Result<()> {
+    let metadata = prepare_copy_destination_and_read_metadata(rendered_path, destination_path)?;
+    if path_exists(destination_path) && !metadata.is_dir() {
+        remove_destination_path(destination_path)?;
+    }
+    copy_file_or_symlink_with_permissions(rendered_path, destination_path, &metadata)
+}
+
+fn remove_destination_path(path: &Path) -> Result<()> {
+    let metadata =
+        fs::symlink_metadata(path).with_context(|| format!("Failed to stat {}", path.display()))?;
+    if metadata.is_dir() && !metadata.file_type().is_symlink() {
+        fs::remove_dir_all(path).with_context(|| format!("Failed to remove {}", path.display()))
+    } else {
+        fs::remove_file(path).with_context(|| format!("Failed to remove {}", path.display()))
+    }
+}
+
+#[cfg(test)]
 pub(super) fn rendered_conflicts(
     rendered_root: &Path,
     answers_path: &Path,
@@ -89,6 +132,7 @@ pub(super) fn rendered_conflicts(
     Ok(conflicts.into_iter().collect())
 }
 
+#[cfg(test)]
 fn collect_sync_conflicts(
     rendered_root: &Path,
     destination_root: &Path,
@@ -125,17 +169,56 @@ fn collect_sync_conflicts(
 }
 
 fn files_match(rendered_path: &Path, destination_path: &Path) -> Result<bool> {
-    let rendered_meta = fs::metadata(rendered_path)
-        .with_context(|| format!("Failed to read {}", rendered_path.display()))?;
-    let destination_meta = fs::metadata(destination_path)
-        .with_context(|| format!("Failed to read {}", destination_path.display()))?;
-    if rendered_meta.is_file() != destination_meta.is_file() {
+    let rendered_meta = fs::symlink_metadata(rendered_path)
+        .with_context(|| format!("Failed to stat {}", rendered_path.display()))?;
+    let destination_meta = fs::symlink_metadata(destination_path)
+        .with_context(|| format!("Failed to stat {}", destination_path.display()))?;
+
+    if either_is_symlink(&rendered_meta, &destination_meta) {
+        return symlinks_match(
+            rendered_path,
+            &rendered_meta,
+            destination_path,
+            &destination_meta,
+        );
+    }
+
+    if !both_are_files(&rendered_meta, &destination_meta) {
         return Ok(false);
     }
-    if !rendered_meta.is_file() {
+    if !executable_bits_match(&rendered_meta, &destination_meta) {
         return Ok(false);
     }
 
+    file_contents_match(rendered_path, destination_path)
+}
+
+fn either_is_symlink(rendered_meta: &fs::Metadata, destination_meta: &fs::Metadata) -> bool {
+    rendered_meta.file_type().is_symlink() || destination_meta.file_type().is_symlink()
+}
+
+fn symlinks_match(
+    rendered_path: &Path,
+    rendered_meta: &fs::Metadata,
+    destination_path: &Path,
+    destination_meta: &fs::Metadata,
+) -> Result<bool> {
+    if !(rendered_meta.file_type().is_symlink() && destination_meta.file_type().is_symlink()) {
+        return Ok(false);
+    }
+
+    let rendered_target = fs::read_link(rendered_path)
+        .with_context(|| format!("Failed to read symlink {}", rendered_path.display()))?;
+    let destination_target = fs::read_link(destination_path)
+        .with_context(|| format!("Failed to read symlink {}", destination_path.display()))?;
+    Ok(rendered_target == destination_target)
+}
+
+fn both_are_files(rendered_meta: &fs::Metadata, destination_meta: &fs::Metadata) -> bool {
+    rendered_meta.is_file() && destination_meta.is_file()
+}
+
+fn file_contents_match(rendered_path: &Path, destination_path: &Path) -> Result<bool> {
     let rendered = fs::read(rendered_path)
         .with_context(|| format!("Failed to read {}", rendered_path.display()))?;
     let destination = fs::read(destination_path)
@@ -143,134 +226,14 @@ fn files_match(rendered_path: &Path, destination_path: &Path) -> Result<bool> {
     Ok(rendered == destination)
 }
 
-pub(super) fn seed_preview_workspace(source_root: &Path, destination_root: &Path) -> Result<()> {
-    fs::create_dir_all(destination_root)
-        .with_context(|| format!("Failed to create {}", destination_root.display()))?;
-    copy_agent_guides_recursive(source_root, destination_root, source_root)
-}
-
-fn copy_agent_guides_recursive(
-    source_root: &Path,
-    destination_root: &Path,
-    current_source: &Path,
-) -> Result<()> {
-    for entry in fs::read_dir(current_source)? {
-        let entry = entry?;
-        let source_path = entry.path();
-        let relative = source_path.strip_prefix(source_root).with_context(|| {
-            format!(
-                "{} is not under {}",
-                source_path.display(),
-                source_root.display()
-            )
-        })?;
-        if relative
-            .components()
-            .next()
-            .is_some_and(|part| part.as_os_str() == ".git")
-        {
-            continue;
-        }
-        let destination_path = destination_root.join(relative);
-        let file_type = entry.file_type()?;
-
-        if file_type.is_dir() {
-            fs::create_dir_all(&destination_path)
-                .with_context(|| format!("Failed to create {}", destination_path.display()))?;
-            copy_agent_guides_recursive(source_root, destination_root, &source_path)?;
-            continue;
-        }
-
-        let file_name = source_path.file_name().and_then(|name| name.to_str());
-        if file_name != Some("AGENTS.md") {
-            continue;
-        }
-
-        copy_preview_guide(&source_path, &destination_path)?;
-    }
-    Ok(())
-}
-
-fn copy_preview_guide(source_path: &Path, destination_path: &Path) -> Result<()> {
-    let metadata = prepare_copy_destination_and_read_metadata(source_path, destination_path)?;
-    copy_file_or_symlink_with_permissions(source_path, destination_path, &metadata)
-}
-
-fn prepare_copy_destination_and_read_metadata(
-    source_path: &Path,
-    destination_path: &Path,
-) -> Result<fs::Metadata> {
-    if let Some(parent) = destination_path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("Failed to create {}", parent.display()))?;
-    }
-
-    fs::symlink_metadata(source_path)
-        .with_context(|| format!("Failed to stat {}", source_path.display()))
-}
-
-fn copy_file_or_symlink_with_permissions(
-    source_path: &Path,
-    destination_path: &Path,
-    metadata: &fs::Metadata,
-) -> Result<()> {
-    let file_type = metadata.file_type();
-
-    if file_type.is_symlink() {
-        let target = fs::read_link(source_path)
-            .with_context(|| format!("Failed to read symlink {}", source_path.display()))?;
-        create_symlink(&target, destination_path)?;
-        return Ok(());
-    }
-
-    fs::copy(source_path, destination_path).with_context(|| {
-        format!(
-            "Failed to copy {} to {}",
-            source_path.display(),
-            destination_path.display()
-        )
-    })?;
-    fs::set_permissions(destination_path, metadata.permissions()).with_context(|| {
-        format!(
-            "Failed to set permissions on {}",
-            destination_path.display()
-        )
-    })?;
-    Ok(())
-}
-
 #[cfg(unix)]
-pub(super) fn create_symlink(target: &Path, link_path: &Path) -> Result<()> {
-    use std::os::unix::fs as unix_fs;
+fn executable_bits_match(rendered_meta: &fs::Metadata, destination_meta: &fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt;
 
-    if link_path.exists() {
-        fs::remove_file(link_path)
-            .with_context(|| format!("Failed to remove {}", link_path.display()))?;
-    }
-    unix_fs::symlink(target, link_path).with_context(|| {
-        format!(
-            "Failed to create symlink {} -> {}",
-            link_path.display(),
-            target.display()
-        )
-    })?;
-    Ok(())
+    (rendered_meta.permissions().mode() & 0o111) == (destination_meta.permissions().mode() & 0o111)
 }
 
-#[cfg(windows)]
-pub(super) fn create_symlink(target: &Path, link_path: &Path) -> Result<()> {
-    use std::os::windows::fs as windows_fs;
-
-    if link_path.exists() {
-        fs::remove_file(link_path)
-            .with_context(|| format!("Failed to remove {}", link_path.display()))?;
-    }
-    windows_fs::symlink_file(target, link_path).with_context(|| {
-        format!(
-            "Failed to create symlink {} -> {}",
-            link_path.display(),
-            target.display()
-        )
-    })?;
-    Ok(())
+#[cfg(not(unix))]
+fn executable_bits_match(_rendered_meta: &fs::Metadata, _destination_meta: &fs::Metadata) -> bool {
+    true
 }

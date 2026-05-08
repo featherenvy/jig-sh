@@ -3,9 +3,9 @@
 ## Recommended Rollout
 
 1. Start with an existing repository that already has a stable Cargo workspace and CI.
-2. Render the kit into that repo with `jig adopt --template /path/to/jig-sh --template-mode committed .`. For tooling-only repos, pass `--sqlx-enabled false` during the initial adopt instead of rendering SQLx files first and recopying them away.
+2. Render the kit into that repo with `jig adopt . --template /path/to/jig-sh --template-mode committed --rust-migration-dir migrations`. For tooling-only repos, pass `--sqlx-enabled false` instead of the migration flag.
 3. For local dogfooding, commit or stash template checkout changes before rendering. If you need to test in-progress template edits, make a temporary local commit and update from that committed source.
-4. Confirm `.jig.yml` was generated with the intended profile. If the repo will be shared across machines, set `template_source_url` to a git source where `refs/heads/<default_branch>` already contains the generated `_commit`, then review the remaining paths and commands before committing.
+4. Confirm `.jig.yml` was generated with the intended profile. If the repo will be shared across machines, set `template_source_url` to a portable git source, then review the remaining paths and commands before committing.
 5. Add or adapt crate-level `AGENTS.md` files for each backend crate.
 6. Run the generated local checks and `make contract-check`.
 7. Wire any missing project-owned scripts such as `scripts/dump-schema.sh` if schema dumps are enabled.
@@ -31,12 +31,7 @@ After editing `.jig.yml`, re-render the repo with:
 jig update --recopy
 ```
 
-`jig` uses Copier under the hood. If you need the raw equivalent commands:
-
-```sh
-uvx --from copier copier update --trust --answers-file .jig.yml
-uvx --from copier copier recopy --trust --defaults --overwrite --answers-file .jig.yml
-```
+`jig update` refuses to overwrite or remove changed template-managed files. Re-run with `--force` when the rendered output should replace those paths.
 
 ## What To Keep Project-Owned
 

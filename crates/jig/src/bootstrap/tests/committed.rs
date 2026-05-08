@@ -2,6 +2,7 @@ use super::*;
 
 #[test]
 fn init_rejects_vcs_ref_for_non_git_local_template() {
+    let _guard = lock_env();
     let temp = tempdir().unwrap();
     let destination = temp.path().join("repo");
     let template = materialize_template_worktree();
@@ -45,6 +46,7 @@ fn update_committed_mode_rewrites_normalized_remote_source_to_local_checkout() {
         template: Some(fixture.template.path().display().to_string()),
         template_mode: Some(TemplateMode::Committed),
         recopy: false,
+        force: true,
         vcs_ref: None,
         defaults: true,
         no_input: true,
@@ -94,6 +96,7 @@ fn update_committed_mode_uses_unpushed_local_checkout_for_normalized_remote_sour
         template: None,
         template_mode: Some(TemplateMode::Committed),
         recopy: false,
+        force: true,
         vcs_ref: None,
         defaults: true,
         no_input: true,
@@ -150,6 +153,7 @@ fn update_committed_mode_with_vcs_ref_uses_local_checkout_for_normalized_remote_
         template: None,
         template_mode: Some(TemplateMode::Committed),
         recopy: false,
+        force: true,
         vcs_ref: Some(old_ref.clone()),
         defaults: true,
         no_input: true,
@@ -190,6 +194,7 @@ fn update_committed_mode_with_vcs_ref_accepts_legacy_normalized_remote_source() 
         template: None,
         template_mode: Some(TemplateMode::Committed),
         recopy: false,
+        force: true,
         vcs_ref: Some(old_ref.clone()),
         defaults: true,
         no_input: true,
@@ -211,7 +216,7 @@ fn update_committed_mode_with_vcs_ref_accepts_legacy_normalized_remote_source() 
         answers
             .get(YamlValue::String(TEMPLATE_LOCAL_PATH_KEY.into()))
             .and_then(YamlValue::as_str),
-        None
+        Some("")
     );
     assert_eq!(
         answers
@@ -231,6 +236,7 @@ fn update_committed_mode_rejects_explicit_remote_template_with_template_mode() {
         template: Some(fixture.remote_url),
         template_mode: Some(TemplateMode::Committed),
         recopy: false,
+        force: true,
         vcs_ref: None,
         defaults: true,
         no_input: true,
@@ -257,6 +263,7 @@ fn update_committed_mode_accepts_explicit_normalized_remote_template_source() {
         template: Some(fixture.remote_url.clone()),
         template_mode: None,
         recopy: false,
+        force: true,
         vcs_ref: Some("main".into()),
         defaults: true,
         no_input: true,
@@ -300,28 +307,31 @@ fn update_committed_mode_accepts_explicit_normalized_remote_template_source() {
 fn final_update_template_state_keeps_prepared_source_for_committed_local_checkout() {
     let stored = StoredTemplateState {
         src_path: "https://example.com/template.git".into(),
+        commit: None,
         template_mode: Some(TemplateMode::Committed),
         template_local_path: Some("/tmp/template".into()),
     };
-    let prepared = PreparedTemplateSource {
-        copier_template: "/tmp/template".into(),
-        vcs_ref: Some("deadbeef".into()),
-        private_answers: PrivateAnswerOverrides {
+    let prepared = PreparedTemplateSource::test_local(
+        "/tmp/template".into(),
+        PathBuf::from("/tmp/template"),
+        Some("deadbeef".into()),
+        PrivateAnswerOverrides {
             template_mode: Some(TemplateMode::Committed),
             template_local_path: Some("/tmp/template".into()),
         },
-    };
+    );
 
     let final_template = final_update_template_state(&stored, &prepared);
 
-    assert_eq!(final_template.copier_template, prepared.copier_template);
-    assert_eq!(final_template.vcs_ref, prepared.vcs_ref);
+    assert_eq!(final_template.source(), prepared.source());
+    assert_eq!(final_template.vcs_ref(), prepared.vcs_ref());
 }
 
 #[test]
 fn resolve_update_template_source_prefers_stored_local_checkout_for_explicit_committed_mode() {
     let stored = StoredTemplateState {
         src_path: "https://example.com/template.git".into(),
+        commit: None,
         template_mode: Some(TemplateMode::Committed),
         template_local_path: Some("/tmp/template".into()),
     };
@@ -330,6 +340,7 @@ fn resolve_update_template_source_prefers_stored_local_checkout_for_explicit_com
         template: None,
         template_mode: Some(TemplateMode::Committed),
         recopy: false,
+        force: false,
         vcs_ref: None,
         defaults: true,
         no_input: true,
@@ -345,6 +356,7 @@ fn resolve_update_template_source_prefers_stored_local_checkout_for_explicit_com
 fn resolve_update_template_source_falls_back_to_remote_for_legacy_committed_repo() {
     let stored = StoredTemplateState {
         src_path: "https://example.com/template.git".into(),
+        commit: None,
         template_mode: Some(TemplateMode::Committed),
         template_local_path: None,
     };
@@ -353,6 +365,7 @@ fn resolve_update_template_source_falls_back_to_remote_for_legacy_committed_repo
         template: None,
         template_mode: Some(TemplateMode::Committed),
         recopy: false,
+        force: false,
         vcs_ref: None,
         defaults: true,
         no_input: true,

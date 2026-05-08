@@ -15,6 +15,7 @@ path = "src/main.rs"
 anyhow.workspace = true
 clap.workspace = true
 fs4.workspace = true
+minijinja = { version = "2.19.0", features = ["custom_syntax"] }
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true

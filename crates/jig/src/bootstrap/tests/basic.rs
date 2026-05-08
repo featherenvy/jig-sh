@@ -45,42 +45,6 @@ fn seed_answers_only_serializes_provided_values() {
     assert!(!mapping.contains_key(YamlValue::String("default_branch".into())));
 }
 
-#[test]
-fn build_copy_spec_uses_force_for_overwrite_mode() {
-    let spec = build_copy_spec(
-        "/tmp/template",
-        Path::new("/tmp/dest"),
-        CopySpecOptions {
-            answers_data_path: Some(Path::new("/tmp/answers.yml")),
-            vcs_ref: Some("HEAD"),
-            force: true,
-            use_defaults: true,
-            ..CopySpecOptions::default()
-        },
-    );
-
-    assert_eq!(spec.program, "uvx");
-    assert!(spec.args.contains(&"--force".to_string()));
-    assert!(spec.args.contains(&"--vcs-ref".to_string()));
-    assert!(!spec.args.contains(&"--defaults".to_string()));
-    assert!(!spec.args.contains(&"--skip-tasks".to_string()));
-}
-
-#[test]
-fn build_update_spec_switches_to_recopy_and_overwrite() {
-    let spec = build_update_spec(
-        CopierMode::Recopy,
-        Path::new("/tmp/dest"),
-        Path::new("/tmp/dest/.jig.yml"),
-        None,
-        false,
-        false,
-    );
-    assert_eq!(spec.args[3], "recopy");
-    assert!(spec.args.contains(&"--defaults".to_string()));
-    assert!(spec.args.contains(&"--overwrite".to_string()));
-}
-
 fn write_answers_fixture(dir: &Path, sqlx_enabled: Option<bool>) {
     let mut body = String::from("default_branch: main\n");
     if let Some(sqlx_enabled) = sqlx_enabled {
@@ -174,6 +138,59 @@ fn rendered_conflicts_ignores_identical_files() {
     assert!(conflicts.is_empty());
 }
 
+#[cfg(unix)]
+#[test]
+fn rendered_conflicts_detects_executable_bit_changes() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let rendered = tempdir().unwrap();
+    let destination = tempdir().unwrap();
+    write_answers_fixture(rendered.path(), Some(true));
+    fs::create_dir_all(rendered.path().join("scripts")).unwrap();
+    fs::create_dir_all(destination.path().join("scripts")).unwrap();
+    fs::write(rendered.path().join("scripts/jig"), "same").unwrap();
+    fs::write(destination.path().join("scripts/jig"), "same").unwrap();
+    fs::set_permissions(
+        rendered.path().join("scripts/jig"),
+        fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    fs::set_permissions(
+        destination.path().join("scripts/jig"),
+        fs::Permissions::from_mode(0o644),
+    )
+    .unwrap();
+
+    let conflicts = rendered_conflicts(
+        rendered.path(),
+        &rendered.path().join(".jig.yml"),
+        destination.path(),
+    )
+    .unwrap();
+    assert_eq!(conflicts, vec!["scripts/jig"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn rendered_conflicts_detects_file_replacing_symlink() {
+    let rendered = tempdir().unwrap();
+    let destination = tempdir().unwrap();
+    write_answers_fixture(rendered.path(), Some(true));
+    fs::create_dir_all(rendered.path().join("scripts")).unwrap();
+    fs::create_dir_all(destination.path().join("scripts")).unwrap();
+    fs::write(rendered.path().join("scripts/jig"), "same").unwrap();
+    fs::write(destination.path().join("scripts/target"), "same").unwrap();
+    create_symlink(Path::new("target"), &destination.path().join("scripts/jig")).unwrap();
+
+    let conflicts = rendered_conflicts(
+        rendered.path(),
+        &rendered.path().join(".jig.yml"),
+        destination.path(),
+    )
+    .unwrap();
+    assert_eq!(conflicts, vec!["scripts/jig"]);
+}
+
 #[test]
 fn rendered_conflicts_detects_blocking_ancestor_file() {
     let rendered = tempdir().unwrap();
@@ -210,39 +227,13 @@ fn preview_workspace_only_copies_agent_guides() {
 }
 
 #[test]
-fn build_copy_spec_can_skip_tasks_for_staging() {
-    let spec = build_copy_spec(
-        "/tmp/template",
-        Path::new("/tmp/dest"),
-        CopySpecOptions {
-            overwrite: true,
-            use_defaults: true,
-            skip_tasks: true,
-            ..CopySpecOptions::default()
-        },
-    );
-
-    assert!(spec.args.contains(&"--skip-tasks".to_string()));
-    assert!(spec.args.contains(&"--defaults".to_string()));
-}
-
-#[test]
-fn run_init_uses_stubbed_uvx_and_git() {
+fn run_init_uses_native_renderer_and_git() {
     let _guard = lock_env();
     let temp = tempdir().unwrap();
     let bin_dir = temp.path().join("bin");
     fs::create_dir_all(&bin_dir).unwrap();
 
     let log_path = temp.path().join("commands.log");
-    let uvx_path = bin_dir.join("uvx-stub.sh");
-    fs::write(
-            &uvx_path,
-            format!(
-                "#!/bin/sh\nprintf 'uvx %s\\n' \"$*\" >> \"{}\"\ncmd=\"$4\"\nfor arg in \"$@\"; do dest=\"$arg\"; done\nmkdir -p \"$dest\"\ncat > \"$dest/.jig.yml\" <<'EOF'\ndefault_branch: main\nEOF\nexit 0\n",
-                log_path.display()
-            ),
-        )
-        .unwrap();
     let git_path = bin_dir.join("git-stub.sh");
     fs::write(
         &git_path,
@@ -255,19 +246,18 @@ fn run_init_uses_stubbed_uvx_and_git() {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&uvx_path, fs::Permissions::from_mode(0o755)).unwrap();
         fs::set_permissions(&git_path, fs::Permissions::from_mode(0o755)).unwrap();
     }
 
     unsafe {
-        env::set_var(UVX_BIN_ENV, &uvx_path);
         env::set_var(GIT_BIN_ENV, &git_path);
     }
 
+    let template = materialize_template_worktree();
     let destination = temp.path().join("repo");
     let output = run_init(InitOpts {
         path: destination.clone(),
-        template: "git@github.com:demo/template.git".into(),
+        template: template.path().display().to_string(),
         template_mode: None,
         vcs_ref: None,
         force: false,
@@ -282,16 +272,15 @@ fn run_init_uses_stubbed_uvx_and_git() {
     .unwrap();
 
     unsafe {
-        env::remove_var(UVX_BIN_ENV);
         env::remove_var(GIT_BIN_ENV);
     }
 
     assert_eq!(output["git_initialized"], true);
     let log = fs::read_to_string(&log_path).unwrap();
-    let copy_count = log.matches("uvx --from copier copier copy --trust").count();
-    assert_eq!(copy_count, 2);
     assert!(log.contains("git init -b main"));
     assert!(destination.exists());
+    assert!(destination.join(".jig.yml").exists());
+    assert!(destination.join("scripts/jig").exists());
 }
 
 #[test]
@@ -302,15 +291,6 @@ fn run_init_falls_back_only_for_unsupported_git_branch_flag() {
     fs::create_dir_all(&bin_dir).unwrap();
 
     let log_path = temp.path().join("commands.log");
-    let uvx_path = bin_dir.join("uvx-stub.sh");
-    fs::write(
-            &uvx_path,
-            format!(
-                "#!/bin/sh\nprintf 'uvx %s\\n' \"$*\" >> \"{}\"\nfor arg in \"$@\"; do dest=\"$arg\"; done\nmkdir -p \"$dest\"\ncat > \"$dest/.jig.yml\" <<'EOF'\ndefault_branch: trunk\nEOF\nexit 0\n",
-                log_path.display()
-            ),
-        )
-        .unwrap();
     let git_path = bin_dir.join("git-stub.sh");
     fs::write(
             &git_path,
@@ -323,19 +303,18 @@ fn run_init_falls_back_only_for_unsupported_git_branch_flag() {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&uvx_path, fs::Permissions::from_mode(0o755)).unwrap();
         fs::set_permissions(&git_path, fs::Permissions::from_mode(0o755)).unwrap();
     }
 
     unsafe {
-        env::set_var(UVX_BIN_ENV, &uvx_path);
         env::set_var(GIT_BIN_ENV, &git_path);
     }
 
+    let template = materialize_template_worktree();
     let destination = temp.path().join("repo");
     let output = run_init(InitOpts {
         path: destination,
-        template: "git@github.com:demo/template.git".into(),
+        template: template.path().display().to_string(),
         template_mode: None,
         vcs_ref: None,
         force: false,
@@ -343,13 +322,14 @@ fn run_init_falls_back_only_for_unsupported_git_branch_flag() {
         no_input: true,
         answers: AnswerOpts {
             repo_name: Some("demo".into()),
+            default_branch: Some("trunk".into()),
+            sqlx_enabled: Some(false),
             ..AnswerOpts::default()
         },
     })
     .unwrap();
 
     unsafe {
-        env::remove_var(UVX_BIN_ENV);
         env::remove_var(GIT_BIN_ENV);
     }
 
@@ -368,15 +348,6 @@ fn run_init_surfaces_git_branch_init_failures() {
     fs::create_dir_all(&bin_dir).unwrap();
 
     let log_path = temp.path().join("commands.log");
-    let uvx_path = bin_dir.join("uvx-stub.sh");
-    fs::write(
-            &uvx_path,
-            format!(
-                "#!/bin/sh\nprintf 'uvx %s\\n' \"$*\" >> \"{}\"\nfor arg in \"$@\"; do dest=\"$arg\"; done\nmkdir -p \"$dest\"\ncat > \"$dest/.jig.yml\" <<'EOF'\ndefault_branch: main\nEOF\nexit 0\n",
-                log_path.display()
-            ),
-        )
-        .unwrap();
     let git_path = bin_dir.join("git-stub.sh");
     fs::write(
             &git_path,
@@ -389,18 +360,17 @@ fn run_init_surfaces_git_branch_init_failures() {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&uvx_path, fs::Permissions::from_mode(0o755)).unwrap();
         fs::set_permissions(&git_path, fs::Permissions::from_mode(0o755)).unwrap();
     }
 
     unsafe {
-        env::set_var(UVX_BIN_ENV, &uvx_path);
         env::set_var(GIT_BIN_ENV, &git_path);
     }
 
+    let template = materialize_template_worktree();
     let error = run_init(InitOpts {
         path: temp.path().join("repo"),
-        template: "git@github.com:demo/template.git".into(),
+        template: template.path().display().to_string(),
         template_mode: None,
         vcs_ref: None,
         force: false,
@@ -408,6 +378,7 @@ fn run_init_surfaces_git_branch_init_failures() {
         no_input: true,
         answers: AnswerOpts {
             repo_name: Some("demo".into()),
+            sqlx_enabled: Some(false),
             ..AnswerOpts::default()
         },
     })
@@ -415,7 +386,6 @@ fn run_init_surfaces_git_branch_init_failures() {
     .to_string();
 
     unsafe {
-        env::remove_var(UVX_BIN_ENV);
         env::remove_var(GIT_BIN_ENV);
     }
 

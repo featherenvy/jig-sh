@@ -9,7 +9,7 @@ The kit extracts the durable parts of the OneSales workflow:
 - a typed `jig` runtime over that contract
 - repo policy scripts
 - GitHub Actions workflows
-- template-based sync via `copier`
+- template-based sync via the native `jig` renderer
 
 ## What It Generates
 
@@ -65,7 +65,7 @@ jig adopt . \
 
 For a tooling-only repo, replace the migration flag with `--sqlx-enabled false`.
 
-Update an adopted repo while preserving local diffs when possible:
+Update an adopted repo. `jig update` refuses to overwrite changed template-managed files unless `--force` is passed:
 
 ```sh
 cd /path/to/target-repo
@@ -78,7 +78,8 @@ For repos adopted from a local committed template checkout, update that checkout
 cd /path/to/target-repo
 jig update \
   --template /path/to/jig-sh \
-  --template-mode committed
+  --template-mode committed \
+  --force
 ```
 
 When changing the `jig` runtime itself, build a dev binary and point the launcher at it so the repo-local cache cannot mask current code:
@@ -95,22 +96,16 @@ cd /path/to/target-repo
 jig update --recopy
 ```
 
+If the rendered output should replace existing template-managed files, pass `--force`.
+
 The generated repo uses `.jig.yml` as both:
 
 - the public repo-facing config
-- the `copier` answers file used under the hood by `jig update` and `jig update --recopy`
+- the native renderer answers file used by `jig update` and `jig update --recopy`
 
-`jig` shells out to `uvx --from copier copier ...`, so direct Copier usage remains available as a fallback:
+Set `template_source_url` in `.jig.yml` if you want portable recopy/update behavior across machines. When set, the renderer writes it into `_src_path`; otherwise local template renders keep the local source path.
 
-```sh
-uvx --from copier copier copy --trust /path/to/jig-sh /path/to/target-repo
-uvx --from copier copier update --trust --answers-file .jig.yml
-uvx --from copier copier recopy --trust --defaults --overwrite --answers-file .jig.yml
-```
-
-Set `template_source_url` in `.jig.yml` if you want portable recopy/update behavior across machines. The value is validated before `_src_path` is rewritten: it must be fetchable with git, and the current `_commit` must already be reachable from `refs/heads/<default_branch>` at that source.
-
-Without `template_source_url`, the post-copy normalization step only rewrites `_src_path` from a local checkout path to the template repo's `origin` URL when the current `_commit` is already contained in the local `origin/<default_branch>` tracking ref. Otherwise it keeps the local committed checkout path to avoid stamping an unreachable remote commit.
+`jig update --recopy` re-renders from the stored `_commit`. Plain `jig update` advances to the current resolved template source.
 
 ## Required Repo Conventions
 
@@ -138,7 +133,6 @@ Generated repos also expect Rust to be available for `scripts/install-jig.sh`, w
 
 ## Layout
 
-- `copier.yml`: template configuration and questions
 - `crates/jig/`: publishable `jig` runtime and MCP server
 - `templates/project/`: files rendered into downstream repos
 - `docs/`: config, adoption, and public-contract guidance

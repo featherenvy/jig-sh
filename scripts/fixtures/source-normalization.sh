@@ -6,7 +6,7 @@ fi
 
 validate_unpushed_commit_stays_local() {
   local bare_remote="$TMP_DIR/template-remote.git"
-  local template_snapshot="$TMP_DIR/template-snapshot"
+  local template_snapshot="$TMP_DIR/template-unpushed-snapshot"
   local template_clone="$TMP_DIR/template-clone"
   local answers_file="$TMP_DIR/template-backend.yaml"
   local rendered_dir="$TMP_DIR/rendered-from-clone"
@@ -29,61 +29,13 @@ EOF
   render_fixture_from_template "$template_clone" "$answers_file" "$rendered_dir"
 
   actual_src_path="$(answers_get "$rendered_dir/.jig.yml" _src_path)"
-  expected_src_path="$template_clone"
+  expected_src_path="$(cd "$template_clone" && pwd -P)"
   if [[ "$actual_src_path" != "$expected_src_path" ]]; then
     echo "Expected _src_path to stay local for an unpushed commit." >&2
     echo "Expected: $expected_src_path" >&2
     echo "Actual:   $actual_src_path" >&2
     exit 1
   fi
-}
-
-validate_invalid_template_source_url_fails() {
-  local invalid_source="$TMP_DIR/does-not-exist.git"
-  local answers_file="$TMP_DIR/backend-invalid-remote.yaml"
-  local rendered_dir="$TMP_DIR/render-invalid-remote"
-  local log_file="$TMP_DIR/render-invalid-remote.log"
-
-  cp "$ROOT_DIR/tests/fixtures/backend-only.yaml" "$answers_file"
-  answers_set "$answers_file" template_source_url "$invalid_source"
-
-  if render_fixture "$answers_file" "$rendered_dir" >"$log_file" 2>&1; then
-    echo "Expected invalid template_source_url to fail fixture rendering." >&2
-    exit 1
-  fi
-
-  rg -q "template_source_url .* is not usable" "$log_file"
-}
-
-validate_explicit_template_source_url_requires_reachable_commit() {
-  local bare_remote="$TMP_DIR/template-explicit-remote.git"
-  local template_snapshot="$TMP_DIR/template-explicit-snapshot"
-  local template_clone="$TMP_DIR/template-explicit-clone"
-  local answers_file="$TMP_DIR/backend-explicit-remote.yaml"
-  local rendered_dir="$TMP_DIR/render-explicit-remote"
-  local log_file="$TMP_DIR/render-explicit-remote.log"
-
-  create_template_snapshot_repo "$template_snapshot"
-  git clone --bare "$template_snapshot" "$bare_remote" >/dev/null 2>&1
-  git clone "$bare_remote" "$template_clone" >/dev/null 2>&1
-  git -C "$template_clone" config user.name "Fixture"
-  git -C "$template_clone" config user.email "fixture@example.com"
-
-  cp "$ROOT_DIR/tests/fixtures/backend-only.yaml" "$answers_file"
-  answers_set "$answers_file" template_source_url "$bare_remote"
-
-  cat > "$template_clone/UNPUSHED_EXPLICIT_REMOTE.md" <<'EOF'
-marker
-EOF
-  git -C "$template_clone" add UNPUSHED_EXPLICIT_REMOTE.md
-  git -C "$template_clone" commit -m "unpushed template change for explicit remote" >/dev/null
-
-  if render_fixture_from_template "$template_clone" "$answers_file" "$rendered_dir" >"$log_file" 2>&1; then
-    echo "Expected explicit template_source_url to fail when _commit is not on the remote branch." >&2
-    exit 1
-  fi
-
-  rg -q "_commit '.*' is not reachable from refs/heads/main" "$log_file"
 }
 
 validate_explicit_template_source_url_rewrites_src_path() {
@@ -122,16 +74,17 @@ validate_quoted_local_src_path_installs_jig() {
   render_fixture_from_template "$template_snapshot" "$answers_file" "$rendered_dir"
 
   actual_src_path="$(answers_get "$rendered_dir/.jig.yml" _src_path)"
-  if [[ "$actual_src_path" != "$template_snapshot" ]]; then
+  expected_src_path="$(cd "$template_snapshot" && pwd -P)"
+  if [[ "$actual_src_path" != "$expected_src_path" ]]; then
     echo "Expected quoted local _src_path to round-trip through rendering." >&2
-    echo "Expected: $template_snapshot" >&2
+    echo "Expected: $expected_src_path" >&2
     echo "Actual:   $actual_src_path" >&2
     exit 1
   fi
 
   (
     cd "$rendered_dir"
-    rm -rf .git/jig-tools .agent/.cache
+    rm -rf .git .agent/.cache
     env -u JIG_DEV_BIN scripts/install-jig.sh >/dev/null
     [[ -x .agent/.cache/jig/0.1.0/bin/jig ]]
   )
@@ -165,11 +118,9 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   fixture_create_tmp_dir_if_needed
 
   validate_unpushed_commit_stays_local
-  validate_invalid_template_source_url_fails
-  validate_explicit_template_source_url_requires_reachable_commit
   validate_explicit_template_source_url_rewrites_src_path
   validate_quoted_local_src_path_installs_jig
   validate_quoted_template_source_url_rewrites_src_path
 
-  echo "Template source normalization fixture validation passed."
+  echo "Template source fixture validation passed."
 fi

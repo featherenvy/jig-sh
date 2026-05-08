@@ -41,12 +41,12 @@ render_fixture() {
   local answers_file="$1"
   local dest_dir="$2"
 
-  uvx --from copier copier copy \
-    --trust \
+  run_jig init "$dest_dir" \
+    --template "$ROOT_DIR" \
+    --answers-file "$answers_file" \
     --defaults \
-    --data-file "$answers_file" \
-    "$ROOT_DIR" \
-    "$dest_dir"
+    --no-input \
+    --force >/dev/null
 }
 
 render_fixture_from_template() {
@@ -54,12 +54,21 @@ render_fixture_from_template() {
   local answers_file="$2"
   local dest_dir="$3"
 
-  uvx --from copier copier copy \
-    --trust \
+  run_jig init "$dest_dir" \
+    --template "$template_root" \
+    --answers-file "$answers_file" \
     --defaults \
-    --data-file "$answers_file" \
-    "$template_root" \
-    "$dest_dir"
+    --no-input \
+    --force >/dev/null
+}
+
+run_jig() {
+  if [[ -n "${JIG_DEV_BIN:-}" ]]; then
+    "$JIG_DEV_BIN" "$@"
+    return
+  fi
+
+  cargo run -q -p jig-sh --bin jig -- "$@"
 }
 
 create_template_snapshot_repo() {
@@ -68,7 +77,11 @@ create_template_snapshot_repo() {
   mkdir -p "$snapshot_dir"
   (
     cd "$ROOT_DIR"
-    tar cf - --exclude='.git' .
+    tar cf - \
+      --exclude='.git' \
+      --exclude='target' \
+      --exclude='.agent/.cache' \
+      .
   ) | (
     cd "$snapshot_dir"
     tar xf -

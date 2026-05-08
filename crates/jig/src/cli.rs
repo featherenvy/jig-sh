@@ -256,6 +256,7 @@ mod tests {
             "jig",
             "update",
             "--recopy",
+            "--force",
             "--template",
             "/tmp/template",
             "--template-mode",
@@ -266,11 +267,13 @@ mod tests {
         match cli.command {
             CommandKind::Update(bootstrap::UpdateOpts {
                 recopy,
+                force,
                 template,
                 template_mode,
                 ..
             }) => {
                 assert!(recopy);
+                assert!(force);
                 assert_eq!(template.as_deref(), Some("/tmp/template"));
                 assert_eq!(template_mode, Some(bootstrap::TemplateMode::Committed));
             }

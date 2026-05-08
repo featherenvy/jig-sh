@@ -13,7 +13,7 @@
 - `src/mcp.rs`: JSON-RPC/MCP stdio server.
 - `src/state.rs`: sessions, plans, receipts, and decisions stored under `.agent/state`.
 - `src/bootstrap.rs`: init/adopt/update command surface.
-- `src/bootstrap/`: bootstrap support for Copier, git, staged renders, and template-source handling.
+- `src/bootstrap/`: bootstrap support for native template rendering, git, staged renders, and template-source handling.
 
 ## Edit here for X
 

@@ -8,9 +8,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use serde_yaml::{Mapping, Value as YamlValue};
 
-use copier::{CopierMode, build_update_spec, run_copier};
+use answers::RenderAnswers;
 #[cfg(test)]
-use copier::{CopySpecOptions, build_copy_spec};
+use file_copy::create_symlink;
 use git::init_git_repo;
 #[cfg(test)]
 use git::{git, git_stdout};
@@ -18,29 +18,33 @@ use git::{git, git_stdout};
 use initial_copy::seed_answers_yaml;
 use initial_copy::{BootstrapCopyRequest, render_and_copy_bootstrap_template};
 #[cfg(test)]
-use sync::rendered_conflicts;
+use preview_seed::seed_preview_workspace;
+use renderer::stage_render;
 #[cfg(test)]
-use sync::{create_symlink, seed_preview_workspace};
+use sync::rendered_conflicts;
+use sync::{ApplyRenderOptions, apply_staged_render};
 #[cfg(test)]
 use template_source::PrivateAnswerOverrides;
 use template_source::{
     PreparedTemplateSource, StoredTemplateState, final_update_template_state,
-    prepare_default_update_template_source, prepare_template_source, prepare_update_answers_file,
-    read_stored_template_state, refresh_postwrite_template_metadata,
-    resolve_update_template_source, template_identities_match, write_final_template_answers,
+    prepare_default_update_template_source, prepare_template_source, read_stored_template_state,
+    resolve_update_template_source, template_identities_match,
 };
 
-mod copier;
+mod answers;
+mod file_copy;
 mod git;
 mod initial_copy;
+mod preview_seed;
+mod renderer;
+mod staged_render;
 mod sync;
 mod template_source;
 
 const ANSWERS_FILE: &str = ".jig.yml";
-const UVX_BIN_ENV: &str = "JIG_UVX_BIN";
 const GIT_BIN_ENV: &str = "JIG_GIT_BIN";
-// Keep in sync with the current template tasks in copier.yml and the normalization/generation
-// scripts they invoke. The end-to-end adopt test below exercises the real template tasks.
+// Legacy conflict helpers keep these in sync with template task side effects.
+#[cfg(test)]
 const ALWAYS_TASK_MUTATED_PATHS: &[&str] = &[".jig.yml", "agent-map.md"];
 const SQLX_PRUNED_TASK_PATHS: &[&str] = &[
     "scripts/add-migration.sh",
@@ -54,6 +58,8 @@ const TEMPLATE_LOCAL_PATH_KEY: &str = "_template_local_path";
 
 #[derive(Args, Clone, Debug, Default)]
 pub struct AnswerOpts {
+    #[arg(long)]
+    pub answers_file: Option<PathBuf>,
     #[arg(long)]
     pub repo_name: Option<String>,
     #[arg(long)]
@@ -146,6 +152,8 @@ pub struct UpdateOpts {
     #[arg(long)]
     pub recopy: bool,
     #[arg(long)]
+    pub force: bool,
+    #[arg(long)]
     pub vcs_ref: Option<String>,
     #[arg(long)]
     pub defaults: bool,
@@ -167,7 +175,7 @@ pub enum TemplateMode {
 }
 
 impl TemplateMode {
-    fn as_str(self) -> &'static str {
+    pub(super) fn as_str(self) -> &'static str {
         match self {
             Self::Committed => "committed",
         }
@@ -185,8 +193,6 @@ pub fn run_init(opts: InitOpts) -> Result<Value> {
         template: &template,
         answers: &opts.answers,
         force: opts.force,
-        defaults: opts.defaults,
-        no_input: opts.no_input,
         seed_repo_path: None,
     })?;
     let default_branch = copy_result
@@ -197,8 +203,8 @@ pub fn run_init(opts: InitOpts) -> Result<Value> {
     Ok(json!({
         "ok": true,
         "command": "init",
-        "copier_mode": "copy",
-        "template": template.copier_template,
+        "render_mode": "copy",
+        "template": template.source(),
         "destination": destination.display().to_string(),
         "answers_file": ANSWERS_FILE,
         "git_initialized": git_initialized,
@@ -216,16 +222,14 @@ pub fn run_adopt(opts: AdoptOpts) -> Result<Value> {
         template: &template,
         answers: &opts.answers,
         force: opts.force,
-        defaults: opts.defaults,
-        no_input: opts.no_input,
         seed_repo_path: Some(&destination),
     })?;
 
     Ok(json!({
         "ok": true,
         "command": "adopt",
-        "copier_mode": "copy",
-        "template": template.copier_template,
+        "render_mode": "copy",
+        "template": template.source(),
         "destination": destination.display().to_string(),
         "answers_file": ANSWERS_FILE,
         "git_initialized": false,
@@ -235,52 +239,32 @@ pub fn run_adopt(opts: AdoptOpts) -> Result<Value> {
 pub fn run_update(opts: UpdateOpts) -> Result<Value> {
     let destination = absolute_path(&opts.path)?;
     validate_update_destination(&destination)?;
-    let mode = if opts.recopy {
-        CopierMode::Recopy
-    } else {
-        CopierMode::Update
-    };
+    let mode = if opts.recopy { "recopy" } else { "update" };
     let answers_path = destination.join(ANSWERS_FILE);
     let stored = read_stored_template_state(&answers_path)?;
     let update_template = prepare_update_template_source(&opts, &stored)?;
-    let answers_postwrite = update_template
-        .as_ref()
-        .map(|template| final_update_template_state(&stored, template));
-    let update_answers =
-        prepare_update_answers_file(&destination, &answers_path, update_template.as_ref())?;
-    let update_result = (|| -> Result<()> {
-        run_copier(
-            build_update_spec(
-                mode,
-                &destination,
-                &update_answers.copier_arg,
-                update_template
-                    .as_ref()
-                    .and_then(|prepared| prepared.vcs_ref.as_deref())
-                    .or(opts.vcs_ref.as_deref()),
-                opts.defaults || opts.no_input,
-                update_answers.exclude_destination_answers,
-            ),
-            Some(&destination),
-            !(opts.defaults || opts.no_input),
-        )?;
-        if let Some(mut prepared) = answers_postwrite {
-            refresh_postwrite_template_metadata(&update_answers.path, &mut prepared)?;
-            write_final_template_answers(&update_answers.path, &answers_path, &prepared)?;
-        }
-        Ok(())
-    })();
-    if update_result.is_err()
-        && let Some(answers) = update_answers.restore_on_error.as_ref()
-    {
-        let _ = write_answers_yaml(&answers_path, answers);
-    }
-    update_result?;
+    let Some(update_template) = update_template else {
+        bail!(
+            "Missing template source metadata in {ANSWERS_FILE}. Re-adopt the repo before running jig update."
+        );
+    };
+    let final_template = final_update_template_state(&stored, &update_template);
+    let answers = RenderAnswers::from_answers_file(&answers_path)?;
+    let staged = stage_render(&final_template, &answers, Some(&destination))?;
+    apply_staged_render(
+        &staged,
+        &destination,
+        ApplyRenderOptions {
+            force: opts.force,
+            allow_answers_overwrite: true,
+            conflict_message: "Update would overwrite or remove template-managed paths. Re-run with --force to accept the rendered output:",
+        },
+    )?;
 
     Ok(json!({
         "ok": true,
         "command": "update",
-        "copier_mode": mode.as_str(),
+        "render_mode": mode,
         "destination": destination.display().to_string(),
         "answers_file": ANSWERS_FILE,
         "git_initialized": false,
@@ -293,17 +277,27 @@ fn prepare_update_template_source(
 ) -> Result<Option<PreparedTemplateSource>> {
     let source_override_requested = opts.template.is_some() || opts.template_mode.is_some();
     if !source_override_requested && opts.vcs_ref.is_none() {
-        return prepare_default_update_template_source(stored);
+        return prepare_default_update_template_source(stored, opts.recopy);
     }
 
     let resolved_source = resolve_update_template_source(opts, stored)?;
     let prepared = prepare_template_source(
         resolved_source.template,
         resolved_source.template_mode,
-        opts.vcs_ref.as_deref(),
+        opts.vcs_ref
+            .as_deref()
+            .or_else(|| recopy_vcs_ref(opts.recopy, stored)),
     )?;
     ensure_update_template_identity(stored, &prepared)?;
     Ok(Some(prepared))
+}
+
+fn recopy_vcs_ref(recopy: bool, stored: &StoredTemplateState) -> Option<&str> {
+    if recopy {
+        stored.commit.as_deref()
+    } else {
+        None
+    }
 }
 
 fn ensure_update_template_identity(
@@ -319,11 +313,13 @@ fn ensure_update_template_identity(
     )
 }
 
+#[cfg(test)]
 fn read_optional_answer_bool(answers_path: &Path, key: &str) -> Result<Option<bool>> {
     let answers = read_answers_yaml(answers_path)?;
     Ok(answers.get(key).and_then(YamlValue::as_bool))
 }
 
+#[cfg(test)]
 fn read_optional_answer_string(answers_path: &Path, key: &str) -> Result<Option<String>> {
     let answers = read_answers_yaml(answers_path)?;
     Ok(answers
@@ -343,22 +339,11 @@ fn read_answers_yaml(path: &Path) -> Result<Mapping> {
         .ok_or_else(|| anyhow::anyhow!("Expected mapping in {}", path.display()))
 }
 
+#[cfg(test)]
 fn write_answers_yaml(path: &Path, mapping: &Mapping) -> Result<()> {
     let yaml = serde_yaml::to_string(&YamlValue::Mapping(mapping.clone()))
         .with_context(|| format!("Failed to serialize {}", path.display()))?;
     fs::write(path, yaml).with_context(|| format!("Failed to write {}", path.display()))
-}
-
-fn set_optional_yaml_string(mapping: &mut Mapping, key: &str, value: Option<&str>) {
-    let key = YamlValue::String(key.to_string());
-    match value {
-        Some(value) => {
-            mapping.insert(key, YamlValue::String(value.to_string()));
-        }
-        None => {
-            mapping.remove(&key);
-        }
-    }
 }
 
 fn parse_frontend_app(value: &str) -> Result<FrontendApp, String> {
@@ -386,14 +371,14 @@ fn validate_init_destination(path: &Path, force: bool) -> Result<()> {
         return Ok(());
     }
 
-    let mut entries = fs::read_dir(path)?
-        .collect::<std::io::Result<Vec<_>>>()
+    let first_entry = fs::read_dir(path)?
+        .next()
+        .transpose()
         .with_context(|| format!("Failed to enumerate {}", path.display()))?;
-    if entries.is_empty() || force {
+    if first_entry.is_none() || force {
         return Ok(());
     }
 
-    entries.sort_by_key(|entry| entry.path());
     bail!(
         "Init destination is not empty: {}. Re-run with --force to overwrite.",
         path.display()

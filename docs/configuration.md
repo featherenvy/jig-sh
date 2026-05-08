@@ -2,7 +2,7 @@
 
 This file is the supported configuration surface for downstream repos and must be committed alongside the generated template output.
 
-`.jig.yml` is also the `copier` answers file.
+`.jig.yml` is also the native renderer answers file.
 
 After changing values in `.jig.yml`, re-render with:
 
@@ -16,14 +16,9 @@ To move onto a newer version of the template while keeping the stored answers, r
 jig update
 ```
 
-The file contains both public settings and the private `_src_path` / `_commit` fields that `copier update` requires. Repos rendered from local committed template checkouts may also store `_template_mode` and `_template_local_path`.
+The file contains both public settings and the private `_src_path` / `_commit` fields that `jig update` uses to resolve future renders. Repos rendered from local committed template checkouts may also store `_template_mode` and `_template_local_path`.
 
-`jig` shells out to Copier via `uvx --from copier copier ...`. Direct Copier usage remains available if needed:
-
-```sh
-uvx --from copier copier recopy --trust --defaults --overwrite --answers-file .jig.yml
-uvx --from copier copier update --trust --answers-file .jig.yml
-```
+`jig update` refuses to overwrite or remove changed template-managed files unless `--force` is passed.
 
 For local git template checkouts, `jig init` / `jig adopt` use a committed source:
 
@@ -146,12 +141,4 @@ For portable shared repos, set:
 template_source_url: git@github.com:your-org/jig-sh.git
 ```
 
-When `template_source_url` is set, the generated normalization step validates it before writing `_src_path`:
-
-- the source must be fetchable with `git`
-- `refs/heads/<default_branch>` must exist there
-- the current `_commit` must already be reachable from that branch history
-
-If any of those checks fail, `copier` exits instead of saving an unusable remote template source into `.jig.yml`.
-
-If `template_source_url` is blank, the post-copy normalization step may rewrite a local `_src_path` to the template repo's `origin` URL, but only when the current `_commit` is already reachable from the local `origin/<default_branch>` tracking ref. Otherwise it leaves the local committed checkout path unchanged to avoid recording an unreachable remote commit.
+When `template_source_url` is set, the renderer writes it into `_src_path` for portable update and install behavior. If it is blank, local template renders keep the local source path.

@@ -2,6 +2,7 @@ use super::*;
 
 #[test]
 fn adopt_local_git_template_defaults_to_committed_mode() {
+    let _guard = lock_env();
     let temp = tempdir().unwrap();
     let repo = temp.path().join("repo");
     let template = materialize_template_git_worktree();
@@ -24,7 +25,7 @@ fn adopt_local_git_template_defaults_to_committed_mode() {
     .unwrap();
 
     let answers = fs::read_to_string(repo.join(".jig.yml")).unwrap();
-    assert!(answers.contains("_template_mode: committed"));
+    assert!(answers.contains("_template_mode: 'committed'"));
     assert!(answers.contains("_template_local_path:"));
     assert!(
         answers.contains(
@@ -38,6 +39,7 @@ fn adopt_local_git_template_defaults_to_committed_mode() {
 
 #[test]
 fn adopt_local_git_template_rejects_dirty_committed_source() {
+    let _guard = lock_env();
     let temp = tempdir().unwrap();
     let repo = temp.path().join("repo");
     let template = materialize_template_git_worktree();
@@ -67,6 +69,7 @@ fn adopt_local_git_template_rejects_dirty_committed_source() {
 
 #[test]
 fn update_rejects_legacy_working_tree_template_state() {
+    let _guard = lock_env();
     let temp = tempdir().unwrap();
     let repo = temp.path().join("repo");
     let template = materialize_template_git_worktree();
@@ -86,6 +89,7 @@ fn update_rejects_legacy_working_tree_template_state() {
         template: None,
         template_mode: None,
         recopy: false,
+        force: false,
         vcs_ref: None,
         defaults: true,
         no_input: true,
@@ -99,6 +103,7 @@ fn update_rejects_legacy_working_tree_template_state() {
 
 #[test]
 fn update_committed_mode_rejects_switching_local_template_checkout() {
+    let _guard = lock_env();
     let temp = tempdir().unwrap();
     let repo = temp.path().join("repo");
     let template = materialize_template_git_worktree();
@@ -112,6 +117,7 @@ fn update_committed_mode_rejects_switching_local_template_checkout() {
         template: Some(other_template.path().display().to_string()),
         template_mode: Some(TemplateMode::Committed),
         recopy: false,
+        force: false,
         vcs_ref: None,
         defaults: true,
         no_input: true,
@@ -124,6 +130,7 @@ fn update_committed_mode_rejects_switching_local_template_checkout() {
 
 #[test]
 fn update_default_committed_mode_uses_clean_local_template_head() {
+    let _guard = lock_env();
     let temp = tempdir().unwrap();
     let repo = temp.path().join("repo");
     let template = materialize_template_git_worktree();
@@ -145,6 +152,7 @@ fn update_default_committed_mode_uses_clean_local_template_head() {
         template: None,
         template_mode: None,
         recopy: false,
+        force: true,
         vcs_ref: None,
         defaults: true,
         no_input: true,
@@ -156,7 +164,61 @@ fn update_default_committed_mode_uses_clean_local_template_head() {
 }
 
 #[test]
+fn update_refuses_managed_file_changes_without_force() {
+    let _guard = lock_env();
+    let temp = tempdir().unwrap();
+    let repo = temp.path().join("repo");
+    let template = materialize_template_git_worktree();
+    write_test_crate_guide(&repo);
+
+    adopt_repo_for_test(&repo, template.path(), TemplateMode::Committed);
+    let original_root_guide = fs::read_to_string(repo.join("AGENTS.md")).unwrap();
+
+    commit_template_root_guide(
+        template.path(),
+        "# Refused Update Marker\n",
+        "template update",
+    );
+
+    let error = run_update(UpdateOpts {
+        path: repo.clone(),
+        template: None,
+        template_mode: None,
+        recopy: false,
+        force: false,
+        vcs_ref: None,
+        defaults: true,
+        no_input: true,
+    })
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("Update would overwrite or remove template-managed paths"));
+    assert!(error.contains("AGENTS.md"));
+    assert_eq!(
+        fs::read_to_string(repo.join("AGENTS.md")).unwrap(),
+        original_root_guide
+    );
+
+    run_update(UpdateOpts {
+        path: repo.clone(),
+        template: None,
+        template_mode: None,
+        recopy: false,
+        force: true,
+        vcs_ref: None,
+        defaults: true,
+        no_input: true,
+    })
+    .unwrap();
+
+    let root_guide = fs::read_to_string(repo.join("AGENTS.md")).unwrap();
+    assert!(root_guide.contains("Refused Update Marker"));
+}
+
+#[test]
 fn update_default_committed_mode_rejects_dirty_local_template() {
+    let _guard = lock_env();
     let temp = tempdir().unwrap();
     let repo = temp.path().join("repo");
     let template = materialize_template_git_worktree();
@@ -170,6 +232,7 @@ fn update_default_committed_mode_rejects_dirty_local_template() {
         template: None,
         template_mode: None,
         recopy: false,
+        force: false,
         vcs_ref: None,
         defaults: true,
         no_input: true,
@@ -182,6 +245,7 @@ fn update_default_committed_mode_rejects_dirty_local_template() {
 
 #[test]
 fn update_committed_mode_with_vcs_ref_only_updates_metadata() {
+    let _guard = lock_env();
     let temp = tempdir().unwrap();
     let repo = temp.path().join("repo");
     let template = materialize_template_git_worktree();
@@ -201,6 +265,7 @@ fn update_committed_mode_with_vcs_ref_only_updates_metadata() {
         template: None,
         template_mode: None,
         recopy: false,
+        force: true,
         vcs_ref: Some(new_ref.clone()),
         defaults: true,
         no_input: true,

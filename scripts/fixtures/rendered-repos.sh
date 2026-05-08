@@ -35,7 +35,7 @@ validate_backend_fixture() {
     perl -0pi -e "s/default_branch: 'main'/default_branch: 'dev'/" .jig.yml
     git add .jig.yml
     git commit -m "change answers" >/dev/null
-    uvx --from copier copier recopy --trust --defaults --overwrite --answers-file .jig.yml >/dev/null
+    scripts/jig update --recopy --force >/dev/null
     grep -q '^DEFAULT_BRANCH ?= dev$' Makefile
     grep -q '^JIG_VERSION ?= 0.1.0$' Makefile
     if [[ -f .github/workflows/webapp-checks.yml ]]; then
@@ -65,7 +65,7 @@ validate_full_stack_fixture() {
     bash scripts/check-migration-immutability.sh --changed-against HEAD
     bash scripts/check-sqlx-unchecked-non-test.sh >/dev/null
     bash scripts/check-schema-dump.sh >/dev/null
-    uvx --from copier copier recopy --trust --defaults --overwrite --answers-file .jig.yml >/dev/null
+    scripts/jig update --recopy --force >/dev/null
     rg -q "frontend" .github/workflows/webapp-checks.yml
     rg -q "admin-panel" .github/workflows/webapp-checks.yml
     rg -q "40" .github/workflows/webapp-checks.yml
@@ -113,7 +113,7 @@ validate_tooling_only_fixture() {
     perl -0pi -e "s/default_branch: 'main'/default_branch: 'dev'/" .jig.yml
     git add .jig.yml
     git commit -m "change answers" >/dev/null
-    uvx --from copier copier recopy --trust --defaults --overwrite --answers-file .jig.yml >/dev/null
+    scripts/jig update --recopy --force >/dev/null
     grep -q '^DEFAULT_BRANCH ?= dev$' Makefile
     [[ ! -f scripts/add-migration.sh ]]
     [[ ! -f scripts/check-migration-immutability.sh ]]
@@ -131,10 +131,12 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   backend_dir="$TMP_DIR/backend-only"
   full_stack_dir="$TMP_DIR/full-stack"
   tooling_only_dir="$TMP_DIR/tooling-only"
+  template_snapshot="$TMP_DIR/template-snapshot"
 
-  render_fixture "$ROOT_DIR/tests/fixtures/backend-only.yaml" "$backend_dir"
-  render_fixture "$ROOT_DIR/tests/fixtures/full-stack.yaml" "$full_stack_dir"
-  render_fixture "$ROOT_DIR/tests/fixtures/tooling-only.yaml" "$tooling_only_dir"
+  create_template_snapshot_repo "$template_snapshot"
+  render_fixture_from_template "$template_snapshot" "$ROOT_DIR/tests/fixtures/backend-only.yaml" "$backend_dir"
+  render_fixture_from_template "$template_snapshot" "$ROOT_DIR/tests/fixtures/full-stack.yaml" "$full_stack_dir"
+  render_fixture_from_template "$template_snapshot" "$ROOT_DIR/tests/fixtures/tooling-only.yaml" "$tooling_only_dir"
 
   validate_backend_fixture "$backend_dir"
   validate_full_stack_fixture "$full_stack_dir"

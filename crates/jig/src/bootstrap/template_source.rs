@@ -1,14 +1,17 @@
 use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
 use serde_yaml::{Mapping, Value as YamlValue};
-use tempfile::NamedTempFile;
+use tempfile::TempDir;
+
+use crate::process::{require_success, run_checked_output};
 
 use super::git::{ensure_clean_git_work_tree, git_stdout, is_git_work_tree};
 use super::{
-    ANSWERS_FILE, TEMPLATE_LOCAL_PATH_KEY, TEMPLATE_MODE_KEY, TemplateMode, UpdateOpts,
-    absolute_path, read_answers_yaml, read_optional_answer_string, set_optional_yaml_string,
-    write_answers_yaml,
+    ANSWERS_FILE, GIT_BIN_ENV, TEMPLATE_LOCAL_PATH_KEY, TEMPLATE_MODE_KEY, TemplateMode,
+    UpdateOpts, absolute_path, external_program, read_answers_yaml,
 };
 
 const COMMIT_KEY: &str = "_commit";
@@ -22,24 +25,61 @@ pub(super) struct PrivateAnswerOverrides {
 
 #[derive(Clone, Debug)]
 pub(super) struct PreparedTemplateSource {
-    pub(super) copier_template: String,
-    pub(super) vcs_ref: Option<String>,
-    pub(super) private_answers: PrivateAnswerOverrides,
+    source: String,
+    render_root: PathBuf,
+    vcs_ref: Option<String>,
+    private_answers: PrivateAnswerOverrides,
+    _checkout: Option<Arc<TempDir>>,
 }
 
 impl PreparedTemplateSource {
-    pub(super) fn with_vcs_ref(&self, vcs_ref: Option<String>) -> Self {
+    fn new(
+        source: String,
+        render_root: PathBuf,
+        vcs_ref: Option<String>,
+        private_answers: PrivateAnswerOverrides,
+        checkout: Option<Arc<TempDir>>,
+    ) -> Self {
         Self {
-            copier_template: self.copier_template.clone(),
+            source,
+            render_root,
             vcs_ref,
-            private_answers: self.private_answers.clone(),
+            private_answers,
+            _checkout: checkout,
         }
+    }
+
+    pub(super) fn source(&self) -> &str {
+        &self.source
+    }
+
+    pub(super) fn render_root(&self) -> &Path {
+        &self.render_root
+    }
+
+    pub(super) fn vcs_ref(&self) -> Option<&str> {
+        self.vcs_ref.as_deref()
+    }
+
+    pub(super) fn private_answers(&self) -> &PrivateAnswerOverrides {
+        &self.private_answers
+    }
+
+    #[cfg(test)]
+    pub(super) fn test_local(
+        source: String,
+        render_root: PathBuf,
+        vcs_ref: Option<String>,
+        private_answers: PrivateAnswerOverrides,
+    ) -> Self {
+        Self::new(source, render_root, vcs_ref, private_answers, None)
     }
 }
 
 #[derive(Clone, Debug)]
 pub(super) struct StoredTemplateState {
     pub(super) src_path: String,
+    pub(super) commit: Option<String>,
     pub(super) template_mode: Option<TemplateMode>,
     pub(super) template_local_path: Option<String>,
 }
@@ -58,36 +98,6 @@ impl<'a> ResolvedUpdateTemplateSource<'a> {
     }
 }
 
-pub(super) struct UpdateAnswersFile {
-    pub(super) copier_arg: PathBuf,
-    pub(super) path: PathBuf,
-    pub(super) exclude_destination_answers: bool,
-    pub(super) restore_on_error: Option<Mapping>,
-    pub(super) _temporary_file: Option<NamedTempFile>,
-}
-
-impl UpdateAnswersFile {
-    fn existing(answers_path: &Path) -> Self {
-        Self {
-            copier_arg: PathBuf::from(ANSWERS_FILE),
-            path: answers_path.to_path_buf(),
-            exclude_destination_answers: false,
-            restore_on_error: None,
-            _temporary_file: None,
-        }
-    }
-
-    fn in_place(answers_path: &Path, restore_on_error: Mapping) -> Self {
-        Self {
-            copier_arg: PathBuf::from(ANSWERS_FILE),
-            path: answers_path.to_path_buf(),
-            exclude_destination_answers: false,
-            restore_on_error: Some(restore_on_error),
-            _temporary_file: None,
-        }
-    }
-}
-
 pub(super) fn prepare_template_source(
     template: &str,
     template_mode: Option<TemplateMode>,
@@ -97,11 +107,7 @@ pub(super) fn prepare_template_source(
         if template_mode.is_some() {
             bail!("--template-mode only applies to local git template paths.");
         }
-        return Ok(PreparedTemplateSource {
-            copier_template: template.to_string(),
-            vcs_ref: vcs_ref.map(str::to_string),
-            private_answers: PrivateAnswerOverrides::default(),
-        });
+        return prepare_remote_template_source(template, vcs_ref);
     }
 
     let local_template = absolute_path(Path::new(template))?;
@@ -112,9 +118,9 @@ pub(super) fn prepare_template_source(
         );
     }
 
-    if !local_template.join("copier.yml").exists() {
+    if !local_template.join("templates/project").is_dir() {
         bail!(
-            "Template path does not contain copier.yml: {}",
+            "Template path does not contain templates/project: {}",
             local_template.display()
         );
     }
@@ -132,14 +138,36 @@ pub(super) fn prepare_template_source(
                 local_template.display()
             );
         }
-        return Ok(PreparedTemplateSource {
-            copier_template: local_template.display().to_string(),
-            vcs_ref: vcs_ref.map(str::to_string),
-            private_answers: PrivateAnswerOverrides::default(),
-        });
+        return Ok(PreparedTemplateSource::new(
+            local_template.display().to_string(),
+            local_template,
+            vcs_ref.map(str::to_string),
+            PrivateAnswerOverrides::default(),
+            None,
+        ));
     }
 
     prepare_committed_template_source(&local_template, vcs_ref)
+}
+
+fn prepare_remote_template_source(
+    template: &str,
+    vcs_ref: Option<&str>,
+) -> Result<PreparedTemplateSource> {
+    let checkout = Arc::new(clone_template_source(template)?);
+    let render_root = checkout.path().join("template");
+    if let Some(vcs_ref) = vcs_ref {
+        git_checkout(&render_root, vcs_ref)?;
+    }
+    let resolved_vcs_ref = git_stdout(&render_root, ["rev-parse", "HEAD"])?;
+
+    Ok(PreparedTemplateSource::new(
+        template.to_string(),
+        render_root,
+        Some(resolved_vcs_ref),
+        PrivateAnswerOverrides::default(),
+        Some(checkout),
+    ))
 }
 
 fn prepare_committed_template_source(
@@ -151,49 +179,65 @@ fn prepare_committed_template_source(
         Some(value) => git_stdout(template_root, ["rev-parse", &format!("{value}^{{commit}}")])?,
         None => git_stdout(template_root, ["rev-parse", "HEAD"])?,
     };
+    let (render_root, checkout) = if vcs_ref.is_some() {
+        let checkout = Arc::new(clone_template_source(&template_root.display().to_string())?);
+        let render_root = checkout.path().join("template");
+        git_checkout(&render_root, &resolved_vcs_ref)?;
+        (render_root, Some(checkout))
+    } else {
+        (template_root.to_path_buf(), None)
+    };
     let template_path = template_root.display().to_string();
 
-    Ok(PreparedTemplateSource {
-        copier_template: template_path.clone(),
-        vcs_ref: Some(resolved_vcs_ref),
-        private_answers: PrivateAnswerOverrides {
+    Ok(PreparedTemplateSource::new(
+        template_path.clone(),
+        render_root,
+        Some(resolved_vcs_ref),
+        PrivateAnswerOverrides {
             template_mode: Some(TemplateMode::Committed),
             template_local_path: Some(template_path),
         },
-    })
+        checkout,
+    ))
 }
 
-pub(super) fn rewrite_private_template_answers(
-    answers_path: &Path,
-    template: &PreparedTemplateSource,
-) -> Result<()> {
-    let mut answers = read_answers_yaml(answers_path)?;
-    apply_private_template_answers(&mut answers, template);
-    write_answers_yaml(answers_path, &answers)
+fn clone_template_source(template: &str) -> Result<TempDir> {
+    let checkout = TempDir::new().context("Failed to create template checkout directory")?;
+    let destination = checkout.path().join("template");
+    let git_program = external_program(GIT_BIN_ENV, "git");
+    let output = Command::new(&git_program)
+        .args([
+            "clone",
+            "--quiet",
+            template,
+            &destination.display().to_string(),
+        ])
+        .output()
+        .with_context(|| format!("Failed to start {}", git_program))?;
+    require_success(&output, |output| {
+        format!(
+            "git clone {template} failed.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+    })?;
+    Ok(checkout)
 }
 
-fn apply_private_template_answers(answers: &mut Mapping, template: &PreparedTemplateSource) {
-    answers.insert(
-        YamlValue::String(SRC_PATH_KEY.into()),
-        YamlValue::String(template.copier_template.clone()),
-    );
-    answers.insert(
-        YamlValue::String(COMMIT_KEY.into()),
-        YamlValue::String(template.vcs_ref.clone().unwrap_or_default()),
-    );
-    set_optional_yaml_string(
-        answers,
-        TEMPLATE_MODE_KEY,
-        template
-            .private_answers
-            .template_mode
-            .map(TemplateMode::as_str),
-    );
-    set_optional_yaml_string(
-        answers,
-        TEMPLATE_LOCAL_PATH_KEY,
-        template.private_answers.template_local_path.as_deref(),
-    );
+fn git_checkout(repo: &Path, vcs_ref: &str) -> Result<()> {
+    let mut command = Command::new(external_program(GIT_BIN_ENV, "git"));
+    command
+        .current_dir(repo)
+        .args(["checkout", "--quiet", vcs_ref]);
+    run_checked_output(&mut command, |output| {
+        format!(
+            "git checkout {vcs_ref} failed in {}\nstdout:\n{}\nstderr:\n{}",
+            repo.display(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+    })?;
+    Ok(())
 }
 
 pub(super) fn read_stored_template_state(answers_path: &Path) -> Result<StoredTemplateState> {
@@ -204,6 +248,7 @@ pub(super) fn read_stored_template_state(answers_path: &Path) -> Result<StoredTe
 
     Ok(StoredTemplateState {
         src_path: optional_answer_string(&answers, SRC_PATH_KEY).unwrap_or_default(),
+        commit: optional_answer_string(&answers, COMMIT_KEY),
         template_mode,
         template_local_path: optional_answer_string(&answers, TEMPLATE_LOCAL_PATH_KEY),
     })
@@ -215,89 +260,6 @@ fn optional_answer_string(answers: &Mapping, key: &str) -> Option<String> {
         .and_then(YamlValue::as_str)
         .map(str::to_string)
         .filter(|value| !value.is_empty())
-}
-
-pub(super) fn prepare_update_answers_file(
-    destination: &Path,
-    answers_path: &Path,
-    update_template: Option<&PreparedTemplateSource>,
-) -> Result<UpdateAnswersFile> {
-    let Some(template) = update_template else {
-        return Ok(UpdateAnswersFile::existing(answers_path));
-    };
-
-    let original_answers = read_answers_yaml(answers_path)?;
-    if copier_update_source_matches(&original_answers, template) {
-        return Ok(UpdateAnswersFile::existing(answers_path));
-    }
-
-    let mut update_answers = original_answers.clone();
-    apply_copier_update_source_answer(&mut update_answers, template);
-
-    if let Some(git_dir) = destination_git_dir(destination)? {
-        let temporary_file = NamedTempFile::new_in(&git_dir)
-            .with_context(|| format!("Failed to create temporary file in {}", git_dir.display()))?;
-        write_answers_yaml(temporary_file.path(), &update_answers)?;
-        return Ok(UpdateAnswersFile {
-            copier_arg: copier_answers_file_argument(destination, temporary_file.path()),
-            path: temporary_file.path().to_path_buf(),
-            exclude_destination_answers: true,
-            restore_on_error: Some(original_answers),
-            _temporary_file: Some(temporary_file),
-        });
-    }
-
-    write_answers_yaml(answers_path, &update_answers)?;
-    Ok(UpdateAnswersFile::in_place(answers_path, original_answers))
-}
-
-fn destination_git_dir(destination: &Path) -> Result<Option<PathBuf>> {
-    if !is_git_work_tree(destination) {
-        return Ok(None);
-    }
-
-    let git_dir = PathBuf::from(git_stdout(destination, ["rev-parse", "--git-dir"])?);
-    let git_dir = if git_dir.is_absolute() {
-        git_dir
-    } else {
-        destination.join(git_dir)
-    };
-    if git_dir.is_dir() {
-        Ok(Some(git_dir))
-    } else {
-        Ok(None)
-    }
-}
-
-fn copier_answers_file_argument(destination: &Path, answers_path: &Path) -> PathBuf {
-    answers_path
-        .strip_prefix(destination)
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|_| answers_path.to_path_buf())
-}
-
-fn apply_copier_update_source_answer(answers: &mut Mapping, template: &PreparedTemplateSource) {
-    answers.insert(
-        YamlValue::String(SRC_PATH_KEY.into()),
-        YamlValue::String(template.copier_template.clone()),
-    );
-}
-
-fn copier_update_source_matches(answers: &Mapping, template: &PreparedTemplateSource) -> bool {
-    answers
-        .get(YamlValue::String(SRC_PATH_KEY.into()))
-        .and_then(YamlValue::as_str)
-        == Some(template.copier_template.as_str())
-}
-
-pub(super) fn write_final_template_answers(
-    source_answers_path: &Path,
-    destination_answers_path: &Path,
-    template: &PreparedTemplateSource,
-) -> Result<()> {
-    let mut answers = read_answers_yaml(source_answers_path)?;
-    apply_private_template_answers(&mut answers, template);
-    write_answers_yaml(destination_answers_path, &answers)
 }
 
 pub(super) fn resolve_update_template_source<'a>(
@@ -325,23 +287,27 @@ pub(super) fn resolve_update_template_source<'a>(
     }
 
     Ok(ResolvedUpdateTemplateSource::new(
-        &stored.src_path,
-        inherited_update_template_mode(&stored.src_path, opts.template_mode, stored),
+        stored_update_source(stored),
+        inherited_update_template_mode(stored_update_source(stored), opts.template_mode, stored),
     ))
 }
 
 pub(super) fn prepare_default_update_template_source(
     stored: &StoredTemplateState,
+    recopy: bool,
 ) -> Result<Option<PreparedTemplateSource>> {
-    let Some(TemplateMode::Committed) = stored.template_mode else {
-        return Ok(None);
-    };
-
-    if stored.src_path.is_empty() || is_remote_template_source(&stored.src_path) {
+    if stored.src_path.is_empty() {
         return Ok(None);
     }
 
-    prepare_template_source(&stored.src_path, stored.template_mode, None).map(Some)
+    let source = stored_update_source(stored);
+    let mode = inherited_update_template_mode(source, None, stored);
+    let vcs_ref = if recopy {
+        stored.commit.as_deref()
+    } else {
+        None
+    };
+    prepare_template_source(source, mode, vcs_ref).map(Some)
 }
 
 fn inherited_update_template_mode(
@@ -354,6 +320,18 @@ fn inherited_update_template_mode(
     } else {
         stored.template_mode
     }
+}
+
+fn stored_update_source(stored: &StoredTemplateState) -> &str {
+    if stored.template_mode != Some(TemplateMode::Committed) {
+        return &stored.src_path;
+    }
+
+    stored
+        .template_local_path
+        .as_deref()
+        .filter(|template| Path::new(template).is_dir())
+        .unwrap_or(&stored.src_path)
 }
 
 fn parse_template_mode_answer(value: &str) -> Result<TemplateMode> {
@@ -371,7 +349,7 @@ pub(super) fn template_identities_match(
     prepared: &PreparedTemplateSource,
 ) -> bool {
     let prepared_identities = [
-        Some(prepared.copier_template.as_str()),
+        Some(prepared.source()),
         prepared.private_answers.template_local_path.as_deref(),
     ];
 
@@ -411,22 +389,6 @@ pub(super) fn final_update_template_state(
     final_template
 }
 
-pub(super) fn refresh_postwrite_template_metadata(
-    answers_path: &Path,
-    template: &mut PreparedTemplateSource,
-) -> Result<()> {
-    if is_remote_template_source(&template.copier_template)
-        && !template.vcs_ref.as_deref().is_some_and(is_full_git_commit)
-    {
-        template.vcs_ref = read_optional_answer_string(answers_path, "_commit")?;
-    }
-    Ok(())
-}
-
-fn is_full_git_commit(value: &str) -> bool {
-    value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
-}
-
-fn is_remote_template_source(template: &str) -> bool {
+pub(super) fn is_remote_template_source(template: &str) -> bool {
     template.contains("://") || template.starts_with("git@") && template.contains(':')
 }
