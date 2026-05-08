@@ -12,7 +12,7 @@ use super::template_source::PreparedTemplateSource;
 #[cfg(test)]
 use super::template_source::PrivateAnswerOverrides;
 #[cfg(test)]
-use super::{TEMPLATE_LOCAL_PATH_KEY, TEMPLATE_MODE_KEY, TemplateMode};
+use super::{TEMPLATE_LOCAL_PATH_KEY, TEMPLATE_MODE_KEY};
 
 pub(super) struct BootstrapCopyRequest<'a> {
     pub(super) destination: &'a Path,
@@ -130,12 +130,12 @@ pub(super) fn seed_answers_yaml(
     insert_string(
         &mut mapping,
         TEMPLATE_MODE_KEY,
-        private_answers.template_mode.map(TemplateMode::as_str),
+        private_answers.template_mode_answer(),
     );
     insert_string(
         &mut mapping,
         TEMPLATE_LOCAL_PATH_KEY,
-        private_answers.template_local_path.as_deref(),
+        private_answers.template_local_path_answer(),
     );
 
     if !opts.rust_crate_roots.is_empty() {

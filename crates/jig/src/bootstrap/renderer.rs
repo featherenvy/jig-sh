@@ -12,7 +12,7 @@ use super::answers::RenderAnswers;
 use super::preview_seed::seed_preview_workspace;
 use super::staged_render::StagedRender;
 use super::template_source::PreparedTemplateSource;
-use super::{ANSWERS_FILE, SQLX_PRUNED_TASK_PATHS, TemplateMode};
+use super::{ANSWERS_FILE, SQLX_PRUNED_TASK_PATHS};
 
 const TEMPLATE_SUBDIRECTORY: &str = "templates/project";
 const TEMPLATE_SUFFIX: &str = ".jinja";
@@ -126,8 +126,8 @@ fn render_context(template: &PreparedTemplateSource, answers: &RenderAnswers) ->
             } else {
                 answers.template_source_url().to_string()
             },
-            "template_mode": template.private_answers().template_mode.map(TemplateMode::as_str).unwrap_or(""),
-            "template_local_path": template.private_answers().template_local_path.clone().unwrap_or_default(),
+            "template_mode": template.template_mode_answer().unwrap_or(""),
+            "template_local_path": template.template_local_path_answer().unwrap_or(""),
         }),
     );
     Ok(JsonValue::Object(context))

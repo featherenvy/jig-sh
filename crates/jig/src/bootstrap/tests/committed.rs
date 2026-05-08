@@ -1,4 +1,8 @@
 use super::*;
+use crate::bootstrap::template_source::{
+    PreparedTemplateSource, StoredTemplateState, test_final_update_template_state,
+    test_resolve_update_template_source,
+};
 
 #[test]
 fn init_rejects_vcs_ref_for_non_git_local_template() {
@@ -305,23 +309,18 @@ fn update_committed_mode_accepts_explicit_normalized_remote_template_source() {
 
 #[test]
 fn final_update_template_state_keeps_prepared_source_for_committed_local_checkout() {
-    let stored = StoredTemplateState {
-        src_path: "https://example.com/template.git".into(),
-        commit: None,
-        template_mode: Some(TemplateMode::Committed),
-        template_local_path: Some("/tmp/template".into()),
-    };
+    let stored = StoredTemplateState::test_committed(
+        "https://example.com/template.git",
+        Some("/tmp/template".into()),
+    );
     let prepared = PreparedTemplateSource::test_local(
         "/tmp/template".into(),
         PathBuf::from("/tmp/template"),
         Some("deadbeef".into()),
-        PrivateAnswerOverrides {
-            template_mode: Some(TemplateMode::Committed),
-            template_local_path: Some("/tmp/template".into()),
-        },
+        PrivateAnswerOverrides::test_committed("/tmp/template"),
     );
 
-    let final_template = final_update_template_state(&stored, &prepared);
+    let final_template = test_final_update_template_state(&stored, &prepared);
 
     assert_eq!(final_template.source(), prepared.source());
     assert_eq!(final_template.vcs_ref(), prepared.vcs_ref());
@@ -329,12 +328,10 @@ fn final_update_template_state_keeps_prepared_source_for_committed_local_checkou
 
 #[test]
 fn resolve_update_template_source_prefers_stored_local_checkout_for_explicit_committed_mode() {
-    let stored = StoredTemplateState {
-        src_path: "https://example.com/template.git".into(),
-        commit: None,
-        template_mode: Some(TemplateMode::Committed),
-        template_local_path: Some("/tmp/template".into()),
-    };
+    let stored = StoredTemplateState::test_committed(
+        "https://example.com/template.git",
+        Some("/tmp/template".into()),
+    );
     let opts = UpdateOpts {
         path: PathBuf::from("."),
         template: None,
@@ -346,20 +343,15 @@ fn resolve_update_template_source_prefers_stored_local_checkout_for_explicit_com
         no_input: true,
     };
 
-    let resolved = resolve_update_template_source(&opts, &stored).unwrap();
+    let (template, template_mode) = test_resolve_update_template_source(&opts, &stored).unwrap();
 
-    assert_eq!(resolved.template, "/tmp/template");
-    assert_eq!(resolved.template_mode, Some(TemplateMode::Committed));
+    assert_eq!(template, "/tmp/template");
+    assert_eq!(template_mode, Some(TemplateMode::Committed));
 }
 
 #[test]
 fn resolve_update_template_source_falls_back_to_remote_for_legacy_committed_repo() {
-    let stored = StoredTemplateState {
-        src_path: "https://example.com/template.git".into(),
-        commit: None,
-        template_mode: Some(TemplateMode::Committed),
-        template_local_path: None,
-    };
+    let stored = StoredTemplateState::test_committed("https://example.com/template.git", None);
     let opts = UpdateOpts {
         path: PathBuf::from("."),
         template: None,
@@ -371,8 +363,8 @@ fn resolve_update_template_source_falls_back_to_remote_for_legacy_committed_repo
         no_input: true,
     };
 
-    let resolved = resolve_update_template_source(&opts, &stored).unwrap();
+    let (template, template_mode) = test_resolve_update_template_source(&opts, &stored).unwrap();
 
-    assert_eq!(resolved.template, "https://example.com/template.git");
-    assert_eq!(resolved.template_mode, None);
+    assert_eq!(template, "https://example.com/template.git");
+    assert_eq!(template_mode, None);
 }

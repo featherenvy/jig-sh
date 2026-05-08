@@ -19,8 +19,26 @@ const SRC_PATH_KEY: &str = "_src_path";
 
 #[derive(Clone, Debug, Default)]
 pub(super) struct PrivateAnswerOverrides {
-    pub(super) template_mode: Option<TemplateMode>,
-    pub(super) template_local_path: Option<String>,
+    template_mode: Option<TemplateMode>,
+    template_local_path: Option<String>,
+}
+
+impl PrivateAnswerOverrides {
+    pub(super) fn template_mode_answer(&self) -> Option<&'static str> {
+        self.template_mode.map(TemplateMode::as_str)
+    }
+
+    pub(super) fn template_local_path_answer(&self) -> Option<&str> {
+        self.template_local_path.as_deref()
+    }
+
+    #[cfg(test)]
+    pub(super) fn test_committed(template_local_path: impl Into<String>) -> Self {
+        Self {
+            template_mode: Some(TemplateMode::Committed),
+            template_local_path: Some(template_local_path.into()),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -61,8 +79,12 @@ impl PreparedTemplateSource {
         self.vcs_ref.as_deref()
     }
 
-    pub(super) fn private_answers(&self) -> &PrivateAnswerOverrides {
-        &self.private_answers
+    pub(super) fn template_mode_answer(&self) -> Option<&'static str> {
+        self.private_answers.template_mode_answer()
+    }
+
+    pub(super) fn template_local_path_answer(&self) -> Option<&str> {
+        self.private_answers.template_local_path_answer()
     }
 
     #[cfg(test)]
@@ -78,15 +100,34 @@ impl PreparedTemplateSource {
 
 #[derive(Clone, Debug)]
 pub(super) struct StoredTemplateState {
-    pub(super) src_path: String,
-    pub(super) commit: Option<String>,
-    pub(super) template_mode: Option<TemplateMode>,
-    pub(super) template_local_path: Option<String>,
+    src_path: String,
+    commit: Option<String>,
+    template_mode: Option<TemplateMode>,
+    template_local_path: Option<String>,
 }
 
-pub(super) struct ResolvedUpdateTemplateSource<'a> {
-    pub(super) template: &'a str,
-    pub(super) template_mode: Option<TemplateMode>,
+impl StoredTemplateState {
+    fn has_source_path(&self) -> bool {
+        !self.src_path.is_empty()
+    }
+
+    #[cfg(test)]
+    pub(super) fn test_committed(
+        src_path: impl Into<String>,
+        template_local_path: Option<String>,
+    ) -> Self {
+        Self {
+            src_path: src_path.into(),
+            commit: None,
+            template_mode: Some(TemplateMode::Committed),
+            template_local_path,
+        }
+    }
+}
+
+struct ResolvedUpdateTemplateSource<'a> {
+    template: &'a str,
+    template_mode: Option<TemplateMode>,
 }
 
 impl<'a> ResolvedUpdateTemplateSource<'a> {
@@ -254,6 +295,48 @@ pub(super) fn read_stored_template_state(answers_path: &Path) -> Result<StoredTe
     })
 }
 
+pub(super) fn prepare_update_template_source(
+    opts: &UpdateOpts,
+    stored: &StoredTemplateState,
+) -> Result<Option<PreparedTemplateSource>> {
+    let source_override_requested = opts.template.is_some() || opts.template_mode.is_some();
+    if !source_override_requested && opts.vcs_ref.is_none() {
+        return prepare_default_update_template_source(stored, opts.recopy);
+    }
+
+    let resolved_source = resolve_update_template_source(opts, stored)?;
+    let prepared = prepare_template_source(
+        resolved_source.template,
+        resolved_source.template_mode,
+        opts.vcs_ref
+            .as_deref()
+            .or_else(|| recopy_vcs_ref(opts.recopy, stored)),
+    )?;
+    ensure_update_template_identity(stored, &prepared)?;
+    Ok(Some(final_update_template_state(stored, &prepared)))
+}
+
+fn recopy_vcs_ref(recopy: bool, stored: &StoredTemplateState) -> Option<&str> {
+    if recopy {
+        stored.commit.as_deref()
+    } else {
+        None
+    }
+}
+
+fn ensure_update_template_identity(
+    stored: &StoredTemplateState,
+    prepared: &PreparedTemplateSource,
+) -> Result<()> {
+    if !stored.has_source_path() || template_identities_match(stored, prepared) {
+        return Ok(());
+    }
+
+    bail!(
+        "jig update cannot switch template source paths in-place. Re-run with the existing source path, or re-adopt the repo from the new template source."
+    )
+}
+
 fn optional_answer_string(answers: &Mapping, key: &str) -> Option<String> {
     answers
         .get(YamlValue::String(key.to_string()))
@@ -262,7 +345,7 @@ fn optional_answer_string(answers: &Mapping, key: &str) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-pub(super) fn resolve_update_template_source<'a>(
+fn resolve_update_template_source<'a>(
     opts: &'a UpdateOpts,
     stored: &'a StoredTemplateState,
 ) -> Result<ResolvedUpdateTemplateSource<'a>> {
@@ -292,7 +375,16 @@ pub(super) fn resolve_update_template_source<'a>(
     ))
 }
 
-pub(super) fn prepare_default_update_template_source(
+#[cfg(test)]
+pub(super) fn test_resolve_update_template_source(
+    opts: &UpdateOpts,
+    stored: &StoredTemplateState,
+) -> Result<(String, Option<TemplateMode>)> {
+    let resolved = resolve_update_template_source(opts, stored)?;
+    Ok((resolved.template.to_string(), resolved.template_mode))
+}
+
+fn prepare_default_update_template_source(
     stored: &StoredTemplateState,
     recopy: bool,
 ) -> Result<Option<PreparedTemplateSource>> {
@@ -307,7 +399,8 @@ pub(super) fn prepare_default_update_template_source(
     } else {
         None
     };
-    prepare_template_source(source, mode, vcs_ref).map(Some)
+    let prepared = prepare_template_source(source, mode, vcs_ref)?;
+    Ok(Some(final_update_template_state(stored, &prepared)))
 }
 
 fn inherited_update_template_mode(
@@ -344,7 +437,7 @@ fn parse_template_mode_answer(value: &str) -> Result<TemplateMode> {
     }
 }
 
-pub(super) fn template_identities_match(
+fn template_identities_match(
     stored: &StoredTemplateState,
     prepared: &PreparedTemplateSource,
 ) -> bool {
@@ -369,7 +462,7 @@ fn identity_matches(stored_identity: &str, prepared_identities: [Option<&str>; 2
         .any(|prepared_identity| stored_identity == prepared_identity)
 }
 
-pub(super) fn final_update_template_state(
+fn final_update_template_state(
     stored: &StoredTemplateState,
     prepared: &PreparedTemplateSource,
 ) -> PreparedTemplateSource {
@@ -387,6 +480,14 @@ pub(super) fn final_update_template_state(
     }
 
     final_template
+}
+
+#[cfg(test)]
+pub(super) fn test_final_update_template_state(
+    stored: &StoredTemplateState,
+    prepared: &PreparedTemplateSource,
+) -> PreparedTemplateSource {
+    final_update_template_state(stored, prepared)
 }
 
 pub(super) fn is_remote_template_source(template: &str) -> bool {

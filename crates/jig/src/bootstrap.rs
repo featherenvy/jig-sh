@@ -26,9 +26,7 @@ use sync::{ApplyRenderOptions, apply_staged_render};
 #[cfg(test)]
 use template_source::PrivateAnswerOverrides;
 use template_source::{
-    PreparedTemplateSource, StoredTemplateState, final_update_template_state,
-    prepare_default_update_template_source, prepare_template_source, read_stored_template_state,
-    resolve_update_template_source, template_identities_match,
+    prepare_template_source, prepare_update_template_source, read_stored_template_state,
 };
 
 mod answers;
@@ -248,9 +246,8 @@ pub fn run_update(opts: UpdateOpts) -> Result<Value> {
             "Missing template source metadata in {ANSWERS_FILE}. Re-adopt the repo before running jig update."
         );
     };
-    let final_template = final_update_template_state(&stored, &update_template);
     let answers = RenderAnswers::from_answers_file(&answers_path)?;
-    let staged = stage_render(&final_template, &answers, Some(&destination))?;
+    let staged = stage_render(&update_template, &answers, Some(&destination))?;
     apply_staged_render(
         &staged,
         &destination,
@@ -269,48 +266,6 @@ pub fn run_update(opts: UpdateOpts) -> Result<Value> {
         "answers_file": ANSWERS_FILE,
         "git_initialized": false,
     }))
-}
-
-fn prepare_update_template_source(
-    opts: &UpdateOpts,
-    stored: &StoredTemplateState,
-) -> Result<Option<PreparedTemplateSource>> {
-    let source_override_requested = opts.template.is_some() || opts.template_mode.is_some();
-    if !source_override_requested && opts.vcs_ref.is_none() {
-        return prepare_default_update_template_source(stored, opts.recopy);
-    }
-
-    let resolved_source = resolve_update_template_source(opts, stored)?;
-    let prepared = prepare_template_source(
-        resolved_source.template,
-        resolved_source.template_mode,
-        opts.vcs_ref
-            .as_deref()
-            .or_else(|| recopy_vcs_ref(opts.recopy, stored)),
-    )?;
-    ensure_update_template_identity(stored, &prepared)?;
-    Ok(Some(prepared))
-}
-
-fn recopy_vcs_ref(recopy: bool, stored: &StoredTemplateState) -> Option<&str> {
-    if recopy {
-        stored.commit.as_deref()
-    } else {
-        None
-    }
-}
-
-fn ensure_update_template_identity(
-    stored: &StoredTemplateState,
-    prepared: &PreparedTemplateSource,
-) -> Result<()> {
-    if stored.src_path.is_empty() || template_identities_match(stored, prepared) {
-        return Ok(());
-    }
-
-    bail!(
-        "jig update cannot switch template source paths in-place. Re-run with the existing source path, or re-adopt the repo from the new template source."
-    )
 }
 
 #[cfg(test)]
