@@ -434,6 +434,153 @@ fn adopt_with_real_template_runs_destination_tasks() {
 }
 
 #[test]
+fn adopt_appends_jig_block_to_existing_root_agents() {
+    let _guard = lock_env();
+    let temp = tempdir().unwrap();
+    let repo = temp.path().join("repo");
+    let template = materialize_template_git_worktree();
+    write_test_crate_guide(&repo);
+    fs::write(
+        repo.join("AGENTS.md"),
+        "# Existing Agent Guide\n\nKeep this repo-specific guidance.\n",
+    )
+    .unwrap();
+
+    run_adopt(AdoptOpts {
+        path: repo.clone(),
+        template: template.path().display().to_string(),
+        template_mode: Some(TemplateMode::Committed),
+        vcs_ref: None,
+        force: false,
+        defaults: true,
+        no_input: true,
+        answers: AnswerOpts {
+            repo_name: Some("demo".into()),
+            sqlx_enabled: Some(false),
+            ..AnswerOpts::default()
+        },
+    })
+    .unwrap();
+
+    let root_guide = fs::read_to_string(repo.join("AGENTS.md")).unwrap();
+    assert!(root_guide.starts_with("# Existing Agent Guide"));
+    assert!(root_guide.contains("Keep this repo-specific guidance."));
+    assert!(root_guide.contains("<!-- BEGIN JIG MANAGED BLOCK -->"));
+    assert!(root_guide.contains("Use `scripts/jig` for the typed repo contract"));
+    assert_eq!(
+        root_guide
+            .matches("<!-- BEGIN JIG MANAGED BLOCK -->")
+            .count(),
+        1
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn adopt_refuses_to_replace_symlinked_root_agents_without_force() {
+    let _guard = lock_env();
+    let temp = tempdir().unwrap();
+    let repo = temp.path().join("repo");
+    let template = materialize_template_git_worktree();
+    write_test_crate_guide(&repo);
+    fs::write(
+        repo.join("AGENTS.shared.md"),
+        "# Existing Agent Guide\n\nKeep this repo-specific guidance.\n",
+    )
+    .unwrap();
+    create_symlink(Path::new("AGENTS.shared.md"), &repo.join("AGENTS.md")).unwrap();
+
+    let error = run_adopt(AdoptOpts {
+        path: repo.clone(),
+        template: template.path().display().to_string(),
+        template_mode: Some(TemplateMode::Committed),
+        vcs_ref: None,
+        force: false,
+        defaults: true,
+        no_input: true,
+        answers: AnswerOpts {
+            repo_name: Some("demo".into()),
+            sqlx_enabled: Some(false),
+            ..AnswerOpts::default()
+        },
+    })
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("Adopt would overwrite template-managed paths"));
+    assert!(error.contains("AGENTS.md"));
+    assert!(
+        fs::symlink_metadata(repo.join("AGENTS.md"))
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(
+        fs::read_to_string(repo.join("AGENTS.shared.md")).unwrap(),
+        "# Existing Agent Guide\n\nKeep this repo-specific guidance.\n"
+    );
+
+    run_adopt(AdoptOpts {
+        path: repo.clone(),
+        template: template.path().display().to_string(),
+        template_mode: Some(TemplateMode::Committed),
+        vcs_ref: None,
+        force: true,
+        defaults: true,
+        no_input: true,
+        answers: AnswerOpts {
+            repo_name: Some("demo".into()),
+            sqlx_enabled: Some(false),
+            ..AnswerOpts::default()
+        },
+    })
+    .unwrap();
+
+    let root_guide = fs::read_to_string(repo.join("AGENTS.md")).unwrap();
+    assert!(
+        !fs::symlink_metadata(repo.join("AGENTS.md"))
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert!(root_guide.contains("Keep this repo-specific guidance."));
+    assert!(root_guide.contains("<!-- BEGIN JIG MANAGED BLOCK -->"));
+}
+
+#[test]
+fn adopt_rejects_malformed_existing_root_agents_jig_block() {
+    let _guard = lock_env();
+    let temp = tempdir().unwrap();
+    let repo = temp.path().join("repo");
+    let template = materialize_template_git_worktree();
+    write_test_crate_guide(&repo);
+    fs::write(
+        repo.join("AGENTS.md"),
+        "# Existing Agent Guide\n\n<!-- BEGIN JIG MANAGED BLOCK -->\nmissing end\n",
+    )
+    .unwrap();
+
+    let error = run_adopt(AdoptOpts {
+        path: repo,
+        template: template.path().display().to_string(),
+        template_mode: Some(TemplateMode::Committed),
+        vcs_ref: None,
+        force: false,
+        defaults: true,
+        no_input: true,
+        answers: AnswerOpts {
+            repo_name: Some("demo".into()),
+            sqlx_enabled: Some(false),
+            ..AnswerOpts::default()
+        },
+    })
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("Malformed Jig managed block"));
+}
+
+#[test]
 fn adopt_with_real_template_keeps_sqlx_files_when_enabled() {
     let _guard = lock_env();
     let temp = tempdir().unwrap();

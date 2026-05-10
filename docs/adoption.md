@@ -6,10 +6,11 @@
 2. Render the kit into that repo with `jig adopt . --template /path/to/jig-sh --template-mode committed --rust-migration-dir migrations`. For tooling-only repos, pass `--sqlx-enabled false` instead of the migration flag.
 3. For local dogfooding, commit or stash template checkout changes before rendering. If you need to test in-progress template edits, make a temporary local commit and update from that committed source.
 4. Confirm `.jig.yml` was generated with the intended profile. If the repo will be shared across machines, set `template_source_url` to a portable git source, then review the remaining paths and commands before committing.
-5. Add or adapt crate-level `AGENTS.md` files for each backend crate.
-6. Run the generated local checks and `make contract-check`.
-7. Wire any missing project-owned scripts such as `scripts/dump-schema.sh` if schema dumps are enabled.
-8. Commit the generated files and then switch CI to use the new workflows.
+5. Review the root `AGENTS.md`. Existing repo guidance is preserved; Jig inserts or updates only the `<!-- BEGIN JIG MANAGED BLOCK -->` section.
+6. Add or adapt crate-level `AGENTS.md` files for each backend crate.
+7. Run the generated local checks and `make contract-check`.
+8. Wire any missing project-owned scripts such as `scripts/dump-schema.sh` if schema dumps are enabled.
+9. Commit the generated files and then switch CI to use the new workflows.
 
 Before publishing a generated repo contract or wiring long-lived MCP clients to it, review [Public Contract](./public-contract.md) for the stable make-backed CLI, MCP, and manifest guarantees.
 
@@ -38,6 +39,7 @@ jig update --recopy
 - application code
 - crate ownership boundaries
 - crate-level agent guides
+- root `AGENTS.md` content outside the Jig managed block
 - schema dump implementation details
 - app-specific dev orchestration
 - any environment-specific onboarding or demo bootstrap flows

@@ -164,6 +164,45 @@ fn update_default_committed_mode_uses_clean_local_template_head() {
 }
 
 #[test]
+fn update_replaces_jig_block_without_overwriting_custom_root_agents() {
+    let _guard = lock_env();
+    let temp = tempdir().unwrap();
+    let repo = temp.path().join("repo");
+    let template = materialize_template_git_worktree();
+    write_test_crate_guide(&repo);
+    fs::write(
+        repo.join("AGENTS.md"),
+        "# Existing Agent Guide\n\nCustom repo guidance.\n",
+    )
+    .unwrap();
+
+    adopt_repo_for_test(&repo, template.path(), TemplateMode::Committed);
+    commit_template_root_guide(template.path(), "Updated Jig Block\n", "template update");
+
+    run_update(UpdateOpts {
+        path: repo.clone(),
+        template: None,
+        template_mode: None,
+        recopy: false,
+        force: false,
+        vcs_ref: None,
+        defaults: true,
+        no_input: true,
+    })
+    .unwrap();
+
+    let root_guide = fs::read_to_string(repo.join("AGENTS.md")).unwrap();
+    assert!(root_guide.contains("Custom repo guidance."));
+    assert!(root_guide.contains("Updated Jig Block"));
+    assert_eq!(
+        root_guide
+            .matches("<!-- BEGIN JIG MANAGED BLOCK -->")
+            .count(),
+        1
+    );
+}
+
+#[test]
 fn update_refuses_managed_file_changes_without_force() {
     let _guard = lock_env();
     let temp = tempdir().unwrap();
@@ -172,13 +211,14 @@ fn update_refuses_managed_file_changes_without_force() {
     write_test_crate_guide(&repo);
 
     adopt_repo_for_test(&repo, template.path(), TemplateMode::Committed);
-    let original_root_guide = fs::read_to_string(repo.join("AGENTS.md")).unwrap();
-
-    commit_template_root_guide(
-        template.path(),
-        "# Refused Update Marker\n",
-        "template update",
-    );
+    let original_makefile = fs::read_to_string(repo.join("Makefile")).unwrap();
+    fs::write(
+        template.path().join("templates/project/Makefile.jinja"),
+        "changed-target:\n\t@echo changed\n",
+    )
+    .unwrap();
+    git(template.path(), ["add", "templates/project/Makefile.jinja"]).unwrap();
+    git(template.path(), ["commit", "-m", "template update"]).unwrap();
 
     let error = run_update(UpdateOpts {
         path: repo.clone(),
@@ -194,10 +234,10 @@ fn update_refuses_managed_file_changes_without_force() {
     .to_string();
 
     assert!(error.contains("Update would overwrite or remove template-managed paths"));
-    assert!(error.contains("AGENTS.md"));
+    assert!(error.contains("Makefile"));
     assert_eq!(
-        fs::read_to_string(repo.join("AGENTS.md")).unwrap(),
-        original_root_guide
+        fs::read_to_string(repo.join("Makefile")).unwrap(),
+        original_makefile
     );
 
     run_update(UpdateOpts {
@@ -212,8 +252,8 @@ fn update_refuses_managed_file_changes_without_force() {
     })
     .unwrap();
 
-    let root_guide = fs::read_to_string(repo.join("AGENTS.md")).unwrap();
-    assert!(root_guide.contains("Refused Update Marker"));
+    let makefile = fs::read_to_string(repo.join("Makefile")).unwrap();
+    assert!(makefile.contains("changed-target:"));
 }
 
 #[test]

@@ -20,6 +20,8 @@ The file contains both public settings and the private `_src_path` / `_commit` f
 
 `jig update` refuses to overwrite or remove changed template-managed files unless `--force` is passed.
 
+Root `AGENTS.md` is block-managed instead of file-managed. If the file already exists, `jig adopt` and `jig update` preserve user-authored content and insert or replace only the section between `<!-- BEGIN JIG MANAGED BLOCK -->` and `<!-- END JIG MANAGED BLOCK -->`. Edits inside that managed block are template-owned and may be replaced without `--force`; keep repo-specific guidance outside the markers.
+
 For local git template checkouts, `jig init` / `jig adopt` use a committed source:
 
 - `--template-mode committed`: explicitly use the clean local `HEAD`

@@ -30,6 +30,8 @@ Generated repos keep `make` as the execution backend, but they also get a `scrip
 
 The template does not try to generate your application code, crate-level `AGENTS.md` files, or a schema dump implementation. Those remain project-owned. SQLx, migration, and schema-check contract pieces are optional via `sqlx_enabled`.
 
+For existing repositories, root `AGENTS.md` remains repo-owned. `jig adopt` inserts or updates only the marked Jig managed block and preserves the rest of the file.
+
 ## Quick Start
 
 Bootstrap a new repo from the template:

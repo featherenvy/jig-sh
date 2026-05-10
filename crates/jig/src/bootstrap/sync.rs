@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 use std::fs;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
@@ -8,6 +9,7 @@ use super::ANSWERS_FILE;
 use super::file_copy::{
     copy_file_or_symlink_with_permissions, path_exists, prepare_copy_destination_and_read_metadata,
 };
+use super::renderer::ROOT_AGENTS_PATH;
 use super::staged_render::StagedRender;
 #[cfg(test)]
 use super::{ALWAYS_TASK_MUTATED_PATHS, SQLX_PRUNED_TASK_PATHS, read_optional_answer_bool};
@@ -62,6 +64,15 @@ fn staged_render_conflicts(
         }
 
         if path_exists(&rendered_path) {
+            if is_root_agents_path(relative) {
+                if destination_is_regular_file(&destination_path)? {
+                    continue;
+                }
+                if path_exists(&destination_path) {
+                    conflicts.insert(relative.display().to_string());
+                    continue;
+                }
+            }
             if path_exists(&destination_path) && !files_match(&rendered_path, &destination_path)? {
                 conflicts.insert(relative.display().to_string());
             }
@@ -70,6 +81,18 @@ fn staged_render_conflicts(
         }
     }
     Ok(conflicts.into_iter().collect())
+}
+
+fn is_root_agents_path(relative: &Path) -> bool {
+    relative == Path::new(ROOT_AGENTS_PATH)
+}
+
+fn destination_is_regular_file(path: &Path) -> Result<bool> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => Ok(metadata.is_file()),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error).with_context(|| format!("Failed to stat {}", path.display())),
+    }
 }
 
 fn blocking_ancestor(root: &Path, path: &Path) -> Option<PathBuf> {

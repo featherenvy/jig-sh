@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 use std::fs;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -17,6 +18,9 @@ use super::{ANSWERS_FILE, SQLX_PRUNED_TASK_PATHS};
 const TEMPLATE_SUBDIRECTORY: &str = "templates/project";
 const TEMPLATE_SUFFIX: &str = ".jinja";
 const REMOVED_MANAGED_PATHS: &[&str] = &["scripts/normalize-template-source.sh"];
+pub(super) const ROOT_AGENTS_PATH: &str = "AGENTS.md";
+const JIG_BLOCK_BEGIN: &str = "<!-- BEGIN JIG MANAGED BLOCK -->";
+const JIG_BLOCK_END: &str = "<!-- END JIG MANAGED BLOCK -->";
 
 pub(super) fn stage_render(
     template: &PreparedTemplateSource,
@@ -31,6 +35,7 @@ pub(super) fn stage_render(
 
     let mut managed_paths = render_template_files(template, answers, &destination)?;
     run_post_render_tasks(&destination)?;
+    merge_existing_root_agents(seed_repo_path, &destination)?;
     for relative in REMOVED_MANAGED_PATHS {
         managed_paths.insert(PathBuf::from(relative));
     }
@@ -112,6 +117,74 @@ fn render_template_files(
     Ok(managed_paths)
 }
 
+fn merge_existing_root_agents(seed_repo_path: Option<&Path>, destination: &Path) -> Result<()> {
+    let Some(seed_repo_path) = seed_repo_path else {
+        return Ok(());
+    };
+
+    let existing_path = seed_repo_path.join(ROOT_AGENTS_PATH);
+    if !existing_path.exists() {
+        return Ok(());
+    }
+
+    let rendered_path = destination.join(ROOT_AGENTS_PATH);
+    if !rendered_path.exists() {
+        return Ok(());
+    }
+
+    let existing = fs::read_to_string(&existing_path)
+        .with_context(|| format!("Failed to read {}", existing_path.display()))?;
+    let rendered = fs::read_to_string(&rendered_path)
+        .with_context(|| format!("Failed to read {}", rendered_path.display()))?;
+    let block = extract_jig_block(&rendered, &rendered_path)?;
+    let merged = merge_jig_block(&existing, block, &existing_path)?;
+    fs::write(&rendered_path, merged)
+        .with_context(|| format!("Failed to write {}", rendered_path.display()))
+}
+
+fn extract_jig_block<'a>(contents: &'a str, path: &Path) -> Result<&'a str> {
+    let Some((start, end)) = jig_block_bounds(contents, path)? else {
+        bail!(
+            "Rendered {} does not contain a Jig managed block.",
+            path.display()
+        );
+    };
+    Ok(&contents[start..end])
+}
+
+fn merge_jig_block(existing: &str, block: &str, path: &Path) -> Result<String> {
+    if let Some((start, end)) = jig_block_bounds(existing, path)? {
+        return Ok(format!(
+            "{}{}{}",
+            &existing[..start],
+            block,
+            &existing[end..]
+        ));
+    }
+
+    let mut merged = existing.trim_end_matches('\n').to_string();
+    if !merged.is_empty() {
+        merged.push_str("\n\n");
+    }
+    merged.push_str(block.trim_end_matches('\n'));
+    merged.push('\n');
+    Ok(merged)
+}
+
+fn jig_block_bounds(contents: &str, path: &Path) -> Result<Option<(usize, usize)>> {
+    let begins = contents.match_indices(JIG_BLOCK_BEGIN).collect::<Vec<_>>();
+    let ends = contents.match_indices(JIG_BLOCK_END).collect::<Vec<_>>();
+
+    match (begins.as_slice(), ends.as_slice()) {
+        ([], []) => Ok(None),
+        ([(begin, _)], [(end, _)]) if begin < end => Ok(Some((*begin, end + JIG_BLOCK_END.len()))),
+        _ => bail!(
+            "Malformed Jig managed block in {}. Expected exactly one begin marker before exactly one end marker.",
+            path.display()
+        ),
+    }
+}
+
 fn render_context(template: &PreparedTemplateSource, answers: &RenderAnswers) -> Result<JsonValue> {
     let mut context = serde_json::to_value(answers)?
         .as_object()
@@ -180,8 +253,19 @@ fn write_rendered_file(destination: &Path, relative: &Path, contents: &[u8]) -> 
         fs::create_dir_all(parent)
             .with_context(|| format!("Failed to create {}", parent.display()))?;
     }
+    remove_existing_symlink(&path)?;
     fs::write(&path, contents).with_context(|| format!("Failed to write {}", path.display()))?;
     set_rendered_permissions(&path, relative)
+}
+
+fn remove_existing_symlink(path: &Path) -> Result<()> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => fs::remove_file(path)
+            .with_context(|| format!("Failed to remove symlink {}", path.display())),
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error).with_context(|| format!("Failed to stat {}", path.display())),
+    }
 }
 
 fn run_post_render_tasks(destination: &Path) -> Result<()> {

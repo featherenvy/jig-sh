@@ -100,7 +100,14 @@ fn adopt_repo_for_test(repo: &Path, template: &Path, template_mode: TemplateMode
 }
 
 fn commit_template_root_guide(template: &Path, contents: &str, message: &str) -> String {
-    fs::write(template.join("templates/project/AGENTS.md.jinja"), contents).unwrap();
+    fs::write(
+        template.join("templates/project/AGENTS.md.jinja"),
+        format!(
+            "# Repository Guidelines\n\n<!-- BEGIN JIG MANAGED BLOCK -->\n{}<!-- END JIG MANAGED BLOCK -->\n",
+            contents
+        ),
+    )
+    .unwrap();
     git(template, ["add", "templates/project/AGENTS.md.jinja"]).unwrap();
     git(template, ["commit", "-m", message]).unwrap();
     git_stdout(template, ["rev-parse", "HEAD"]).unwrap()
