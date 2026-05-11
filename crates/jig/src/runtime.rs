@@ -1,24 +1,19 @@
 use std::borrow::Cow;
-use std::path::PathBuf;
 use std::process::{Command, Output};
 
 use anyhow::{Context, Result, anyhow, bail};
 use serde_json::{Value, json};
 
-use crate::cli::{
-    CommandKind, DEFAULT_RECEIPTS_LIMIT, DecisionAddOpts, PlanAppendOpts, PlanCloseOpts,
-    PlanOpenOpts, ReceiptsListOpts, SessionEndOpts,
-};
+use crate::cli::{CommandKind, DEFAULT_RECEIPTS_LIMIT};
 use crate::context::{ManifestTool, RepoContext};
 use crate::process::require_success;
 use crate::state::{
     ReceiptInput, decisions_add, now_ms, plans_append, plans_close, plans_open, receipts_list,
     record_receipt, session_end, session_start, state_summary,
 };
-use crate::tool_defs::{
-    self, JsonObject, MemoryTool, args, bool_arg, required_string_arg, string_arg, string_list_arg,
-    tool, usize_arg,
-};
+use crate::tool_defs::{self, JsonObject, MemoryTool, args, string_arg, tool};
+
+mod requests;
 
 pub(crate) fn dispatch(ctx: &RepoContext, command: CommandKind) -> Result<Value> {
     match command {
@@ -69,13 +64,13 @@ pub(crate) fn dispatch(ctx: &RepoContext, command: CommandKind) -> Result<Value>
             opts.tool.plan_id,
         ),
         CommandKind::SessionStart => session_start(ctx),
-        CommandKind::SessionEnd(opts) => session_end(ctx, opts),
-        CommandKind::PlansOpen(opts) => plans_open(ctx, opts),
-        CommandKind::PlansAppend(opts) => plans_append(ctx, opts),
-        CommandKind::PlansClose(opts) => plans_close(ctx, opts),
-        CommandKind::ReceiptsList(opts) => receipts_list(ctx, opts),
+        CommandKind::SessionEnd(opts) => session_end(ctx, opts.into()),
+        CommandKind::PlansOpen(opts) => plans_open(ctx, opts.into()),
+        CommandKind::PlansAppend(opts) => plans_append(ctx, opts.into()),
+        CommandKind::PlansClose(opts) => plans_close(ctx, opts.into()),
+        CommandKind::ReceiptsList(opts) => receipts_list(ctx, opts.into()),
         CommandKind::StateSummary => state_summary(ctx),
-        CommandKind::DecisionsAdd(opts) => decisions_add(ctx, opts),
+        CommandKind::DecisionsAdd(opts) => decisions_add(ctx, opts.into()),
         CommandKind::Init(_) | CommandKind::Adopt(_) | CommandKind::Update(_) => unreachable!(),
         CommandKind::Mcp => unreachable!(),
     }
@@ -90,39 +85,30 @@ pub(crate) fn call_tool(ctx: &RepoContext, name: &str, args: Value) -> Result<Va
         return call_manifest_make_tool(ctx, tool, &args_obj);
     }
 
-    let command = match MemoryTool::from_name(name) {
-        Some(MemoryTool::SessionStart) => CommandKind::SessionStart,
-        Some(MemoryTool::SessionEnd) => CommandKind::SessionEnd(SessionEndOpts {
-            session_id: string_arg(&args_obj, args::SESSION_ID),
-            outcome: string_arg(&args_obj, args::OUTCOME),
-        }),
-        Some(MemoryTool::PlansOpen) => CommandKind::PlansOpen(PlanOpenOpts {
-            title: required_string_arg(&args_obj, args::TITLE)?,
-            body: string_arg(&args_obj, args::BODY),
-            body_file: string_arg(&args_obj, args::BODY_FILE).map(PathBuf::from),
-        }),
-        Some(MemoryTool::PlansAppend) => CommandKind::PlansAppend(PlanAppendOpts {
-            plan_id: required_string_arg(&args_obj, args::PLAN_ID)?,
-            body: string_arg(&args_obj, args::BODY),
-            body_file: string_arg(&args_obj, args::BODY_FILE).map(PathBuf::from),
-        }),
-        Some(MemoryTool::PlansClose) => CommandKind::PlansClose(PlanCloseOpts {
-            plan_id: required_string_arg(&args_obj, args::PLAN_ID)?,
-            resolution: string_arg(&args_obj, args::RESOLUTION),
-        }),
-        Some(MemoryTool::ReceiptsList) => CommandKind::ReceiptsList(receipts_list_opts(&args_obj)),
-        Some(MemoryTool::StateSummary) => CommandKind::StateSummary,
-        Some(MemoryTool::DecisionsAdd) => CommandKind::DecisionsAdd(DecisionAddOpts {
-            title: required_string_arg(&args_obj, args::TITLE)?,
-            selected_option: required_string_arg(&args_obj, args::SELECTED_OPTION)?,
-            rationale: required_string_arg(&args_obj, args::RATIONALE)?,
-            alternatives: string_list_arg(&args_obj, args::ALTERNATIVES),
-            plan_id: string_arg(&args_obj, args::PLAN_ID),
-        }),
+    match MemoryTool::from_name(name) {
+        Some(MemoryTool::SessionStart) => session_start(ctx),
+        Some(MemoryTool::SessionEnd) => {
+            session_end(ctx, requests::session_end_request_from_args(&args_obj))
+        }
+        Some(MemoryTool::PlansOpen) => {
+            plans_open(ctx, requests::plan_open_request_from_args(&args_obj)?)
+        }
+        Some(MemoryTool::PlansAppend) => {
+            plans_append(ctx, requests::plan_append_request_from_args(&args_obj)?)
+        }
+        Some(MemoryTool::PlansClose) => {
+            plans_close(ctx, requests::plan_close_request_from_args(&args_obj)?)
+        }
+        Some(MemoryTool::ReceiptsList) => receipts_list(
+            ctx,
+            requests::receipt_list_filter_from_args(&args_obj, DEFAULT_RECEIPTS_LIMIT),
+        ),
+        Some(MemoryTool::StateSummary) => state_summary(ctx),
+        Some(MemoryTool::DecisionsAdd) => {
+            decisions_add(ctx, requests::decision_add_request_from_args(&args_obj)?)
+        }
         None => bail!("Unsupported tool: {name}"),
-    };
-
-    dispatch(ctx, command)
+    }
 }
 
 fn call_manifest_make_tool(
@@ -134,16 +120,6 @@ fn call_manifest_make_tool(
     let args = tool_defs::make_tool_args(tool, args_obj)?;
 
     execute_manifest_make_tool(ctx, &tool.name, args, plan_id)
-}
-
-fn receipts_list_opts(args_obj: &JsonObject) -> ReceiptsListOpts {
-    ReceiptsListOpts {
-        session_id: string_arg(args_obj, args::SESSION_ID),
-        plan_id: string_arg(args_obj, args::PLAN_ID),
-        tool_name: string_arg(args_obj, args::TOOL_NAME),
-        failed_only: bool_arg(args_obj, args::FAILED_ONLY).unwrap_or_default(),
-        limit: usize_arg(args_obj, args::LIMIT).unwrap_or(DEFAULT_RECEIPTS_LIMIT),
-    }
 }
 
 fn execute_manifest_make_tool(

@@ -5,7 +5,6 @@ use serde_json::{Value, json};
 use tempfile::tempdir;
 
 use super::*;
-use crate::cli::{PlanAppendOpts, PlanOpenOpts, ReceiptsListOpts};
 use crate::context::RepoContext;
 use crate::git_receipts::DiffStat;
 use crate::tool_defs::tool;
@@ -92,7 +91,7 @@ fn plans_append_serializes_concurrent_writers() {
 
     plans_open(
         &ctx,
-        PlanOpenOpts {
+        PlanOpenRequest {
             title: "Concurrent plan".into(),
             body: Some("Initial body".into()),
             body_file: None,
@@ -116,7 +115,7 @@ fn plans_append_serializes_concurrent_writers() {
         scope.spawn(|| {
             plans_append(
                 &ctx_a,
-                PlanAppendOpts {
+                PlanAppendRequest {
                     plan_id: plan_id_a,
                     body: Some("First append".into()),
                     body_file: None,
@@ -127,7 +126,7 @@ fn plans_append_serializes_concurrent_writers() {
         scope.spawn(|| {
             plans_append(
                 &ctx_b,
-                PlanAppendOpts {
+                PlanAppendRequest {
                     plan_id: plan_id_b,
                     body: Some("Second append".into()),
                     body_file: None,
@@ -152,7 +151,7 @@ fn receipts_list_is_read_only() {
     session_start(&ctx).unwrap();
     let before = read_jsonl::<ReceiptRecord>(&ctx.state_file("receipts.jsonl")).unwrap();
 
-    let output = receipts_list(&ctx, ReceiptsListOpts::default()).unwrap();
+    let output = receipts_list(&ctx, receipt_list_filter()).unwrap();
 
     let after = read_jsonl::<ReceiptRecord>(&ctx.state_file("receipts.jsonl")).unwrap();
     assert_eq!(before.len(), after.len());
@@ -187,10 +186,10 @@ fn receipts_list_filters_by_tool_and_failure_and_adds_diff_summary() {
 
     let output = receipts_list(
         &ctx,
-        ReceiptsListOpts {
+        ReceiptListFilter {
             tool_name: Some(tool::TEST.into()),
             failed_only: true,
-            ..ReceiptsListOpts::default()
+            ..receipt_list_filter()
         },
     )
     .unwrap();
@@ -199,6 +198,16 @@ fn receipts_list_filters_by_tool_and_failure_and_adds_diff_summary() {
     assert_eq!(receipts.len(), 1);
     assert_eq!(receipts[0]["id"], "receipt_failed");
     assert_eq!(receipts[0]["diff_summary"], "1 file, +2 -3");
+}
+
+fn receipt_list_filter() -> ReceiptListFilter {
+    ReceiptListFilter {
+        session_id: None,
+        plan_id: None,
+        tool_name: None,
+        failed_only: false,
+        limit: 20,
+    }
 }
 
 fn receipt_record(

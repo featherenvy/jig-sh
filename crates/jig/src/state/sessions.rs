@@ -3,7 +3,6 @@ use std::fs;
 use anyhow::{Result, anyhow};
 use serde_json::{Value, json};
 
-use crate::cli::SessionEndOpts;
 use crate::context::RepoContext;
 use crate::tool_defs::tool;
 
@@ -15,6 +14,11 @@ use super::plans::open_plans;
 use super::receipts::{StateToolReceipt, receipt_diff_summary, record_successful_state_tool};
 
 const STATE_SUMMARY_RECENT_LIMIT: usize = 10;
+
+pub(crate) struct SessionEndRequest {
+    pub(crate) session_id: Option<String>,
+    pub(crate) outcome: Option<String>,
+}
 
 pub(crate) fn session_start(ctx: &RepoContext) -> Result<Value> {
     ensure_state_layout(ctx)?;
@@ -50,9 +54,9 @@ pub(crate) fn session_start(ctx: &RepoContext) -> Result<Value> {
     }))
 }
 
-pub(crate) fn session_end(ctx: &RepoContext, opts: SessionEndOpts) -> Result<Value> {
+pub(crate) fn session_end(ctx: &RepoContext, request: SessionEndRequest) -> Result<Value> {
     ensure_state_layout(ctx)?;
-    let session_id = match opts.session_id {
+    let session_id = match request.session_id {
         Some(id) => id,
         None => current_session(ctx)?.ok_or_else(|| anyhow!("No active session."))?,
     };
@@ -61,7 +65,7 @@ pub(crate) fn session_end(ctx: &RepoContext, opts: SessionEndOpts) -> Result<Val
         session_id: session_id.clone(),
         event: "end".into(),
         timestamp_ms: now_ms(),
-        outcome: opts.outcome.clone(),
+        outcome: request.outcome.clone(),
         summary: None,
     };
     append_jsonl(&ctx.state_file("sessions.jsonl"), &event)?;
@@ -75,7 +79,7 @@ pub(crate) fn session_end(ctx: &RepoContext, opts: SessionEndOpts) -> Result<Val
             tool_name: tool::SESSION_END,
             args: json!({
                 "session_id": session_id,
-                "outcome": opts.outcome,
+                "outcome": request.outcome,
             }),
             started_at_ms: event.timestamp_ms,
             plan_id: None,

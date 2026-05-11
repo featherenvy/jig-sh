@@ -1,7 +1,6 @@
 use anyhow::Result;
 use serde_json::{Value, json};
 
-use crate::cli::ReceiptsListOpts;
 use crate::context::RepoContext;
 use crate::git_receipts::{GitReceiptMetadata, collect_git_receipt_metadata};
 
@@ -32,13 +31,21 @@ pub(super) struct StateToolReceipt<'a> {
     pub(super) session_override: Option<String>,
 }
 
-pub(crate) fn receipts_list(ctx: &RepoContext, opts: ReceiptsListOpts) -> Result<Value> {
+pub(crate) struct ReceiptListFilter {
+    pub(crate) session_id: Option<String>,
+    pub(crate) plan_id: Option<String>,
+    pub(crate) tool_name: Option<String>,
+    pub(crate) failed_only: bool,
+    pub(crate) limit: usize,
+}
+
+pub(crate) fn receipts_list(ctx: &RepoContext, filter: ReceiptListFilter) -> Result<Value> {
     ensure_state_layout(ctx)?;
     let receipts = read_jsonl::<ReceiptRecord>(&ctx.state_file("receipts.jsonl"))?
         .into_iter()
         .rev()
-        .filter(|receipt| receipt_matches_filters(receipt, &opts))
-        .take(opts.limit)
+        .filter(|receipt| receipt_matches_filters(receipt, &filter))
+        .take(filter.limit)
         .map(receipt_list_value)
         .collect::<Result<Vec<_>>>()?;
 
@@ -98,20 +105,20 @@ pub(super) fn record_successful_state_tool(
     )
 }
 
-fn receipt_matches_filters(receipt: &ReceiptRecord, opts: &ReceiptsListOpts) -> bool {
-    let session_matches = opts
+fn receipt_matches_filters(receipt: &ReceiptRecord, filter: &ReceiptListFilter) -> bool {
+    let session_matches = filter
         .session_id
         .as_ref()
         .is_none_or(|session_id| receipt.session_id.as_ref() == Some(session_id));
-    let plan_matches = opts
+    let plan_matches = filter
         .plan_id
         .as_ref()
         .is_none_or(|plan_id| receipt.plan_id.as_ref() == Some(plan_id));
-    let tool_matches = opts
+    let tool_matches = filter
         .tool_name
         .as_ref()
         .is_none_or(|tool_name| receipt.tool_name == *tool_name);
-    let failure_matches = !opts.failed_only || receipt.exit_status != 0;
+    let failure_matches = !filter.failed_only || receipt.exit_status != 0;
 
     session_matches && plan_matches && tool_matches && failure_matches
 }

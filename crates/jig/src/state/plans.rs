@@ -5,7 +5,6 @@ use std::path::PathBuf;
 use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
 
-use crate::cli::{PlanAppendOpts, PlanCloseOpts, PlanOpenOpts};
 use crate::context::RepoContext;
 use crate::tool_defs::tool;
 
@@ -14,10 +13,27 @@ use super::events::{
 };
 use super::receipts::{StateToolReceipt, record_successful_state_tool};
 
-pub(crate) fn plans_open(ctx: &RepoContext, opts: PlanOpenOpts) -> Result<Value> {
+pub(crate) struct PlanOpenRequest {
+    pub(crate) title: String,
+    pub(crate) body: Option<String>,
+    pub(crate) body_file: Option<PathBuf>,
+}
+
+pub(crate) struct PlanAppendRequest {
+    pub(crate) plan_id: String,
+    pub(crate) body: Option<String>,
+    pub(crate) body_file: Option<PathBuf>,
+}
+
+pub(crate) struct PlanCloseRequest {
+    pub(crate) plan_id: String,
+    pub(crate) resolution: Option<String>,
+}
+
+pub(crate) fn plans_open(ctx: &RepoContext, request: PlanOpenRequest) -> Result<Value> {
     ensure_state_layout(ctx)?;
     let plan_id = new_id("plan");
-    let body = plan_body(opts.body, opts.body_file)?;
+    let body = plan_body(request.body, request.body_file)?;
     let plan_path = ctx.plan_body_path(&plan_id);
     if let Some(parent) = plan_path.parent() {
         fs::create_dir_all(parent)?;
@@ -29,7 +45,7 @@ pub(crate) fn plans_open(ctx: &RepoContext, opts: PlanOpenOpts) -> Result<Value>
         plan_id: plan_id.clone(),
         event: "open".into(),
         timestamp_ms: now_ms(),
-        title: Some(opts.title.clone()),
+        title: Some(request.title.clone()),
         body_path: Some(rel_path(ctx.root(), &plan_path)?),
         resolution: None,
     };
@@ -39,7 +55,7 @@ pub(crate) fn plans_open(ctx: &RepoContext, opts: PlanOpenOpts) -> Result<Value>
         ctx,
         StateToolReceipt {
             tool_name: tool::PLANS_OPEN,
-            args: json!({ "title": opts.title }),
+            args: json!({ "title": request.title }),
             started_at_ms: event.timestamp_ms,
             plan_id: Some(plan_id.clone()),
             session_override: None,
@@ -54,15 +70,15 @@ pub(crate) fn plans_open(ctx: &RepoContext, opts: PlanOpenOpts) -> Result<Value>
     }))
 }
 
-pub(crate) fn plans_append(ctx: &RepoContext, opts: PlanAppendOpts) -> Result<Value> {
+pub(crate) fn plans_append(ctx: &RepoContext, request: PlanAppendRequest) -> Result<Value> {
     ensure_state_layout(ctx)?;
-    let body = plan_body(opts.body, opts.body_file)?;
-    let plan_path = ctx.plan_body_path(&opts.plan_id);
+    let body = plan_body(request.body, request.body_file)?;
+    let plan_path = ctx.plan_body_path(&request.plan_id);
     append_text(&plan_path, format!("\n\n{body}").as_bytes())?;
 
     let event = PlanEvent {
         id: new_id("plan-event"),
-        plan_id: opts.plan_id.clone(),
+        plan_id: request.plan_id.clone(),
         event: "append".into(),
         timestamp_ms: now_ms(),
         title: None,
@@ -75,7 +91,7 @@ pub(crate) fn plans_append(ctx: &RepoContext, opts: PlanAppendOpts) -> Result<Va
         ctx,
         StateToolReceipt {
             tool_name: tool::PLANS_APPEND,
-            args: json!({ "plan_id": opts.plan_id }),
+            args: json!({ "plan_id": request.plan_id }),
             started_at_ms: event.timestamp_ms,
             plan_id: Some(event.plan_id.clone()),
             session_override: None,
@@ -89,16 +105,16 @@ pub(crate) fn plans_append(ctx: &RepoContext, opts: PlanAppendOpts) -> Result<Va
     }))
 }
 
-pub(crate) fn plans_close(ctx: &RepoContext, opts: PlanCloseOpts) -> Result<Value> {
+pub(crate) fn plans_close(ctx: &RepoContext, request: PlanCloseRequest) -> Result<Value> {
     ensure_state_layout(ctx)?;
     let event = PlanEvent {
         id: new_id("plan-event"),
-        plan_id: opts.plan_id.clone(),
+        plan_id: request.plan_id.clone(),
         event: "close".into(),
         timestamp_ms: now_ms(),
         title: None,
         body_path: None,
-        resolution: opts.resolution.clone(),
+        resolution: request.resolution.clone(),
     };
     append_jsonl(&ctx.state_file("plans.jsonl"), &event)?;
 
@@ -107,8 +123,8 @@ pub(crate) fn plans_close(ctx: &RepoContext, opts: PlanCloseOpts) -> Result<Valu
         StateToolReceipt {
             tool_name: tool::PLANS_CLOSE,
             args: json!({
-                "plan_id": opts.plan_id,
-                "resolution": opts.resolution,
+                "plan_id": request.plan_id,
+                "resolution": request.resolution,
             }),
             started_at_ms: event.timestamp_ms,
             plan_id: Some(event.plan_id.clone()),
