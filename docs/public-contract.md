@@ -119,6 +119,8 @@ Structured work commands use the `jig.work_*` CLI and MCP namespace, but state-o
 
 `scripts/jig work finish --plan-id ...` fails when any required gate is missing, failed, stale, unknown, or unsupported. Older `work.checks` entries are still accepted for compatibility and backfill missing required check gates during migration. If the same tool is declared in `work.gates`, that explicit gate entry is authoritative.
 
+Fresh check evidence means the non-`.agent/` worktree fingerprint did not change while `work check` ran and still matches the current worktree. Generated outputs should therefore be committed, ignored, or settled before required gates are used as finish evidence. If a check creates expected files, review those files and rerun `work check` to record fresh evidence.
+
 After upgrading an in-flight repo from a Jig version that recorded receipts without `worktree_fingerprint`, rerun `scripts/jig work check --plan-id ...` before `scripts/jig work finish --plan-id ...`. Older receipts deserialize, but their gate freshness is `unknown`.
 
 Non-`check` gate kinds are reserved for future structured integrations such as Codex review gates. They are parsed and reported as unsupported until the runtime can record and validate machine-readable review evidence.

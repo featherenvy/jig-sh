@@ -8,6 +8,10 @@ write_backend_stub_repo() {
   mkdir -p "$repo_dir/docs/schema"
   mkdir -p "$repo_dir/.sqlx"
 
+  cat > "$repo_dir/.gitignore" <<'EOF'
+/target/
+EOF
+
   cat > "$repo_dir/Cargo.toml" <<'EOF'
 [workspace]
 members = ["crates/demo"]
@@ -105,6 +109,10 @@ write_tooling_only_stub_repo() {
   local repo_dir="$1"
 
   mkdir -p "$repo_dir/crates/demo/src"
+
+  cat > "$repo_dir/.gitignore" <<'EOF'
+/target/
+EOF
 
   cat > "$repo_dir/Cargo.toml" <<'EOF'
 [workspace]

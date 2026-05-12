@@ -10,6 +10,11 @@ if ! declare -F write_backend_stub_repo >/dev/null; then
   source "$ROOT_DIR/scripts/fixtures/stub-repos.sh"
 fi
 
+settle_fixture_cargo_workspace() {
+  # Keep the first structured work check from being invalidated by Cargo settling the repo.
+  cargo generate-lockfile >/dev/null
+}
+
 validate_backend_fixture() {
   local repo_dir="$1"
 
@@ -20,6 +25,7 @@ validate_backend_fixture() {
     git init -b main >/dev/null
     git config user.name "Fixture"
     git config user.email "fixture@example.com"
+    settle_fixture_cargo_workspace
     scripts/generate-agent-map.sh
     git add .
     git commit -m "fixture" >/dev/null
@@ -55,6 +61,7 @@ validate_full_stack_fixture() {
     git init -b main >/dev/null
     git config user.name "Fixture"
     git config user.email "fixture@example.com"
+    settle_fixture_cargo_workspace
     scripts/generate-agent-map.sh
     git add .
     git commit -m "fixture" >/dev/null
@@ -83,6 +90,7 @@ validate_tooling_only_fixture() {
     git init -b main >/dev/null
     git config user.name "Fixture"
     git config user.email "fixture@example.com"
+    settle_fixture_cargo_workspace
     scripts/generate-agent-map.sh
     git add .
     git commit -m "fixture" >/dev/null
