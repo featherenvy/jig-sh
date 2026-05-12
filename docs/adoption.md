@@ -3,7 +3,7 @@
 ## Recommended Rollout
 
 1. Start with an existing repository that already has a stable Cargo workspace and CI.
-2. Render the kit into that repo with `jig adopt . --template /path/to/jig-sh --template-mode committed --rust-migration-dir migrations`. For tooling-only repos, pass `--sqlx-enabled false` instead of the migration flag.
+2. Render the harness into that repo with `jig adopt . --template /path/to/jig-sh --template-mode committed --rust-migration-dir migrations`. For tooling-only repos, pass `--sqlx-enabled false` instead of the migration flag.
 3. For local dogfooding, commit or stash template checkout changes before rendering. If you need to test in-progress template edits, make a temporary local commit and update from that committed source.
 4. Confirm `.jig.yml` was generated with the intended profile. If the repo will be shared across machines, set `template_source_url` to a portable git source, then review the remaining paths and commands before committing.
 5. Review the root `AGENTS.md`. Existing repo guidance is preserved; Jig inserts or updates only the `<!-- BEGIN JIG MANAGED BLOCK -->` section.

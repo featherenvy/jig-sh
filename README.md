@@ -1,12 +1,13 @@
 # jig.sh
 
-Reusable agentic-development kit for Rust application repos, including SQLx/Postgres backends and tooling-only Rust repos, with optional web apps.
+Reusable harness for making Rust application repos operable by coding agents, including SQLx/Postgres backends and tooling-only Rust repos, with optional web apps.
 
-The kit extracts the durable parts of the OneSales workflow:
+Jig turns a repo into an operating environment for coding agents. It makes agentic software work repeatable, inspectable, and reviewable through:
 
 - agent-facing repo guidance
 - a stable top-level `make` contract
 - a typed `jig` runtime over that contract
+- required work gates backed by receipts
 - repo policy scripts
 - GitHub Actions workflows
 - template-based sync via the native `jig` renderer
@@ -88,7 +89,7 @@ When changing the `jig` runtime itself, build a dev binary and point the launche
 
 ```sh
 cargo build -p jig-sh --bin jig
-JIG_DEV_BIN=target/debug/jig scripts/jig state-summary
+JIG_DEV_BIN=target/debug/jig scripts/jig work status
 ```
 
 If you edit `.jig.yml` and want a full re-render from the stored answers:
@@ -139,7 +140,7 @@ Generated repos also expect Rust to be available for `scripts/install-jig.sh`, w
 - `templates/project/`: files rendered into downstream repos
 - `docs/`: config, adoption, and public-contract guidance
 - `examples/`: example answer files
-- `scripts/validate-fixtures.sh`: renders sample repos and validates the generated kit
+- `scripts/validate-fixtures.sh`: renders sample repos and validates the generated harness
 
 ## Validate This Repo
 

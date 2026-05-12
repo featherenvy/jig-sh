@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -16,6 +17,41 @@ struct RepoConfig {
     repo_name: String,
     default_branch: String,
     jig_version: String,
+    #[serde(default)]
+    work: WorkConfig,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+struct WorkConfig {
+    #[serde(default)]
+    checks: Vec<String>,
+    #[serde(default)]
+    gates: Vec<WorkGateConfig>,
+    #[allow(dead_code)]
+    #[serde(default)]
+    refinements: Vec<WorkRefinementConfig>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub(crate) struct WorkGateConfig {
+    pub(crate) id: String,
+    pub(crate) kind: String,
+    #[serde(default)]
+    pub(crate) tool: Option<String>,
+    #[allow(dead_code)]
+    #[serde(default)]
+    pub(crate) skill: Option<String>,
+    #[serde(default = "default_required")]
+    pub(crate) required: bool,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, Deserialize)]
+struct WorkRefinementConfig {
+    id: String,
+    skill: String,
+    #[serde(default)]
+    mode: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -53,6 +89,7 @@ impl RepoContext {
             .with_context(|| format!("Failed to read {}", config_path.display()))?;
         let config: RepoConfig = serde_yaml::from_str(&config_text)
             .with_context(|| format!("Failed to parse {}", config_path.display()))?;
+        validate_work_config(&config)?;
 
         let manifest_path = root.join(".agent/jig-contract.json");
         let manifest_text = fs::read_to_string(&manifest_path)
@@ -118,6 +155,42 @@ impl RepoContext {
         &self.config.src_path
     }
 
+    pub(crate) fn work_gates(&self) -> Vec<WorkGateConfig> {
+        let mut gates = self.config.work.gates.clone();
+        let mut existing_ids = gates
+            .iter()
+            .map(|gate| gate.id.clone())
+            .collect::<HashSet<_>>();
+
+        for tool in &self.config.work.checks {
+            if gates
+                .iter()
+                .any(|gate| gate.kind == "check" && gate.tool.as_ref() == Some(tool))
+            {
+                continue;
+            }
+
+            let id = unique_gate_id(gate_id_from_tool_name(tool), &mut existing_ids);
+            gates.push(WorkGateConfig {
+                id,
+                kind: "check".into(),
+                tool: Some(tool.clone()),
+                skill: None,
+                required: true,
+            });
+        }
+
+        gates
+    }
+
+    pub(crate) fn work_check_tools(&self) -> Vec<String> {
+        self.work_gates()
+            .into_iter()
+            .filter(|gate| gate.kind == "check")
+            .filter_map(|gate| gate.tool)
+            .collect()
+    }
+
     pub(crate) fn state_dir(&self) -> PathBuf {
         self.root.join(".agent/state")
     }
@@ -133,6 +206,42 @@ impl RepoContext {
     pub(crate) fn current_session_path(&self) -> PathBuf {
         self.current_session_path.clone()
     }
+}
+
+fn default_required() -> bool {
+    true
+}
+
+fn validate_work_config(config: &RepoConfig) -> Result<()> {
+    if let Some(refinement) = config.work.refinements.first() {
+        bail!(
+            "work.refinements is not supported yet (first unsupported refinement: {}). Remove work.refinements until refinement execution is implemented.",
+            refinement.id
+        );
+    }
+
+    Ok(())
+}
+
+fn gate_id_from_tool_name(tool: &str) -> String {
+    tool.strip_prefix("jig.")
+        .unwrap_or(tool)
+        .replace(['_', '.'], "-")
+}
+
+fn unique_gate_id(base: String, existing_ids: &mut HashSet<String>) -> String {
+    if existing_ids.insert(base.clone()) {
+        return base;
+    }
+
+    for index in 2.. {
+        let candidate = format!("{base}-{index}");
+        if existing_ids.insert(candidate.clone()) {
+            return candidate;
+        }
+    }
+
+    unreachable!("unbounded gate id search should always find an unused suffix")
 }
 
 fn find_repo_root() -> Result<PathBuf> {
@@ -183,6 +292,7 @@ impl RepoContext {
     pub(crate) fn load_from(root: &Path) -> Result<Self> {
         let config_text = fs::read_to_string(root.join(".jig.yml"))?;
         let config: RepoConfig = serde_yaml::from_str(&config_text)?;
+        validate_work_config(&config)?;
         let manifest_text = fs::read_to_string(root.join(".agent/jig-contract.json"))?;
         let manifest: ContractManifest = serde_json::from_str(&manifest_text)?;
         Ok(Self {
@@ -197,6 +307,7 @@ impl RepoContext {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     use tempfile::tempdir;
 
     #[test]
@@ -204,5 +315,150 @@ mod tests {
         let temp = tempdir().unwrap();
         let error = find_repo_root_from(temp.path()).unwrap_err().to_string();
         assert!(error.contains("Could not find repo root containing .jig.yml"));
+    }
+
+    #[test]
+    fn legacy_work_checks_become_required_check_gates() {
+        let temp = tempdir().unwrap();
+        fs::create_dir_all(temp.path().join(".agent")).unwrap();
+        fs::write(
+            temp.path().join(".jig.yml"),
+            r#"_src_path: '/tmp/template'
+_commit: 'abc123'
+repo_name: 'demo'
+default_branch: 'main'
+jig_version: '0.1.0'
+work:
+  checks:
+    - jig.contract_check
+"#,
+        )
+        .unwrap();
+        fs::write(
+            temp.path().join(".agent/jig-contract.json"),
+            serde_json::to_string_pretty(&json!({
+                "contract_version": 1,
+                "tool_namespace": "jig",
+                "jig_version": "0.1.0",
+                "required_make_targets": ["contract-check"],
+                "optional_make_targets": [],
+                "tools": [
+                    {
+                        "name": "jig.contract_check",
+                        "kind": "make",
+                        "description": "Run make contract-check.",
+                        "target": "contract-check"
+                    }
+                ],
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let ctx = RepoContext::load_from(temp.path()).unwrap();
+        let gates = ctx.work_gates();
+        assert_eq!(gates.len(), 1);
+        assert_eq!(gates[0].id, "contract-check");
+        assert_eq!(gates[0].kind, "check");
+        assert_eq!(gates[0].tool.as_deref(), Some("jig.contract_check"));
+        assert!(gates[0].required);
+    }
+
+    #[test]
+    fn legacy_work_checks_are_merged_with_explicit_gates() {
+        let temp = tempdir().unwrap();
+        fs::create_dir_all(temp.path().join(".agent")).unwrap();
+        fs::write(
+            temp.path().join(".jig.yml"),
+            r#"_src_path: '/tmp/template'
+_commit: 'abc123'
+repo_name: 'demo'
+default_branch: 'main'
+jig_version: '0.1.0'
+work:
+  checks:
+    - jig.contract_check
+    - jig.test
+  gates:
+    - id: contract
+      kind: check
+      tool: jig.contract_check
+      required: false
+"#,
+        )
+        .unwrap();
+        fs::write(
+            temp.path().join(".agent/jig-contract.json"),
+            serde_json::to_string_pretty(&json!({
+                "contract_version": 1,
+                "tool_namespace": "jig",
+                "jig_version": "0.1.0",
+                "required_make_targets": ["contract-check", "test"],
+                "optional_make_targets": [],
+                "tools": [
+                    {
+                        "name": "jig.contract_check",
+                        "kind": "make",
+                        "description": "Run make contract-check.",
+                        "target": "contract-check"
+                    },
+                    {
+                        "name": "jig.test",
+                        "kind": "make",
+                        "description": "Run make test.",
+                        "target": "test"
+                    }
+                ],
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let ctx = RepoContext::load_from(temp.path()).unwrap();
+        let gates = ctx.work_gates();
+        assert_eq!(gates.len(), 2);
+        assert_eq!(gates[0].id, "contract");
+        assert_eq!(gates[0].tool.as_deref(), Some("jig.contract_check"));
+        assert!(!gates[0].required);
+        assert_eq!(gates[1].id, "test");
+        assert_eq!(gates[1].tool.as_deref(), Some("jig.test"));
+        assert!(gates[1].required);
+    }
+
+    #[test]
+    fn unsupported_work_refinements_are_rejected() {
+        let temp = tempdir().unwrap();
+        fs::create_dir_all(temp.path().join(".agent")).unwrap();
+        fs::write(
+            temp.path().join(".jig.yml"),
+            r#"_src_path: '/tmp/template'
+_commit: 'abc123'
+repo_name: 'demo'
+default_branch: 'main'
+jig_version: '0.1.0'
+work:
+  refinements:
+    - id: rust-simplify
+      skill: jig-rust:rust-simplify
+"#,
+        )
+        .unwrap();
+        fs::write(
+            temp.path().join(".agent/jig-contract.json"),
+            serde_json::to_string_pretty(&json!({
+                "contract_version": 1,
+                "tool_namespace": "jig",
+                "jig_version": "0.1.0",
+                "required_make_targets": ["contract-check"],
+                "optional_make_targets": [],
+                "tools": [],
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let error = RepoContext::load_from(temp.path()).unwrap_err().to_string();
+        assert!(error.contains("work.refinements is not supported yet"));
+        assert!(error.contains("rust-simplify"));
     }
 }

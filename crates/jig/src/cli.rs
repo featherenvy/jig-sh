@@ -49,24 +49,30 @@ pub(crate) enum CommandKind {
     ContractCheck(ToolOpts),
     #[command(name = tool_defs::cli_command::RUN_TARGET)]
     RunTarget(RunTargetOpts),
-    #[command(name = tool_defs::cli_command::SESSION_START)]
-    SessionStart,
-    #[command(name = tool_defs::cli_command::SESSION_END)]
-    SessionEnd(SessionEndOpts),
-    #[command(name = tool_defs::cli_command::PLANS_OPEN)]
-    PlansOpen(PlanOpenOpts),
-    #[command(name = tool_defs::cli_command::PLANS_APPEND)]
-    PlansAppend(PlanAppendOpts),
-    #[command(name = tool_defs::cli_command::PLANS_CLOSE)]
-    PlansClose(PlanCloseOpts),
-    #[command(name = tool_defs::cli_command::RECEIPTS_LIST)]
-    ReceiptsList(ReceiptsListOpts),
-    #[command(name = tool_defs::cli_command::STATE_SUMMARY)]
-    StateSummary,
-    #[command(name = tool_defs::cli_command::DECISIONS_ADD)]
-    DecisionsAdd(DecisionAddOpts),
+    #[command(name = tool_defs::cli_command::WORK, subcommand)]
+    Work(WorkCommand),
     #[command(name = tool_defs::cli_command::MCP)]
     Mcp,
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum WorkCommand {
+    #[command(name = tool_defs::cli_command::WORK_START)]
+    Start(WorkStartOpts),
+    #[command(name = tool_defs::cli_command::WORK_APPEND)]
+    Append(WorkAppendOpts),
+    #[command(name = tool_defs::cli_command::WORK_CHECK)]
+    Check(WorkCheckOpts),
+    #[command(name = tool_defs::cli_command::WORK_GATES)]
+    Gates(WorkGatesOpts),
+    #[command(name = tool_defs::cli_command::WORK_DECIDE)]
+    Decide(WorkDecisionAddOpts),
+    #[command(name = tool_defs::cli_command::WORK_RECEIPTS)]
+    Receipts(WorkReceiptsOpts),
+    #[command(name = tool_defs::cli_command::WORK_STATUS)]
+    Status,
+    #[command(name = tool_defs::cli_command::WORK_FINISH)]
+    Finish(WorkFinishOpts),
 }
 
 #[derive(Args, Clone, Debug, Default)]
@@ -90,15 +96,7 @@ pub(crate) struct RunTargetOpts {
 }
 
 #[derive(Args, Debug)]
-pub(crate) struct SessionEndOpts {
-    #[arg(long)]
-    pub(crate) session_id: Option<String>,
-    #[arg(long)]
-    pub(crate) outcome: Option<String>,
-}
-
-#[derive(Args, Debug)]
-pub(crate) struct PlanOpenOpts {
+pub(crate) struct WorkStartOpts {
     #[arg(long)]
     pub(crate) title: String,
     #[arg(long)]
@@ -108,7 +106,7 @@ pub(crate) struct PlanOpenOpts {
 }
 
 #[derive(Args, Debug)]
-pub(crate) struct PlanAppendOpts {
+pub(crate) struct WorkAppendOpts {
     #[arg(long)]
     pub(crate) plan_id: String,
     #[arg(long)]
@@ -118,15 +116,32 @@ pub(crate) struct PlanAppendOpts {
 }
 
 #[derive(Args, Debug)]
-pub(crate) struct PlanCloseOpts {
+pub(crate) struct WorkCheckOpts {
+    #[arg(long)]
+    pub(crate) plan_id: String,
+
+    #[arg(long = "tool")]
+    pub(crate) tools: Vec<String>,
+}
+
+#[derive(Args, Debug)]
+pub(crate) struct WorkGatesOpts {
+    #[arg(long)]
+    pub(crate) plan_id: String,
+}
+
+#[derive(Args, Debug)]
+pub(crate) struct WorkFinishOpts {
     #[arg(long)]
     pub(crate) plan_id: String,
     #[arg(long)]
     pub(crate) resolution: Option<String>,
+    #[arg(long)]
+    pub(crate) outcome: Option<String>,
 }
 
 #[derive(Args, Debug)]
-pub(crate) struct ReceiptsListOpts {
+pub(crate) struct WorkReceiptsOpts {
     #[arg(long)]
     pub(crate) session_id: Option<String>,
     #[arg(long)]
@@ -139,7 +154,7 @@ pub(crate) struct ReceiptsListOpts {
     pub(crate) limit: usize,
 }
 
-impl Default for ReceiptsListOpts {
+impl Default for WorkReceiptsOpts {
     fn default() -> Self {
         Self {
             session_id: None,
@@ -152,7 +167,7 @@ impl Default for ReceiptsListOpts {
 }
 
 #[derive(Args, Debug)]
-pub(crate) struct DecisionAddOpts {
+pub(crate) struct WorkDecisionAddOpts {
     #[arg(long)]
     pub(crate) title: String,
     #[arg(long)]
@@ -282,10 +297,11 @@ mod tests {
     }
 
     #[test]
-    fn parses_receipts_list_filters() {
+    fn parses_work_receipts_filters() {
         let cli = Cli::try_parse_from([
             "jig",
-            "receipts-list",
+            "work",
+            "receipts",
             "--session-id",
             "session_1",
             "--plan-id",
@@ -299,24 +315,60 @@ mod tests {
         .unwrap();
 
         match cli.command {
-            CommandKind::ReceiptsList(opts) => {
+            CommandKind::Work(WorkCommand::Receipts(opts)) => {
                 assert_eq!(opts.session_id.as_deref(), Some("session_1"));
                 assert_eq!(opts.plan_id.as_deref(), Some("plan_1"));
                 assert_eq!(opts.tool_name.as_deref(), Some(tool::TEST));
                 assert!(opts.failed_only);
                 assert_eq!(opts.limit, 5);
             }
-            other => panic!("expected receipts-list command, got {other:?}"),
+            other => panic!("expected work receipts command, got {other:?}"),
         }
     }
 
     #[test]
-    fn parses_state_summary_command() {
-        let cli = Cli::try_parse_from(["jig", "state-summary"]).unwrap();
+    fn parses_work_status_command() {
+        let cli = Cli::try_parse_from(["jig", "work", "status"]).unwrap();
 
         match cli.command {
-            CommandKind::StateSummary => {}
-            other => panic!("expected state-summary command, got {other:?}"),
+            CommandKind::Work(WorkCommand::Status) => {}
+            other => panic!("expected work status command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_work_check_tools() {
+        let cli = Cli::try_parse_from([
+            "jig",
+            "work",
+            "check",
+            "--plan-id",
+            "plan_1",
+            "--tool",
+            tool::CONTRACT_CHECK,
+            "--tool",
+            tool::TEST,
+        ])
+        .unwrap();
+
+        match cli.command {
+            CommandKind::Work(WorkCommand::Check(opts)) => {
+                assert_eq!(opts.plan_id, "plan_1");
+                assert_eq!(opts.tools, vec![tool::CONTRACT_CHECK, tool::TEST]);
+            }
+            other => panic!("expected work check command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_work_gates_command() {
+        let cli = Cli::try_parse_from(["jig", "work", "gates", "--plan-id", "plan_1"]).unwrap();
+
+        match cli.command {
+            CommandKind::Work(WorkCommand::Gates(opts)) => {
+                assert_eq!(opts.plan_id, "plan_1");
+            }
+            other => panic!("expected work gates command, got {other:?}"),
         }
     }
 }

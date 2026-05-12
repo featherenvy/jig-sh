@@ -24,19 +24,25 @@ fn template_repo_root() -> PathBuf {
 }
 
 fn copy_dir_recursive(source: &Path, destination: &Path) {
+    copy_dir_recursive_inner(source, destination, Path::new(""));
+}
+
+fn copy_dir_recursive_inner(source: &Path, destination: &Path, relative: &Path) {
     fs::create_dir_all(destination).unwrap();
     for entry in fs::read_dir(source).unwrap() {
         let entry = entry.unwrap();
+        let entry_name = entry.file_name();
+        let entry_relative = relative.join(&entry_name);
+        if skip_template_fixture_path(&entry_relative) {
+            continue;
+        }
+
         let source_path = entry.path();
         let destination_path = destination.join(entry.file_name());
         let file_type = entry.file_type().unwrap();
 
-        if entry.file_name() == ".git" {
-            continue;
-        }
-
         if file_type.is_dir() {
-            copy_dir_recursive(&source_path, &destination_path);
+            copy_dir_recursive_inner(&source_path, &destination_path, &entry_relative);
             continue;
         }
 
@@ -54,6 +60,17 @@ fn copy_dir_recursive(source: &Path, destination: &Path) {
         }
         fs::copy(&source_path, &destination_path).unwrap();
     }
+}
+
+fn skip_template_fixture_path(relative: &Path) -> bool {
+    matches!(
+        relative.to_str(),
+        Some(".git")
+            | Some("target")
+            | Some(".agent/.cache")
+            | Some(".agent/plans")
+            | Some(".agent/state")
+    )
 }
 
 fn materialize_template_worktree() -> TempDir {

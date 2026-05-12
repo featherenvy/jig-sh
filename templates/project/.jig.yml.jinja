@@ -6,6 +6,27 @@ repo_name: '<<[ repo_name | replace("'", "''") ]>>'
 default_branch: '<<[ default_branch | replace("'", "''") ]>>'
 ci_github_runner: '<<[ ci_github_runner | replace("'", "''") ]>>'
 jig_version: '<<[ jig_version | replace("'", "''") ]>>'
+work:
+  gates:
+    - id: 'contract'
+      kind: 'check'
+      tool: 'jig.contract_check'
+    - id: 'tests'
+      kind: 'check'
+      tool: 'jig.test'
+[% if sqlx_enabled %]
+    - id: 'sqlx'
+      kind: 'check'
+      tool: 'jig.sqlx_check'
+    - id: 'schema'
+      kind: 'check'
+      tool: 'jig.schema_check'
+[% endif %]
+[% if sqlx_enabled and schema_dump_enabled %]
+    - id: 'schema-dump'
+      kind: 'check'
+      tool: 'jig.schema_dump'
+[% endif %]
 template_source_url: '<<[ template_source_url | replace("'", "''") ]>>'
 sqlx_enabled: [% if sqlx_enabled %]true[% else %]false[% endif %]
 rust_crate_roots:

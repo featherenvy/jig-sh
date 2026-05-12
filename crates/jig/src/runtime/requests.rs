@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 
 use crate::cli::{
-    DecisionAddOpts, PlanAppendOpts, PlanCloseOpts, PlanOpenOpts, ReceiptsListOpts, SessionEndOpts,
+    WorkAppendOpts, WorkDecisionAddOpts, WorkFinishOpts, WorkReceiptsOpts, WorkStartOpts,
 };
 use crate::state::{
     DecisionAddRequest, PlanAppendRequest, PlanCloseRequest, PlanOpenRequest, ReceiptListFilter,
@@ -13,17 +13,8 @@ use crate::tool_defs::{
     JsonObject, args, bool_arg, required_string_arg, string_arg, string_list_arg, usize_arg,
 };
 
-impl From<SessionEndOpts> for SessionEndRequest {
-    fn from(opts: SessionEndOpts) -> Self {
-        Self {
-            session_id: opts.session_id,
-            outcome: opts.outcome,
-        }
-    }
-}
-
-impl From<PlanOpenOpts> for PlanOpenRequest {
-    fn from(opts: PlanOpenOpts) -> Self {
+impl From<WorkStartOpts> for PlanOpenRequest {
+    fn from(opts: WorkStartOpts) -> Self {
         Self {
             title: opts.title,
             body: opts.body,
@@ -32,8 +23,8 @@ impl From<PlanOpenOpts> for PlanOpenRequest {
     }
 }
 
-impl From<PlanAppendOpts> for PlanAppendRequest {
-    fn from(opts: PlanAppendOpts) -> Self {
+impl From<WorkAppendOpts> for PlanAppendRequest {
+    fn from(opts: WorkAppendOpts) -> Self {
         Self {
             plan_id: opts.plan_id,
             body: opts.body,
@@ -42,17 +33,17 @@ impl From<PlanAppendOpts> for PlanAppendRequest {
     }
 }
 
-impl From<PlanCloseOpts> for PlanCloseRequest {
-    fn from(opts: PlanCloseOpts) -> Self {
+impl From<&WorkFinishOpts> for PlanCloseRequest {
+    fn from(opts: &WorkFinishOpts) -> Self {
         Self {
-            plan_id: opts.plan_id,
-            resolution: opts.resolution,
+            plan_id: opts.plan_id.clone(),
+            resolution: opts.resolution.clone(),
         }
     }
 }
 
-impl From<ReceiptsListOpts> for ReceiptListFilter {
-    fn from(opts: ReceiptsListOpts) -> Self {
+impl From<WorkReceiptsOpts> for ReceiptListFilter {
+    fn from(opts: WorkReceiptsOpts) -> Self {
         Self {
             session_id: opts.session_id,
             plan_id: opts.plan_id,
@@ -63,8 +54,8 @@ impl From<ReceiptsListOpts> for ReceiptListFilter {
     }
 }
 
-impl From<DecisionAddOpts> for DecisionAddRequest {
-    fn from(opts: DecisionAddOpts) -> Self {
+impl From<WorkDecisionAddOpts> for DecisionAddRequest {
+    fn from(opts: WorkDecisionAddOpts) -> Self {
         Self {
             title: opts.title,
             selected_option: opts.selected_option,
@@ -72,13 +63,6 @@ impl From<DecisionAddOpts> for DecisionAddRequest {
             alternatives: opts.alternatives,
             plan_id: opts.plan_id,
         }
-    }
-}
-
-pub(super) fn session_end_request_from_args(args_obj: &JsonObject) -> SessionEndRequest {
-    SessionEndRequest {
-        session_id: string_arg(args_obj, args::SESSION_ID),
-        outcome: string_arg(args_obj, args::OUTCOME),
     }
 }
 
@@ -90,18 +74,18 @@ pub(super) fn plan_open_request_from_args(args_obj: &JsonObject) -> Result<PlanO
     })
 }
 
+pub(super) fn session_end_request_for_finish(outcome: Option<String>) -> SessionEndRequest {
+    SessionEndRequest {
+        session_id: None,
+        outcome,
+    }
+}
+
 pub(super) fn plan_append_request_from_args(args_obj: &JsonObject) -> Result<PlanAppendRequest> {
     Ok(PlanAppendRequest {
         plan_id: required_string_arg(args_obj, args::PLAN_ID)?,
         body: string_arg(args_obj, args::BODY),
         body_file: string_arg(args_obj, args::BODY_FILE).map(PathBuf::from),
-    })
-}
-
-pub(super) fn plan_close_request_from_args(args_obj: &JsonObject) -> Result<PlanCloseRequest> {
-    Ok(PlanCloseRequest {
-        plan_id: required_string_arg(args_obj, args::PLAN_ID)?,
-        resolution: string_arg(args_obj, args::RESOLUTION),
     })
 }
 

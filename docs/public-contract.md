@@ -8,7 +8,9 @@
 
 Generated repositories may rely on the contract described here when they pin a `jig_version` in `.jig.yml` and keep `scripts/jig`, `.mcp.json`, and `.agent/jig-contract.json` in sync with that version.
 
-Session, plan, receipt, decision, and state-summary commands are runtime-owned conveniences. They may be available through the CLI and MCP server, but they are not part of contract version `1` and are not declared in `.agent/jig-contract.json`.
+Structured work commands are runtime-owned conveniences. They are available through `scripts/jig work ...` and MCP tools named `jig.work_*`, but they are not part of contract version `1` and are not declared in `.agent/jig-contract.json`.
+
+The structured work namespace includes native check gates. Gates are configured in `.jig.yml`, evaluated from receipts, and enforced by `scripts/jig work finish`. They remain runtime-owned because they compose stable make-backed tools with append-only work state rather than adding new make-backed contract tools.
 
 ## Contract Version
 
@@ -101,6 +103,27 @@ Current JSONL state files:
 State readers should tolerate missing files by treating them as empty. JSONL readers should ignore blank lines and fail loudly on malformed nonblank records.
 
 The active-session pointer is cache state, currently resolved through git as `jig-current-session.txt` and falling back under `.agent/.cache/`. Generated repos should not treat that path as a durable JSONL record.
+
+Structured work commands use the `jig.work_*` CLI and MCP namespace, but state-operation receipts keep their historical tool names for compatibility with existing receipt history and filters:
+
+- `jig.session_start`
+- `jig.session_end`
+- `jig.plans_open`
+- `jig.plans_append`
+- `jig.plans_close`
+- `jig.decisions_add`
+
+## Work Gates
+
+`work.gates` in `.jig.yml` declares required evidence before structured work can finish. `kind: check` gates reference make-backed tools from `.agent/jig-contract.json`; `scripts/jig work check --plan-id ...` runs them and records normal receipts. `scripts/jig work gates --plan-id ...` reports gate status from the latest fresh receipt for each gate tool on that plan.
+
+`scripts/jig work finish --plan-id ...` fails when any required gate is missing, failed, stale, unknown, or unsupported. Older `work.checks` entries are still accepted for compatibility and backfill missing required check gates during migration. If the same tool is declared in `work.gates`, that explicit gate entry is authoritative.
+
+After upgrading an in-flight repo from a Jig version that recorded receipts without `worktree_fingerprint`, rerun `scripts/jig work check --plan-id ...` before `scripts/jig work finish --plan-id ...`. Older receipts deserialize, but their gate freshness is `unknown`.
+
+Non-`check` gate kinds are reserved for future structured integrations such as Codex review gates. They are parsed and reported as unsupported until the runtime can record and validate machine-readable review evidence.
+
+`work.refinements` is reserved for future refinement execution and is rejected with a configuration error until support exists.
 
 ## Rollout Rules
 

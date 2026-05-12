@@ -143,6 +143,74 @@ fn plans_append_serializes_concurrent_writers() {
 }
 
 #[test]
+fn structured_work_keeps_legacy_state_receipt_tool_names() {
+    let temp = tempdir().unwrap();
+    write_fixture_repo(temp.path());
+    let ctx = RepoContext::load_from(temp.path()).unwrap();
+
+    session_start(&ctx).unwrap();
+    let plan = plans_open(
+        &ctx,
+        PlanOpenRequest {
+            title: "Receipt compatibility".into(),
+            body: Some("Initial body".into()),
+            body_file: None,
+        },
+    )
+    .unwrap();
+    let plan_id = plan["plan_id"].as_str().unwrap().to_string();
+    plans_append(
+        &ctx,
+        PlanAppendRequest {
+            plan_id: plan_id.clone(),
+            body: Some("Append body".into()),
+            body_file: None,
+        },
+    )
+    .unwrap();
+    decisions_add(
+        &ctx,
+        DecisionAddRequest {
+            title: "Decision".into(),
+            selected_option: "Keep compatibility".into(),
+            rationale: "Receipt filters depend on historical tool names.".into(),
+            alternatives: vec!["Rename receipts".into()],
+            plan_id: Some(plan_id.clone()),
+        },
+    )
+    .unwrap();
+    plans_close(
+        &ctx,
+        PlanCloseRequest {
+            plan_id,
+            resolution: Some("done".into()),
+        },
+    )
+    .unwrap();
+    session_end(
+        &ctx,
+        SessionEndRequest {
+            session_id: None,
+            outcome: Some("done".into()),
+        },
+    )
+    .unwrap();
+
+    let tool_names = read_jsonl::<ReceiptRecord>(&ctx.state_file("receipts.jsonl"))
+        .unwrap()
+        .into_iter()
+        .map(|receipt| receipt.tool_name)
+        .collect::<Vec<_>>();
+
+    assert!(tool_names.contains(&tool::SESSION_START.to_string()));
+    assert!(tool_names.contains(&tool::PLANS_OPEN.to_string()));
+    assert!(tool_names.contains(&tool::PLANS_APPEND.to_string()));
+    assert!(tool_names.contains(&tool::DECISIONS_ADD.to_string()));
+    assert!(tool_names.contains(&tool::PLANS_CLOSE.to_string()));
+    assert!(tool_names.contains(&tool::SESSION_END.to_string()));
+}
+
+#[test]
 fn receipts_list_is_read_only() {
     let temp = tempdir().unwrap();
     write_fixture_repo(temp.path());
@@ -232,6 +300,8 @@ fn receipt_record(
         diff_stat,
         git_status_error: None,
         git_diff_stat_error: None,
+        worktree_fingerprint: None,
+        worktree_fingerprint_error: None,
     }
 }
 
@@ -273,6 +343,7 @@ fn state_tool_receipts_skip_git_metadata_collection() {
         .iter()
         .find(|receipt| receipt.tool_name == tool::SESSION_START)
         .unwrap();
+    assert_eq!(receipt.args["operation"], "session_start");
     assert!(receipt.changed_paths.is_empty());
     assert_eq!(receipt.diff_stat.files, 0);
     assert!(receipt.git_status_error.is_none());

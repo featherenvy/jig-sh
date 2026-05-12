@@ -6,6 +6,14 @@ repo_name: jig-sh
 default_branch: main
 ci_github_runner: ubuntu-latest
 jig_version: 0.1.0
+work:
+  gates:
+    - id: contract
+      kind: check
+      tool: jig.contract_check
+    - id: tests
+      kind: check
+      tool: jig.test
 template_source_url: ''
 sqlx_enabled: false
 rust_crate_roots:

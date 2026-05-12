@@ -33,6 +33,7 @@ For local git template checkouts, `jig init` / `jig adopt` use a committed sourc
 - `default_branch`: branch name used for base-ref comparisons
 - `ci_github_runner`: runner label for GitHub Actions jobs
 - `jig_version`: exact runtime version expected by generated repos
+- `work.gates`: required work evidence gates evaluated before `scripts/jig work finish`
 - `template_source_url`: optional canonical template source URL for portable recopy/update
 - `sqlx_enabled`: whether to generate SQLx and migration-specific contract pieces
 - `rust_crate_roots`: list of directories whose direct child directories are considered crates
@@ -55,6 +56,46 @@ When `sqlx_enabled` is `true`, these additional keys are required:
 - `rust_test_locked_command`
 - `web_package_manager`: currently `bun`
 - `frontend_apps`: list of app definitions
+
+## `work` Shape
+
+The `work` block declares agent workflow defaults without adding repo-local launcher scripts:
+
+```yaml
+work:
+  gates:
+    - id: contract
+      kind: check
+      tool: jig.contract_check
+    - id: tests
+      kind: check
+      tool: jig.test
+```
+
+`kind: check` gates must reference make-backed jig tool names declared in `.agent/jig-contract.json`. `scripts/jig work check --plan-id ...` runs configured check gates in order unless one or more `--tool` values are passed explicitly.
+
+`scripts/jig work gates --plan-id ...` reports each configured gate as `passed`, `missing`, `failed`, `stale`, `unknown`, or `unsupported`. `scripts/jig work finish --plan-id ...` refuses to close work while required gates are missing, failed, stale, unknown, or unsupported. Check gate freshness is based on the non-`.agent/` worktree fingerprint from the latest check or check-batch receipt that proves the gate.
+
+After upgrading an in-flight repo from a Jig version that recorded receipts without `worktree_fingerprint`, rerun `scripts/jig work check --plan-id ...` before `scripts/jig work finish --plan-id ...`. Older successful check receipts deserialize correctly, but their freshness is `unknown` and required gates will block finish until fresh evidence exists.
+
+For compatibility, older repos may still use `work.checks`; Jig backfills entries that are not already declared in `work.gates` as required `kind: check` gates with generated IDs. When a tool is declared in both places, the explicit `work.gates` entry is authoritative. New repos should use `work.gates`.
+
+Generated SQLx-enabled repos also include check gates for `jig.sqlx_check` and `jig.schema_check`. Repos with schema dumps enabled also include `jig.schema_dump`.
+
+Review procedures are intentionally separate from native check gates:
+
+```yaml
+work:
+  gates:
+    - id: rust-error-handling
+      kind: codex_review
+      skill: jig-rust:rust-error-handling-review
+      required: false
+```
+
+Codex-backed review gates are not implemented yet. They require a structured `codex exec --output-schema ...` receipt path before they can be required. Until then, non-`check` gates are reported as `unsupported` and block finish only when marked `required: true`.
+
+`work.refinements` is reserved for future refinement execution. Current Jig versions reject it with a clear configuration error instead of accepting no-op refinement entries.
 
 ## `frontend_apps` Shape
 
@@ -125,7 +166,18 @@ The generated `scripts/jig` launcher enforces the exact `jig_version` pinned in 
 - CLI commands such as `scripts/jig fmt-check`
 - MCP tools such as `jig.fmt_check`
 
-It also provides runtime-owned append-only memory under `.agent/state/*.jsonl`.
+It also provides runtime-owned append-only memory under `.agent/state/*.jsonl` through the structured work namespace:
+
+- `scripts/jig work start --title ...`
+- `scripts/jig work append --plan-id ...`
+- `scripts/jig work check --plan-id ...`
+- `scripts/jig work gates --plan-id ...`
+- `scripts/jig work decide --plan-id ...`
+- `scripts/jig work receipts --plan-id ...`
+- `scripts/jig work status`
+- `scripts/jig work finish --plan-id ...`
+
+`work finish` closes the plan with `--resolution`. If an active session is also open, it closes that session with `--outcome`; when `--outcome` is omitted, the session outcome falls back to `--resolution`.
 
 For local runtime development, set `JIG_DEV_BIN` to an already-built `jig` binary. The installer uses that explicit binary before any cached exact-version binary, while still verifying that its reported version matches `.jig.yml`.
 

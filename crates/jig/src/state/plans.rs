@@ -6,7 +6,7 @@ use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
 
 use crate::context::RepoContext;
-use crate::tool_defs::tool;
+use crate::tool_defs::{args, tool};
 
 use super::events::{
     PlanEvent, append_jsonl, append_text, ensure_state_layout, new_id, now_ms, rel_path,
@@ -55,7 +55,10 @@ pub(crate) fn plans_open(ctx: &RepoContext, request: PlanOpenRequest) -> Result<
         ctx,
         StateToolReceipt {
             tool_name: tool::PLANS_OPEN,
-            args: json!({ "title": request.title }),
+            args: json!({
+                args::OPERATION: "plan_open",
+                "title": request.title,
+            }),
             started_at_ms: event.timestamp_ms,
             plan_id: Some(plan_id.clone()),
             session_override: None,
@@ -91,7 +94,10 @@ pub(crate) fn plans_append(ctx: &RepoContext, request: PlanAppendRequest) -> Res
         ctx,
         StateToolReceipt {
             tool_name: tool::PLANS_APPEND,
-            args: json!({ "plan_id": request.plan_id }),
+            args: json!({
+                args::OPERATION: "plan_append",
+                "plan_id": request.plan_id,
+            }),
             started_at_ms: event.timestamp_ms,
             plan_id: Some(event.plan_id.clone()),
             session_override: None,
@@ -123,6 +129,7 @@ pub(crate) fn plans_close(ctx: &RepoContext, request: PlanCloseRequest) -> Resul
         StateToolReceipt {
             tool_name: tool::PLANS_CLOSE,
             args: json!({
+                args::OPERATION: "plan_close",
                 "plan_id": request.plan_id,
                 "resolution": request.resolution,
             }),

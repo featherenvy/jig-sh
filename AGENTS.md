@@ -10,6 +10,7 @@ This repository uses the shared `jig.sh` workflow. Keep repo-local business rule
 - Read the nearest crate-level `AGENTS.md` before changing a crate.
 - Use `.agent/PLANS.md` when writing an ExecPlan for a complex feature or refactor.
 - Use `scripts/jig` for the typed repo contract and `scripts/jig mcp` for MCP clients.
+- For substantial work, use `scripts/jig work start`, `scripts/jig work check`, `scripts/jig work gates`, and `scripts/jig work finish` to keep plans, receipts, and required gates connected.
 - Treat `.agent/state/*.jsonl` as append-only repo memory.
 
 ## Compatibility And Cutovers
@@ -67,17 +68,16 @@ cargo build -p jig-sh --bin jig
 export JIG_DEV_BIN=target/debug/jig
 ```
 
-For substantial work, open a session and plan, run checks through `scripts/jig --plan-id`, then inspect receipts:
+For substantial work, open structured work, run configured gates, then inspect gate status and receipts:
 
 ```sh
-session_json="$(scripts/jig session-start)"
-plan_json="$(scripts/jig plans-open --title "Describe the work" --body "Validation plan.")"
-plan_id="$(printf '%s' "$plan_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["plan_id"])')"
+work_json="$(scripts/jig work start --title "Describe the work" --body "Validation plan.")"
+plan_id="$(printf '%s' "$work_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["plan"]["plan_id"])')"
 
-scripts/jig contract-check --plan-id "$plan_id"
-scripts/jig test --plan-id "$plan_id"
-scripts/jig receipts-list --plan-id "$plan_id"
-scripts/jig state-summary
+scripts/jig work check --plan-id "$plan_id"
+scripts/jig work gates --plan-id "$plan_id"
+scripts/jig work receipts --plan-id "$plan_id"
+scripts/jig work status
 ```
 
 Do not rely on the repo-local cached `jig` binary for runtime changes unless you have intentionally refreshed it. `JIG_DEV_BIN` is the expected local-development cutover.

@@ -52,6 +52,10 @@ pub(super) struct ReceiptRecord {
     pub(super) git_status_error: Option<String>,
     #[serde(default)]
     pub(super) git_diff_stat_error: Option<String>,
+    #[serde(default)]
+    pub(super) worktree_fingerprint: Option<String>,
+    #[serde(default)]
+    pub(super) worktree_fingerprint_error: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, serde::Deserialize)]

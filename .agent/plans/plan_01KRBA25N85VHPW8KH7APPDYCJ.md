@@ -1,0 +1,1 @@
+Implement one launcher, one work namespace, and declarative work checks.

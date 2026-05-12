@@ -2,7 +2,11 @@ use anyhow::Result;
 use serde_json::{Value, json};
 
 use crate::context::RepoContext;
-use crate::git_receipts::{GitReceiptMetadata, collect_git_receipt_metadata};
+use crate::git_receipts::{
+    GitReceiptMetadata, collect_git_receipt_metadata,
+    collect_git_receipt_metadata_without_worktree_fingerprint, repo_worktree_fingerprint,
+};
+use crate::tool_defs::tool;
 
 use super::events::{
     ReceiptRecord, append_jsonl, ensure_state_layout, new_id, now_ms, read_jsonl, truncate,
@@ -21,6 +25,8 @@ pub(crate) struct ReceiptInput<'a> {
     pub(crate) stderr: &'a str,
     pub(crate) session_override: Option<String>,
     pub(crate) collect_git_metadata: bool,
+    pub(crate) collect_worktree_fingerprint: bool,
+    pub(crate) worktree_fingerprint_override: Option<std::result::Result<String, String>>,
 }
 
 pub(super) struct StateToolReceipt<'a> {
@@ -39,6 +45,21 @@ pub(crate) struct ReceiptListFilter {
     pub(crate) limit: usize,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct ToolReceiptStatus {
+    pub(crate) receipt_id: String,
+    pub(crate) exit_status: i32,
+    pub(crate) ended_at_ms: u64,
+    pub(crate) worktree_fingerprint: Option<String>,
+    pub(crate) worktree_fingerprint_error: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CurrentWorktreeFingerprint {
+    pub(crate) fingerprint: Option<String>,
+    pub(crate) error: Option<String>,
+}
+
 pub(crate) fn receipts_list(ctx: &RepoContext, filter: ReceiptListFilter) -> Result<Value> {
     ensure_state_layout(ctx)?;
     let receipts = read_jsonl::<ReceiptRecord>(&ctx.state_file("receipts.jsonl"))?
@@ -55,9 +76,89 @@ pub(crate) fn receipts_list(ctx: &RepoContext, filter: ReceiptListFilter) -> Res
     }))
 }
 
+pub(crate) fn latest_plan_tool_receipt(
+    ctx: &RepoContext,
+    plan_id: &str,
+    tool_name: &str,
+) -> Result<Option<ToolReceiptStatus>> {
+    ensure_state_layout(ctx)?;
+    Ok(
+        read_jsonl::<ReceiptRecord>(&ctx.state_file("receipts.jsonl"))?
+            .into_iter()
+            .rev()
+            .find(|receipt| {
+                receipt.plan_id.as_deref() == Some(plan_id) && receipt.tool_name == tool_name
+            })
+            .map(|receipt| ToolReceiptStatus {
+                receipt_id: receipt.id,
+                exit_status: receipt.exit_status,
+                ended_at_ms: receipt.ended_at_ms,
+                worktree_fingerprint: receipt.worktree_fingerprint,
+                worktree_fingerprint_error: receipt.worktree_fingerprint_error,
+            }),
+    )
+}
+
+pub(crate) fn latest_plan_work_check_receipt_for_tool(
+    ctx: &RepoContext,
+    plan_id: &str,
+    tool_name: &str,
+    after_ended_at_ms: u64,
+) -> Result<Option<ToolReceiptStatus>> {
+    ensure_state_layout(ctx)?;
+    Ok(
+        read_jsonl::<ReceiptRecord>(&ctx.state_file("receipts.jsonl"))?
+            .into_iter()
+            .rev()
+            .find(|receipt| {
+                receipt.plan_id.as_deref() == Some(plan_id)
+                    && receipt.tool_name == tool::WORK_CHECK
+                    && receipt.exit_status == 0
+                    && receipt.ended_at_ms >= after_ended_at_ms
+                    && receipt_args_include_tool(receipt, tool_name)
+            })
+            .map(|receipt| ToolReceiptStatus {
+                receipt_id: receipt.id,
+                exit_status: receipt.exit_status,
+                ended_at_ms: receipt.ended_at_ms,
+                worktree_fingerprint: receipt.worktree_fingerprint,
+                worktree_fingerprint_error: receipt.worktree_fingerprint_error,
+            }),
+    )
+}
+
+pub(crate) fn current_worktree_fingerprint(ctx: &RepoContext) -> CurrentWorktreeFingerprint {
+    match repo_worktree_fingerprint(ctx.root()) {
+        Ok(fingerprint) => CurrentWorktreeFingerprint {
+            fingerprint: Some(fingerprint),
+            error: None,
+        },
+        Err(error) => CurrentWorktreeFingerprint {
+            fingerprint: None,
+            error: Some(format!("{error:#}")),
+        },
+    }
+}
+
 pub(crate) fn record_receipt(ctx: &RepoContext, input: ReceiptInput<'_>) -> Result<String> {
     ensure_state_layout(ctx)?;
-    let git_metadata = receipt_git_metadata(ctx, input.collect_git_metadata);
+    let mut git_metadata = receipt_git_metadata(
+        ctx,
+        input.collect_git_metadata,
+        input.collect_worktree_fingerprint,
+    );
+    if let Some(override_result) = input.worktree_fingerprint_override {
+        match override_result {
+            Ok(fingerprint) => {
+                git_metadata.worktree_fingerprint = Some(fingerprint);
+                git_metadata.worktree_fingerprint_error = None;
+            }
+            Err(error) => {
+                git_metadata.worktree_fingerprint = None;
+                git_metadata.worktree_fingerprint_error = Some(error);
+            }
+        }
+    }
     let receipt = ReceiptRecord {
         id: new_id("receipt"),
         session_id: match input.session_override {
@@ -77,6 +178,8 @@ pub(crate) fn record_receipt(ctx: &RepoContext, input: ReceiptInput<'_>) -> Resu
         diff_stat: git_metadata.diff_stat,
         git_status_error: git_metadata.git_status_error,
         git_diff_stat_error: git_metadata.git_diff_stat_error,
+        worktree_fingerprint: git_metadata.worktree_fingerprint,
+        worktree_fingerprint_error: git_metadata.worktree_fingerprint_error,
     };
     let receipt_id = receipt.id.clone();
     append_jsonl(&ctx.state_file("receipts.jsonl"), &receipt)?;
@@ -101,6 +204,8 @@ pub(super) fn record_successful_state_tool(
             stderr: "",
             session_override: input.session_override,
             collect_git_metadata: false,
+            collect_worktree_fingerprint: false,
+            worktree_fingerprint_override: None,
         },
     )
 }
@@ -121,6 +226,14 @@ fn receipt_matches_filters(receipt: &ReceiptRecord, filter: &ReceiptListFilter) 
     let failure_matches = !filter.failed_only || receipt.exit_status != 0;
 
     session_matches && plan_matches && tool_matches && failure_matches
+}
+
+fn receipt_args_include_tool(receipt: &ReceiptRecord, tool_name: &str) -> bool {
+    receipt
+        .args
+        .get("tools")
+        .and_then(Value::as_array)
+        .is_some_and(|tools| tools.iter().any(|tool| tool.as_str() == Some(tool_name)))
 }
 
 fn receipt_list_value(receipt: ReceiptRecord) -> Result<Value> {
@@ -150,10 +263,18 @@ pub(super) fn receipt_diff_summary(receipt: &ReceiptRecord) -> String {
     }
 }
 
-fn receipt_git_metadata(ctx: &RepoContext, collect_git_metadata: bool) -> GitReceiptMetadata {
-    if collect_git_metadata {
+fn receipt_git_metadata(
+    ctx: &RepoContext,
+    collect_git_metadata: bool,
+    collect_worktree_fingerprint: bool,
+) -> GitReceiptMetadata {
+    if !collect_git_metadata {
+        return GitReceiptMetadata::default();
+    }
+
+    if collect_worktree_fingerprint {
         collect_git_receipt_metadata(ctx.root())
     } else {
-        GitReceiptMetadata::default()
+        collect_git_receipt_metadata_without_worktree_fingerprint(ctx.root())
     }
 }

@@ -67,17 +67,22 @@ assert ("jig.schema_check" in tool_names) == expect_sqlx, tool_names
 assert ("jig.schema_dump" in tool_names) == expect_schema_dump, tool_names
 assert ("jig.sqlx_check" in tool_names) == expect_sqlx, tool_names
 assert ("jig.migration_add" in tool_names) == expect_sqlx, tool_names
-assert "jig.session_start" in tool_names, tool_names
+assert "jig.work_start" in tool_names, tool_names
+assert "jig.session_start" not in tool_names, tool_names
 
 send({
     "jsonrpc": "2.0",
     "id": 3,
     "method": "tools/call",
-    "params": {"name": "jig.session_start", "arguments": {}},
+    "params": {
+        "name": "jig.work_status",
+        "arguments": {},
+    },
 })
 response = recv()
 content = response["result"]["structuredContent"]
-assert content["session_id"], response
+assert content["ok"] is True, response
+assert "counts" in content, response
 
 proc.terminate()
 proc.wait(timeout=5)
@@ -118,39 +123,25 @@ assert ("jig.migration_add" in tools) == expect_sqlx, manifest
 assert "jig.session_start" not in tools, manifest
 PY
 
-    local session_json
-    local session_id
-    local plan_json
+    local work_json
     local plan_id
     local receipts_json
-    local receipt_count
-    local expected_receipt_count
 
     rm -rf .git/jig-tools .agent/.cache
     env -u JIG_DEV_BIN scripts/install-jig.sh >/dev/null
     validate_jig_mcp_smoke "$repo_dir" "$expect_schema_dump" "$expect_sqlx"
 
-    session_json="$(scripts/jig session-start)"
-    session_id="$(printf '%s' "$session_json" | json_get session_id)"
-
-    plan_json="$(scripts/jig plans-open --title "Fixture runtime plan" --body "## Fixture\nRuntime validation.")"
-    plan_id="$(printf '%s' "$plan_json" | json_get plan_id)"
-
-    scripts/jig fmt-check --plan-id "$plan_id" >/dev/null
-    scripts/jig contract-check --plan-id "$plan_id" >/dev/null
-    scripts/jig test --plan-id "$plan_id" >/dev/null
-    if [[ "$expect_sqlx" == "1" ]]; then
-      scripts/jig schema-check --plan-id "$plan_id" >/dev/null
-    fi
-
-    if [[ "$expect_schema_dump" == "1" ]]; then
-      scripts/jig schema-dump --plan-id "$plan_id" >/dev/null
-    fi
+    work_json="$(scripts/jig work start --title "Fixture runtime plan" --body "## Fixture\nRuntime validation.")"
+    plan_id="$(printf '%s' "$work_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["plan"]["plan_id"])')"
 
     if [[ "$expect_sqlx" == "1" ]]; then
       scripts/jig migration-add "$migration_name" --plan-id "$plan_id" >/dev/null
     fi
-    scripts/jig decisions-add \
+
+    scripts/jig work check --plan-id "$plan_id" >/dev/null
+    scripts/jig work gates --plan-id "$plan_id" >/dev/null
+
+    scripts/jig work decide \
       --title "Fixture decision" \
       --selected-option "Use jig" \
       --rationale "Runtime contract is wired and validated." \
@@ -158,22 +149,30 @@ PY
       --alternatives "Plain make" \
       >/dev/null
 
-    receipts_json="$(scripts/jig receipts-list --plan-id "$plan_id" --limit 20)"
-    receipt_count="$(printf '%s' "$receipts_json" | json_get receipts | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')"
-    expected_receipt_count=3
-    if [[ "$expect_sqlx" == "1" ]]; then
-      expected_receipt_count=$((expected_receipt_count + 1))
-    fi
-    if [[ "$expect_schema_dump" == "1" ]]; then
-      expected_receipt_count=$((expected_receipt_count + 1))
-    fi
-    if [[ "$receipt_count" -lt "$expected_receipt_count" ]]; then
-      echo "Expected at least $expected_receipt_count receipts for plan $plan_id, found $receipt_count." >&2
-      exit 1
-    fi
+    receipts_json="$(scripts/jig work receipts --plan-id "$plan_id" --limit 20)"
+    RECEIPTS_JSON="$receipts_json" EXPECT_SQLX="$expect_sqlx" EXPECT_SCHEMA_DUMP="$expect_schema_dump" python3 <<'PY'
+import json
+import os
 
-    scripts/jig plans-close --plan-id "$plan_id" --resolution "fixture complete" >/dev/null
-    scripts/jig session-end --session-id "$session_id" --outcome success >/dev/null
+payload = json.loads(os.environ["RECEIPTS_JSON"])
+tools = {receipt["tool_name"] for receipt in payload["receipts"]}
+required = {
+    "jig.plans_open",
+    "jig.contract_check",
+    "jig.test",
+    "jig.decisions_add",
+}
+if os.environ["EXPECT_SQLX"] == "1":
+    required.update({"jig.sqlx_check", "jig.schema_check", "jig.migration_add"})
+if os.environ["EXPECT_SCHEMA_DUMP"] == "1":
+    required.add("jig.schema_dump")
+
+missing = sorted(required - tools)
+if missing:
+    raise SystemExit(f"Missing expected runtime receipts: {', '.join(missing)}")
+PY
+
+    scripts/jig work finish --plan-id "$plan_id" --resolution "fixture complete" --outcome success >/dev/null
 
     [[ -f ".agent/plans/${plan_id}.md" ]]
     rg -q "Runtime validation" ".agent/plans/${plan_id}.md"

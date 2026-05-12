@@ -11,11 +11,15 @@ use events::{PlanEvent, ReceiptRecord, read_jsonl, truncate};
 pub(crate) use plans::{
     PlanAppendRequest, PlanCloseRequest, PlanOpenRequest, plans_append, plans_close, plans_open,
 };
+pub(crate) use receipts::{
+    CurrentWorktreeFingerprint, ToolReceiptStatus, current_worktree_fingerprint,
+    latest_plan_tool_receipt, latest_plan_work_check_receipt_for_tool,
+};
 pub(crate) use receipts::{ReceiptInput, ReceiptListFilter, receipts_list, record_receipt};
 use receipts::{StateToolReceipt, record_successful_state_tool};
 #[cfg(test)]
 use sessions::build_summary;
-use sessions::current_session;
+pub(crate) use sessions::current_session;
 pub(crate) use sessions::{SessionEndRequest, session_end, session_start, state_summary};
 
 mod events;

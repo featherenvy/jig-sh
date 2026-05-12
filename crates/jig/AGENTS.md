@@ -38,7 +38,7 @@
 - `cargo test -p jig-sh`
 - `cargo test --workspace`
 - `cargo build -p jig-sh --bin jig`
-- `JIG_DEV_BIN=target/debug/jig scripts/jig state-summary`
+- `JIG_DEV_BIN=target/debug/jig scripts/jig work status`
 - `make contract-check`
 - `make check-agent-guides`
 - `make check-agent-map`

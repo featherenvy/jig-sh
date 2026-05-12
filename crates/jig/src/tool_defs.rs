@@ -10,6 +10,7 @@ pub(crate) mod args {
     pub(crate) const FAILED_ONLY: &str = "failed_only";
     pub(crate) const LIMIT: &str = "limit";
     pub(crate) const NAME: &str = "name";
+    pub(crate) const OPERATION: &str = "operation";
     pub(crate) const OUTCOME: &str = "outcome";
     pub(crate) const PLAN_ID: &str = "plan_id";
     pub(crate) const RATIONALE: &str = "rationale";
@@ -18,31 +19,33 @@ pub(crate) mod args {
     pub(crate) const SESSION_ID: &str = "session_id";
     pub(crate) const TITLE: &str = "title";
     pub(crate) const TOOL_NAME: &str = "tool_name";
+    pub(crate) const TOOLS: &str = "tools";
 }
 
 pub(crate) mod cli_command {
     pub(crate) const ADOPT: &str = "adopt";
     pub(crate) const CLIPPY: &str = "clippy";
     pub(crate) const CONTRACT_CHECK: &str = "contract-check";
-    pub(crate) const DECISIONS_ADD: &str = "decisions-add";
     pub(crate) const FMT_CHECK: &str = "fmt-check";
     pub(crate) const INIT: &str = "init";
     pub(crate) const MCP: &str = "mcp";
     pub(crate) const MIGRATION_ADD: &str = "migration-add";
-    pub(crate) const PLANS_APPEND: &str = "plans-append";
-    pub(crate) const PLANS_CLOSE: &str = "plans-close";
-    pub(crate) const PLANS_OPEN: &str = "plans-open";
-    pub(crate) const RECEIPTS_LIST: &str = "receipts-list";
     pub(crate) const RUN_TARGET: &str = "run-target";
     pub(crate) const SCHEMA_CHECK: &str = "schema-check";
     pub(crate) const SCHEMA_DUMP: &str = "schema-dump";
-    pub(crate) const SESSION_END: &str = "session-end";
-    pub(crate) const SESSION_START: &str = "session-start";
     pub(crate) const SQLX_CHECK: &str = "sqlx-check";
-    pub(crate) const STATE_SUMMARY: &str = "state-summary";
     pub(crate) const TEST: &str = "test";
     pub(crate) const TEST_LOCKED: &str = "test-locked";
     pub(crate) const UPDATE: &str = "update";
+    pub(crate) const WORK: &str = "work";
+    pub(crate) const WORK_APPEND: &str = "append";
+    pub(crate) const WORK_CHECK: &str = "check";
+    pub(crate) const WORK_DECIDE: &str = "decide";
+    pub(crate) const WORK_FINISH: &str = "finish";
+    pub(crate) const WORK_GATES: &str = "gates";
+    pub(crate) const WORK_RECEIPTS: &str = "receipts";
+    pub(crate) const WORK_START: &str = "start";
+    pub(crate) const WORK_STATUS: &str = "status";
 }
 
 pub(crate) mod kind {
@@ -58,95 +61,95 @@ pub(crate) mod tool {
     pub(crate) const PLANS_APPEND: &str = "jig.plans_append";
     pub(crate) const PLANS_CLOSE: &str = "jig.plans_close";
     pub(crate) const PLANS_OPEN: &str = "jig.plans_open";
-    pub(crate) const RECEIPTS_LIST: &str = "jig.receipts_list";
     pub(crate) const RUN_TARGET: &str = "jig.run_target";
     pub(crate) const SCHEMA_CHECK: &str = "jig.schema_check";
     pub(crate) const SCHEMA_DUMP: &str = "jig.schema_dump";
     pub(crate) const SESSION_END: &str = "jig.session_end";
     pub(crate) const SESSION_START: &str = "jig.session_start";
     pub(crate) const SQLX_CHECK: &str = "jig.sqlx_check";
-    pub(crate) const STATE_SUMMARY: &str = "jig.state_summary";
     pub(crate) const TEST: &str = "jig.test";
     pub(crate) const TEST_LOCKED: &str = "jig.test_locked";
+    pub(crate) const WORK_APPEND: &str = "jig.work_append";
+    pub(crate) const WORK_CHECK: &str = "jig.work_check";
+    pub(crate) const WORK_DECIDE: &str = "jig.work_decide";
+    pub(crate) const WORK_FINISH: &str = "jig.work_finish";
+    pub(crate) const WORK_GATES: &str = "jig.work_gates";
+    pub(crate) const WORK_RECEIPTS: &str = "jig.work_receipts";
+    pub(crate) const WORK_START: &str = "jig.work_start";
+    pub(crate) const WORK_STATUS: &str = "jig.work_status";
 }
 
 pub(crate) type JsonObject = Map<String, Value>;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum MemoryTool {
-    SessionStart,
-    SessionEnd,
-    PlansOpen,
-    PlansAppend,
-    PlansClose,
-    ReceiptsList,
-    StateSummary,
-    DecisionsAdd,
+    Start,
+    Append,
+    Check,
+    Gates,
+    Decide,
+    Receipts,
+    Status,
+    Finish,
 }
 
 impl MemoryTool {
     const ALL: [Self; 8] = [
-        Self::SessionStart,
-        Self::SessionEnd,
-        Self::PlansOpen,
-        Self::PlansAppend,
-        Self::PlansClose,
-        Self::ReceiptsList,
-        Self::StateSummary,
-        Self::DecisionsAdd,
+        Self::Start,
+        Self::Append,
+        Self::Check,
+        Self::Gates,
+        Self::Decide,
+        Self::Receipts,
+        Self::Status,
+        Self::Finish,
     ];
 
     pub(crate) fn from_name(name: &str) -> Option<Self> {
         match name {
-            tool::SESSION_START => Some(Self::SessionStart),
-            tool::SESSION_END => Some(Self::SessionEnd),
-            tool::PLANS_OPEN => Some(Self::PlansOpen),
-            tool::PLANS_APPEND => Some(Self::PlansAppend),
-            tool::PLANS_CLOSE => Some(Self::PlansClose),
-            tool::RECEIPTS_LIST => Some(Self::ReceiptsList),
-            tool::STATE_SUMMARY => Some(Self::StateSummary),
-            tool::DECISIONS_ADD => Some(Self::DecisionsAdd),
+            tool::WORK_START => Some(Self::Start),
+            tool::WORK_APPEND => Some(Self::Append),
+            tool::WORK_CHECK => Some(Self::Check),
+            tool::WORK_GATES => Some(Self::Gates),
+            tool::WORK_DECIDE => Some(Self::Decide),
+            tool::WORK_RECEIPTS => Some(Self::Receipts),
+            tool::WORK_STATUS => Some(Self::Status),
+            tool::WORK_FINISH => Some(Self::Finish),
             _ => None,
         }
     }
 
     fn name(self) -> &'static str {
         match self {
-            Self::SessionStart => tool::SESSION_START,
-            Self::SessionEnd => tool::SESSION_END,
-            Self::PlansOpen => tool::PLANS_OPEN,
-            Self::PlansAppend => tool::PLANS_APPEND,
-            Self::PlansClose => tool::PLANS_CLOSE,
-            Self::ReceiptsList => tool::RECEIPTS_LIST,
-            Self::StateSummary => tool::STATE_SUMMARY,
-            Self::DecisionsAdd => tool::DECISIONS_ADD,
+            Self::Start => tool::WORK_START,
+            Self::Append => tool::WORK_APPEND,
+            Self::Check => tool::WORK_CHECK,
+            Self::Gates => tool::WORK_GATES,
+            Self::Decide => tool::WORK_DECIDE,
+            Self::Receipts => tool::WORK_RECEIPTS,
+            Self::Status => tool::WORK_STATUS,
+            Self::Finish => tool::WORK_FINISH,
         }
     }
 
     fn description(self) -> &'static str {
         match self {
-            Self::SessionStart => "Open a new jig session and return recent repo context.",
-            Self::SessionEnd => "Close a jig session.",
-            Self::PlansOpen => "Open a structured plan and create its Markdown body.",
-            Self::PlansAppend => "Append to a structured plan body.",
-            Self::PlansClose => "Close a structured plan.",
-            Self::ReceiptsList => "List structured receipts.",
-            Self::StateSummary => "Summarize structured jig state.",
-            Self::DecisionsAdd => "Append a structured decision record.",
+            Self::Start => "Start structured work by opening a session and plan.",
+            Self::Append => "Append to a structured work plan.",
+            Self::Check => "Run configured or selected work checks.",
+            Self::Gates => "Report configured work gate status for a plan.",
+            Self::Decide => "Record a structured work decision.",
+            Self::Receipts => "List structured work receipts.",
+            Self::Status => "Summarize structured work state.",
+            Self::Finish => "Close a structured work plan and active session.",
         }
     }
 
     fn input_schema(self) -> Value {
         match self {
-            Self::SessionStart | Self::StateSummary => empty_input_schema(),
-            Self::SessionEnd => object_schema(
-                &[
-                    (args::SESSION_ID, string_schema()),
-                    (args::OUTCOME, string_schema()),
-                ],
-                &[],
-            ),
-            Self::PlansOpen => object_schema(
+            Self::Status => empty_input_schema(),
+            Self::Gates => object_schema(&[(args::PLAN_ID, string_schema())], &[args::PLAN_ID]),
+            Self::Start => object_schema(
                 &[
                     (args::TITLE, string_schema()),
                     (args::BODY, string_schema()),
@@ -154,7 +157,7 @@ impl MemoryTool {
                 ],
                 &[args::TITLE],
             ),
-            Self::PlansAppend => object_schema(
+            Self::Append => object_schema(
                 &[
                     (args::PLAN_ID, string_schema()),
                     (args::BODY, string_schema()),
@@ -162,24 +165,20 @@ impl MemoryTool {
                 ],
                 &[args::PLAN_ID],
             ),
-            Self::PlansClose => object_schema(
+            Self::Check => object_schema(
                 &[
                     (args::PLAN_ID, string_schema()),
-                    (args::RESOLUTION, string_schema()),
+                    (
+                        args::TOOLS,
+                        json!({
+                            "type": "array",
+                            "items": { "type": "string" }
+                        }),
+                    ),
                 ],
                 &[args::PLAN_ID],
             ),
-            Self::ReceiptsList => object_schema(
-                &[
-                    (args::SESSION_ID, string_schema()),
-                    (args::PLAN_ID, string_schema()),
-                    (args::TOOL_NAME, string_schema()),
-                    (args::FAILED_ONLY, json!({ "type": "boolean" })),
-                    (args::LIMIT, json!({ "type": "integer", "minimum": 1 })),
-                ],
-                &[],
-            ),
-            Self::DecisionsAdd => object_schema(
+            Self::Decide => object_schema(
                 &[
                     (args::TITLE, string_schema()),
                     (args::SELECTED_OPTION, string_schema()),
@@ -194,6 +193,24 @@ impl MemoryTool {
                     (args::PLAN_ID, string_schema()),
                 ],
                 &[args::TITLE, args::SELECTED_OPTION, args::RATIONALE],
+            ),
+            Self::Receipts => object_schema(
+                &[
+                    (args::SESSION_ID, string_schema()),
+                    (args::PLAN_ID, string_schema()),
+                    (args::TOOL_NAME, string_schema()),
+                    (args::FAILED_ONLY, json!({ "type": "boolean" })),
+                    (args::LIMIT, json!({ "type": "integer", "minimum": 1 })),
+                ],
+                &[],
+            ),
+            Self::Finish => object_schema(
+                &[
+                    (args::PLAN_ID, string_schema()),
+                    (args::RESOLUTION, string_schema()),
+                    (args::OUTCOME, string_schema()),
+                ],
+                &[args::PLAN_ID],
             ),
         }
     }

@@ -4,7 +4,7 @@ use anyhow::{Result, anyhow};
 use serde_json::{Value, json};
 
 use crate::context::RepoContext;
-use crate::tool_defs::tool;
+use crate::tool_defs::{args, tool};
 
 use super::events::{
     DecisionRecord, PlanEvent, ReceiptRecord, SessionEvent, append_jsonl, ensure_state_layout,
@@ -39,7 +39,9 @@ pub(crate) fn session_start(ctx: &RepoContext) -> Result<Value> {
         ctx,
         StateToolReceipt {
             tool_name: tool::SESSION_START,
-            args: json!({}),
+            args: json!({
+                args::OPERATION: "session_start",
+            }),
             started_at_ms: event.timestamp_ms,
             plan_id: None,
             session_override: Some(session_id.clone()),
@@ -78,6 +80,7 @@ pub(crate) fn session_end(ctx: &RepoContext, request: SessionEndRequest) -> Resu
         StateToolReceipt {
             tool_name: tool::SESSION_END,
             args: json!({
+                args::OPERATION: "session_end",
                 "session_id": session_id,
                 "outcome": request.outcome,
             }),
@@ -94,7 +97,7 @@ pub(crate) fn session_end(ctx: &RepoContext, request: SessionEndRequest) -> Resu
     }))
 }
 
-pub(super) fn current_session(ctx: &RepoContext) -> Result<Option<String>> {
+pub(crate) fn current_session(ctx: &RepoContext) -> Result<Option<String>> {
     let path = ctx.current_session_path();
     if !path.exists() {
         return Ok(None);
