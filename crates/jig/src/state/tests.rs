@@ -57,20 +57,35 @@ fn session_summary_includes_open_plans() {
     ensure_state_layout(&ctx).unwrap();
     append_jsonl(
         &ctx.state_file("plans.jsonl"),
-        &PlanEvent {
-            id: "1".into(),
-            plan_id: "plan_1".into(),
-            event: "open".into(),
-            timestamp_ms: 1,
-            title: Some("Example".into()),
-            body_path: Some(".agent/plans/plan_1.md".into()),
-            resolution: None,
-        },
+        &PlanEvent::open(
+            "1".into(),
+            "plan_1".into(),
+            1,
+            "Example".into(),
+            Some(".agent/plans/plan_1.md".into()),
+        ),
     )
     .unwrap();
 
     let summary = build_summary(&ctx).unwrap();
     assert_eq!(summary["open_plans"][0]["plan_id"], "plan_1");
+}
+
+#[test]
+fn legacy_unknown_plan_events_stay_readable() {
+    let temp = tempdir().unwrap();
+    let path = temp.path().join("plans.jsonl");
+    fs::write(
+        &path,
+        r#"{"id":"1","plan_id":"plan_1","event":"pause","timestamp_ms":1}
+"#,
+    )
+    .unwrap();
+
+    let events = read_jsonl::<PlanEvent>(&path).unwrap();
+
+    assert_eq!(events.len(), 1);
+    assert!(super::plans::open_plans(&events).is_empty());
 }
 
 #[test]
@@ -104,9 +119,10 @@ fn plans_append_serializes_concurrent_writers() {
     let plan_id = read_jsonl::<PlanEvent>(&ctx.state_file("plans.jsonl"))
         .unwrap()
         .into_iter()
-        .find(|event| event.event == "open")
+        .find(PlanEvent::is_open)
         .unwrap()
-        .plan_id;
+        .plan_id()
+        .to_string();
 
     let plan_id_a = plan_id.clone();
     let plan_id_b = plan_id.clone();
@@ -191,6 +207,44 @@ fn plans_close_rejects_already_closed_plan() {
         PlanCloseRequest {
             plan_id: plan_id.clone(),
             resolution: Some("done again".into()),
+        },
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains(&format!("Plan is already closed: {plan_id}")));
+}
+
+#[test]
+fn plans_append_rejects_closed_plan() {
+    let temp = tempdir().unwrap();
+    write_fixture_repo(temp.path());
+    let ctx = RepoContext::load_from(temp.path()).unwrap();
+    let plan = plans_open(
+        &ctx,
+        PlanOpenRequest {
+            title: "Append after close".into(),
+            body: Some("Initial body".into()),
+            body_file: None,
+        },
+    )
+    .unwrap();
+    let plan_id = plan["plan_id"].as_str().unwrap().to_string();
+    plans_close(
+        &ctx,
+        PlanCloseRequest {
+            plan_id: plan_id.clone(),
+            resolution: Some("done".into()),
+        },
+    )
+    .unwrap();
+
+    let error = plans_append(
+        &ctx,
+        PlanAppendRequest {
+            plan_id: plan_id.clone(),
+            body: Some("late append".into()),
+            body_file: None,
         },
     )
     .unwrap_err()

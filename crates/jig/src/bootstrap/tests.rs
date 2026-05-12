@@ -75,7 +75,10 @@ fn skip_template_fixture_path(relative: &Path) -> bool {
 
 fn materialize_template_worktree() -> TempDir {
     let temp = tempdir().unwrap();
-    copy_dir_recursive(&template_repo_root(), temp.path());
+    copy_dir_recursive(
+        &template_repo_root().join("templates"),
+        &temp.path().join("templates"),
+    );
     temp
 }
 

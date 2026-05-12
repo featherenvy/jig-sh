@@ -1,4 +1,5 @@
 use anyhow::Result;
+use serde::{Deserialize, Deserializer};
 use serde_json::{Value, json};
 
 use crate::context::RepoContext;
@@ -13,8 +14,9 @@ pub(crate) use plans::{
     plans_close, plans_open,
 };
 pub(crate) use receipts::{
-    CurrentWorktreeFingerprint, ToolReceiptStatus, current_worktree_fingerprint,
-    latest_plan_tool_receipt, latest_plan_work_check_receipt_for_tool,
+    CurrentWorktreeFingerprint, DEFAULT_RECEIPTS_LIMIT, ToolReceiptStatus,
+    current_worktree_fingerprint, latest_plan_tool_receipt,
+    latest_plan_work_check_receipt_for_tool,
 };
 pub(crate) use receipts::{ReceiptInput, ReceiptListFilter, receipts_list, record_receipt};
 use receipts::{StateToolReceipt, record_successful_state_tool};
@@ -28,10 +30,12 @@ mod plans;
 mod receipts;
 mod sessions;
 
+#[derive(Deserialize)]
 pub(crate) struct DecisionAddRequest {
     pub(crate) title: String,
     pub(crate) selected_option: String,
     pub(crate) rationale: String,
+    #[serde(default, deserialize_with = "null_as_default")]
     pub(crate) alternatives: Vec<String>,
     pub(crate) plan_id: Option<String>,
 }
@@ -70,6 +74,14 @@ pub(crate) fn decisions_add(ctx: &RepoContext, request: DecisionAddRequest) -> R
         "decision_id": record.id,
         "receipt_id": receipt_id,
     }))
+}
+
+fn null_as_default<'de, D, T>(deserializer: D) -> std::result::Result<T, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Default + Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Option::unwrap_or_default)
 }
 
 #[cfg(test)]

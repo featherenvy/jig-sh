@@ -9,16 +9,15 @@ use minijinja::{Environment, UndefinedBehavior, syntax::SyntaxConfig};
 use serde_json::{Value as JsonValue, json};
 use tempfile::TempDir;
 
+use super::ANSWERS_FILE;
 use super::answers::RenderAnswers;
+use super::managed_paths;
 use super::preview_seed::seed_preview_workspace;
 use super::staged_render::StagedRender;
 use super::template_source::PreparedTemplateSource;
-use super::{ANSWERS_FILE, SQLX_PRUNED_TASK_PATHS};
 
 const TEMPLATE_SUBDIRECTORY: &str = "templates/project";
 const TEMPLATE_SUFFIX: &str = ".jinja";
-const REMOVED_MANAGED_PATHS: &[&str] = &["scripts/normalize-template-source.sh"];
-pub(super) const ROOT_AGENTS_PATH: &str = "AGENTS.md";
 const JIG_BLOCK_BEGIN: &str = "<!-- BEGIN JIG MANAGED BLOCK -->";
 const JIG_BLOCK_END: &str = "<!-- END JIG MANAGED BLOCK -->";
 
@@ -36,9 +35,7 @@ pub(super) fn stage_render(
     let mut managed_paths = render_template_files(template, answers, &destination)?;
     run_post_render_tasks(&destination)?;
     merge_existing_root_agents(seed_repo_path, &destination)?;
-    for relative in REMOVED_MANAGED_PATHS {
-        managed_paths.insert(PathBuf::from(relative));
-    }
+    managed_paths.extend(managed_paths::removed_managed_paths());
 
     let answers_path = destination.join(ANSWERS_FILE);
     if !answers_path.exists() {
@@ -94,11 +91,7 @@ fn render_template_files(
             })?;
         let relative = output_relative_path(relative_template)?;
         managed_paths.insert(relative.clone());
-        if !answers.sqlx_enabled()
-            && SQLX_PRUNED_TASK_PATHS
-                .iter()
-                .any(|path| relative == Path::new(path))
-        {
+        if managed_paths::should_prune_rendered_path(&relative, answers) {
             continue;
         }
 
@@ -110,9 +103,7 @@ fn render_template_files(
         write_rendered_file(destination, &relative, rendered.as_bytes())?;
     }
 
-    for relative in SQLX_PRUNED_TASK_PATHS {
-        managed_paths.insert(PathBuf::from(relative));
-    }
+    managed_paths.extend(managed_paths::sqlx_pruned_task_paths());
 
     Ok(managed_paths)
 }
@@ -122,12 +113,12 @@ fn merge_existing_root_agents(seed_repo_path: Option<&Path>, destination: &Path)
         return Ok(());
     };
 
-    let existing_path = seed_repo_path.join(ROOT_AGENTS_PATH);
+    let existing_path = seed_repo_path.join(managed_paths::ROOT_AGENTS_PATH);
     if !existing_path.exists() {
         return Ok(());
     }
 
-    let rendered_path = destination.join(ROOT_AGENTS_PATH);
+    let rendered_path = destination.join(managed_paths::ROOT_AGENTS_PATH);
     if !rendered_path.exists() {
         return Ok(());
     }
@@ -289,7 +280,7 @@ fn run_post_render_tasks(destination: &Path) -> Result<()> {
 fn set_rendered_permissions(path: &Path, relative: &Path) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
 
-    if is_executable_script(relative) {
+    if managed_paths::is_executable_script(relative) {
         fs::set_permissions(path, fs::Permissions::from_mode(0o755))
             .with_context(|| format!("Failed to set permissions on {}", path.display()))?;
     }
@@ -320,15 +311,9 @@ fn executable_script_paths(destination: &Path) -> Result<Vec<PathBuf>> {
     {
         let entry = entry?;
         let relative = PathBuf::from("scripts").join(entry.file_name());
-        if is_executable_script(&relative) {
+        if managed_paths::is_executable_script(&relative) {
             paths.push(relative);
         }
     }
     Ok(paths)
-}
-
-fn is_executable_script(relative: &Path) -> bool {
-    relative.starts_with("scripts")
-        && (relative.extension().and_then(|ext| ext.to_str()) == Some("sh")
-            || relative.file_name().and_then(|name| name.to_str()) == Some("jig"))
 }

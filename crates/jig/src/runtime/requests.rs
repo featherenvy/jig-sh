@@ -1,6 +1,7 @@
-use std::path::PathBuf;
-
-use anyhow::Result;
+use anyhow::{Context, Result};
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Deserializer};
+use serde_json::Value;
 
 use crate::cli::{
     WorkAppendOpts, WorkDecisionAddOpts, WorkFinishOpts, WorkReceiptsOpts, WorkStartOpts,
@@ -8,9 +9,6 @@ use crate::cli::{
 use crate::state::{
     DecisionAddRequest, PlanAppendRequest, PlanCloseRequest, PlanOpenRequest, ReceiptListFilter,
     SessionEndRequest,
-};
-use crate::tool_defs::{
-    JsonObject, args, bool_arg, required_string_arg, string_arg, string_list_arg, usize_arg,
 };
 
 impl From<WorkStartOpts> for PlanOpenRequest {
@@ -66,12 +64,11 @@ impl From<WorkDecisionAddOpts> for DecisionAddRequest {
     }
 }
 
-pub(super) fn plan_open_request_from_args(args_obj: &JsonObject) -> Result<PlanOpenRequest> {
-    Ok(PlanOpenRequest {
-        title: required_string_arg(args_obj, args::TITLE)?,
-        body: string_arg(args_obj, args::BODY),
-        body_file: string_arg(args_obj, args::BODY_FILE).map(PathBuf::from),
-    })
+pub(super) fn request_from_args<T>(args: Value) -> Result<T>
+where
+    T: DeserializeOwned,
+{
+    serde_json::from_value(args).context("Invalid work tool arguments")
 }
 
 pub(super) fn session_end_request_for_finish(outcome: Option<String>) -> SessionEndRequest {
@@ -81,33 +78,29 @@ pub(super) fn session_end_request_for_finish(outcome: Option<String>) -> Session
     }
 }
 
-pub(super) fn plan_append_request_from_args(args_obj: &JsonObject) -> Result<PlanAppendRequest> {
-    Ok(PlanAppendRequest {
-        plan_id: required_string_arg(args_obj, args::PLAN_ID)?,
-        body: string_arg(args_obj, args::BODY),
-        body_file: string_arg(args_obj, args::BODY_FILE).map(PathBuf::from),
-    })
+#[derive(Deserialize)]
+pub(super) struct WorkCheckRequest {
+    pub(super) plan_id: String,
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub(super) tools: Vec<String>,
 }
 
-pub(super) fn receipt_list_filter_from_args(
-    args_obj: &JsonObject,
-    default_limit: usize,
-) -> ReceiptListFilter {
-    ReceiptListFilter {
-        session_id: string_arg(args_obj, args::SESSION_ID),
-        plan_id: string_arg(args_obj, args::PLAN_ID),
-        tool_name: string_arg(args_obj, args::TOOL_NAME),
-        failed_only: bool_arg(args_obj, args::FAILED_ONLY).unwrap_or_default(),
-        limit: usize_arg(args_obj, args::LIMIT).unwrap_or(default_limit),
-    }
+#[derive(Deserialize)]
+pub(super) struct WorkGatesRequest {
+    pub(super) plan_id: String,
 }
 
-pub(super) fn decision_add_request_from_args(args_obj: &JsonObject) -> Result<DecisionAddRequest> {
-    Ok(DecisionAddRequest {
-        title: required_string_arg(args_obj, args::TITLE)?,
-        selected_option: required_string_arg(args_obj, args::SELECTED_OPTION)?,
-        rationale: required_string_arg(args_obj, args::RATIONALE)?,
-        alternatives: string_list_arg(args_obj, args::ALTERNATIVES),
-        plan_id: string_arg(args_obj, args::PLAN_ID),
-    })
+#[derive(Deserialize)]
+pub(super) struct WorkFinishRequest {
+    pub(super) plan_id: String,
+    pub(super) resolution: Option<String>,
+    pub(super) outcome: Option<String>,
+}
+
+fn null_as_default<'de, D, T>(deserializer: D) -> std::result::Result<T, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Default + Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Option::unwrap_or_default)
 }

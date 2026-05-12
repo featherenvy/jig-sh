@@ -33,6 +33,7 @@ mod answers;
 mod file_copy;
 mod git;
 mod initial_copy;
+mod managed_paths;
 mod preview_seed;
 mod renderer;
 mod staged_render;
@@ -44,13 +45,6 @@ const GIT_BIN_ENV: &str = "JIG_GIT_BIN";
 // Legacy conflict helpers keep these in sync with template task side effects.
 #[cfg(test)]
 const ALWAYS_TASK_MUTATED_PATHS: &[&str] = &[".jig.yml", "agent-map.md"];
-const SQLX_PRUNED_TASK_PATHS: &[&str] = &[
-    "scripts/add-migration.sh",
-    "scripts/check-migration-immutability.sh",
-    "scripts/check-schema-dump.sh",
-    "scripts/check-sqlx-unchecked-non-test.sh",
-    "scripts/generate-sqlx-unchecked-queries-todo.sh",
-];
 const TEMPLATE_MODE_KEY: &str = "_template_mode";
 const TEMPLATE_LOCAL_PATH_KEY: &str = "_template_local_path";
 

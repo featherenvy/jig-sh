@@ -318,26 +318,3 @@ pub(crate) fn required_string_arg(map: &JsonObject, key: &str) -> Result<String>
 pub(crate) fn string_arg(map: &JsonObject, key: &str) -> Option<String> {
     map.get(key).and_then(Value::as_str).map(str::to_string)
 }
-
-pub(crate) fn usize_arg(map: &JsonObject, key: &str) -> Option<usize> {
-    map.get(key)
-        .and_then(Value::as_u64)
-        .map(|value| value as usize)
-}
-
-pub(crate) fn bool_arg(map: &JsonObject, key: &str) -> Option<bool> {
-    map.get(key).and_then(Value::as_bool)
-}
-
-pub(crate) fn string_list_arg(map: &JsonObject, key: &str) -> Vec<String> {
-    map.get(key)
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(Value::as_str)
-                .map(str::to_string)
-                .collect()
-        })
-        .unwrap_or_default()
-}

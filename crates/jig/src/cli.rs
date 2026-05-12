@@ -6,9 +6,9 @@ use clap::{Args, Parser, Subcommand};
 
 #[cfg(test)]
 use crate::tool_defs::tool;
-use crate::{bootstrap, context::RepoContext, mcp, runtime, tool_defs};
-
-pub(crate) const DEFAULT_RECEIPTS_LIMIT: usize = 20;
+use crate::{
+    bootstrap, context::RepoContext, mcp, runtime, state::DEFAULT_RECEIPTS_LIMIT, tool_defs,
+};
 
 #[derive(Debug, Parser)]
 #[command(

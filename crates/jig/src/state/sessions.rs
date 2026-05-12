@@ -1,6 +1,7 @@
 use std::fs;
 
 use anyhow::{Result, anyhow};
+use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::context::RepoContext;
@@ -15,6 +16,7 @@ use super::receipts::{StateToolReceipt, receipt_diff_summary, record_successful_
 
 const STATE_SUMMARY_RECENT_LIMIT: usize = 10;
 
+#[derive(Deserialize)]
 pub(crate) struct SessionEndRequest {
     pub(crate) session_id: Option<String>,
     pub(crate) outcome: Option<String>,
@@ -24,14 +26,12 @@ pub(crate) fn session_start(ctx: &RepoContext) -> Result<Value> {
     ensure_state_layout(ctx)?;
     let session_id = new_id("session");
     let summary = build_summary(ctx)?;
-    let event = SessionEvent {
-        id: new_id("session-event"),
-        session_id: session_id.clone(),
-        event: "start".into(),
-        timestamp_ms: now_ms(),
-        outcome: None,
-        summary: Some(summary.clone()),
-    };
+    let event = SessionEvent::start(
+        new_id("session-event"),
+        session_id.clone(),
+        now_ms(),
+        summary.clone(),
+    );
     append_jsonl(&ctx.state_file("sessions.jsonl"), &event)?;
     write_current_session(ctx, Some(&session_id))?;
 
@@ -42,7 +42,7 @@ pub(crate) fn session_start(ctx: &RepoContext) -> Result<Value> {
             args: json!({
                 args::OPERATION: "session_start",
             }),
-            started_at_ms: event.timestamp_ms,
+            started_at_ms: event.timestamp_ms(),
             plan_id: None,
             session_override: Some(session_id.clone()),
         },
@@ -62,14 +62,12 @@ pub(crate) fn session_end(ctx: &RepoContext, request: SessionEndRequest) -> Resu
         Some(id) => id,
         None => current_session(ctx)?.ok_or_else(|| anyhow!("No active session."))?,
     };
-    let event = SessionEvent {
-        id: new_id("session-event"),
-        session_id: session_id.clone(),
-        event: "end".into(),
-        timestamp_ms: now_ms(),
-        outcome: request.outcome.clone(),
-        summary: None,
-    };
+    let event = SessionEvent::end(
+        new_id("session-event"),
+        session_id.clone(),
+        now_ms(),
+        request.outcome.clone(),
+    );
     append_jsonl(&ctx.state_file("sessions.jsonl"), &event)?;
     if current_session(ctx)?.as_deref() == Some(session_id.as_str()) {
         write_current_session(ctx, None)?;
@@ -84,15 +82,15 @@ pub(crate) fn session_end(ctx: &RepoContext, request: SessionEndRequest) -> Resu
                 "session_id": session_id,
                 "outcome": request.outcome,
             }),
-            started_at_ms: event.timestamp_ms,
+            started_at_ms: event.timestamp_ms(),
             plan_id: None,
-            session_override: Some(event.session_id.clone()),
+            session_override: Some(event.session_id().to_string()),
         },
     )?;
 
     Ok(json!({
         "ok": true,
-        "session_id": event.session_id,
+        "session_id": event.session_id(),
         "receipt_id": receipt_id,
     }))
 }
@@ -164,11 +162,8 @@ pub(crate) fn state_summary(ctx: &RepoContext) -> Result<Value> {
     let decisions = read_jsonl::<DecisionRecord>(&ctx.state_file("decisions.jsonl"))?;
 
     let open_plans = open_plans(&plans);
-    let session_count = sessions
-        .iter()
-        .filter(|session| session.event == "start")
-        .count();
-    let plan_count = plans.iter().filter(|plan| plan.event == "open").count();
+    let session_count = sessions.iter().filter(|session| session.is_start()).count();
+    let plan_count = plans.iter().filter(|plan| plan.is_open()).count();
     let failed_receipts = receipts
         .iter()
         .filter(|receipt| receipt.exit_status != 0)

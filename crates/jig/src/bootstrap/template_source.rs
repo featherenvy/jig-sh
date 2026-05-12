@@ -18,11 +18,56 @@ const COMMIT_KEY: &str = "_commit";
 const SRC_PATH_KEY: &str = "_src_path";
 
 #[derive(Clone, Debug, Default)]
+pub(super) struct TemplateIdentity {
+    source: String,
+    resolved_commit: Option<String>,
+    local_path: Option<String>,
+}
+
+impl TemplateIdentity {
+    fn new(source: String, resolved_commit: Option<String>, local_path: Option<String>) -> Self {
+        Self {
+            source,
+            resolved_commit,
+            local_path,
+        }
+    }
+
+    fn source(&self) -> &str {
+        &self.source
+    }
+
+    fn resolved_commit(&self) -> Option<&str> {
+        self.resolved_commit.as_deref()
+    }
+
+    fn local_path(&self) -> Option<&str> {
+        self.local_path.as_deref()
+    }
+
+    fn template_mode_answer(&self) -> Option<&'static str> {
+        self.local_path
+            .as_ref()
+            .map(|_| TemplateMode::Committed.as_str())
+    }
+
+    fn template_local_path_answer(&self) -> Option<&str> {
+        self.local_path()
+    }
+
+    fn candidates(&self) -> [Option<&str>; 2] {
+        [Some(self.source()), self.local_path()]
+    }
+}
+
+#[cfg(test)]
+#[derive(Clone, Debug, Default)]
 pub(super) struct PrivateAnswerOverrides {
     template_mode: Option<TemplateMode>,
     template_local_path: Option<String>,
 }
 
+#[cfg(test)]
 impl PrivateAnswerOverrides {
     pub(super) fn template_mode_answer(&self) -> Option<&'static str> {
         self.template_mode.map(TemplateMode::as_str)
@@ -43,10 +88,8 @@ impl PrivateAnswerOverrides {
 
 #[derive(Clone, Debug)]
 pub(super) struct PreparedTemplateSource {
-    source: String,
+    identity: TemplateIdentity,
     render_root: PathBuf,
-    vcs_ref: Option<String>,
-    private_answers: PrivateAnswerOverrides,
     _checkout: Option<Arc<TempDir>>,
 }
 
@@ -54,21 +97,19 @@ impl PreparedTemplateSource {
     fn new(
         source: String,
         render_root: PathBuf,
-        vcs_ref: Option<String>,
-        private_answers: PrivateAnswerOverrides,
+        resolved_commit: Option<String>,
+        local_path: Option<String>,
         checkout: Option<Arc<TempDir>>,
     ) -> Self {
         Self {
-            source,
+            identity: TemplateIdentity::new(source, resolved_commit, local_path),
             render_root,
-            vcs_ref,
-            private_answers,
             _checkout: checkout,
         }
     }
 
     pub(super) fn source(&self) -> &str {
-        &self.source
+        self.identity.source()
     }
 
     pub(super) fn render_root(&self) -> &Path {
@@ -76,15 +117,15 @@ impl PreparedTemplateSource {
     }
 
     pub(super) fn vcs_ref(&self) -> Option<&str> {
-        self.vcs_ref.as_deref()
+        self.identity.resolved_commit()
     }
 
     pub(super) fn template_mode_answer(&self) -> Option<&'static str> {
-        self.private_answers.template_mode_answer()
+        self.identity.template_mode_answer()
     }
 
     pub(super) fn template_local_path_answer(&self) -> Option<&str> {
-        self.private_answers.template_local_path_answer()
+        self.identity.template_local_path_answer()
     }
 
     #[cfg(test)]
@@ -94,21 +135,37 @@ impl PreparedTemplateSource {
         vcs_ref: Option<String>,
         private_answers: PrivateAnswerOverrides,
     ) -> Self {
-        Self::new(source, render_root, vcs_ref, private_answers, None)
+        Self::new(
+            source,
+            render_root,
+            vcs_ref,
+            private_answers.template_local_path,
+            None,
+        )
     }
 }
 
 #[derive(Clone, Debug)]
 pub(super) struct StoredTemplateState {
-    src_path: String,
-    commit: Option<String>,
+    identity: TemplateIdentity,
     template_mode: Option<TemplateMode>,
-    template_local_path: Option<String>,
 }
 
 impl StoredTemplateState {
     fn has_source_path(&self) -> bool {
-        !self.src_path.is_empty()
+        !self.identity.source.is_empty()
+    }
+
+    fn source_path(&self) -> &str {
+        self.identity.source()
+    }
+
+    fn commit(&self) -> Option<&str> {
+        self.identity.resolved_commit()
+    }
+
+    fn template_local_path(&self) -> Option<&str> {
+        self.identity.local_path()
     }
 
     #[cfg(test)]
@@ -117,10 +174,8 @@ impl StoredTemplateState {
         template_local_path: Option<String>,
     ) -> Self {
         Self {
-            src_path: src_path.into(),
-            commit: None,
+            identity: TemplateIdentity::new(src_path.into(), None, template_local_path),
             template_mode: Some(TemplateMode::Committed),
-            template_local_path,
         }
     }
 }
@@ -183,7 +238,7 @@ pub(super) fn prepare_template_source(
             local_template.display().to_string(),
             local_template,
             vcs_ref.map(str::to_string),
-            PrivateAnswerOverrides::default(),
+            None,
             None,
         ));
     }
@@ -206,7 +261,7 @@ fn prepare_remote_template_source(
         template.to_string(),
         render_root,
         Some(resolved_vcs_ref),
-        PrivateAnswerOverrides::default(),
+        None,
         Some(checkout),
     ))
 }
@@ -234,10 +289,7 @@ fn prepare_committed_template_source(
         template_path.clone(),
         render_root,
         Some(resolved_vcs_ref),
-        PrivateAnswerOverrides {
-            template_mode: Some(TemplateMode::Committed),
-            template_local_path: Some(template_path),
-        },
+        Some(template_path),
         checkout,
     ))
 }
@@ -288,10 +340,12 @@ pub(super) fn read_stored_template_state(answers_path: &Path) -> Result<StoredTe
         .transpose()?;
 
     Ok(StoredTemplateState {
-        src_path: optional_answer_string(&answers, SRC_PATH_KEY).unwrap_or_default(),
-        commit: optional_answer_string(&answers, COMMIT_KEY),
+        identity: TemplateIdentity::new(
+            optional_answer_string(&answers, SRC_PATH_KEY).unwrap_or_default(),
+            optional_answer_string(&answers, COMMIT_KEY),
+            optional_answer_string(&answers, TEMPLATE_LOCAL_PATH_KEY),
+        ),
         template_mode,
-        template_local_path: optional_answer_string(&answers, TEMPLATE_LOCAL_PATH_KEY),
     })
 }
 
@@ -317,11 +371,7 @@ pub(super) fn prepare_update_template_source(
 }
 
 fn recopy_vcs_ref(recopy: bool, stored: &StoredTemplateState) -> Option<&str> {
-    if recopy {
-        stored.commit.as_deref()
-    } else {
-        None
-    }
+    if recopy { stored.commit() } else { None }
 }
 
 fn ensure_update_template_identity(
@@ -357,15 +407,18 @@ fn resolve_update_template_source<'a>(
     }
 
     if opts.template_mode == Some(TemplateMode::Committed) {
-        if let Some(template) = stored.template_local_path.as_deref() {
+        if let Some(template) = stored.template_local_path() {
             return Ok(ResolvedUpdateTemplateSource::new(
                 template,
                 Some(TemplateMode::Committed),
             ));
         }
 
-        if is_remote_template_source(&stored.src_path) {
-            return Ok(ResolvedUpdateTemplateSource::new(&stored.src_path, None));
+        if is_remote_template_source(stored.source_path()) {
+            return Ok(ResolvedUpdateTemplateSource::new(
+                stored.source_path(),
+                None,
+            ));
         }
     }
 
@@ -388,17 +441,13 @@ fn prepare_default_update_template_source(
     stored: &StoredTemplateState,
     recopy: bool,
 ) -> Result<Option<PreparedTemplateSource>> {
-    if stored.src_path.is_empty() {
+    if stored.source_path().is_empty() {
         return Ok(None);
     }
 
     let source = stored_update_source(stored);
     let mode = inherited_update_template_mode(source, None, stored);
-    let vcs_ref = if recopy {
-        stored.commit.as_deref()
-    } else {
-        None
-    };
+    let vcs_ref = if recopy { stored.commit() } else { None };
     let prepared = prepare_template_source(source, mode, vcs_ref)?;
     Ok(Some(final_update_template_state(stored, &prepared)))
 }
@@ -417,14 +466,13 @@ fn inherited_update_template_mode(
 
 fn stored_update_source(stored: &StoredTemplateState) -> &str {
     if stored.template_mode != Some(TemplateMode::Committed) {
-        return &stored.src_path;
+        return stored.source_path();
     }
 
     stored
-        .template_local_path
-        .as_deref()
+        .template_local_path()
         .filter(|template| Path::new(template).is_dir())
-        .unwrap_or(&stored.src_path)
+        .unwrap_or(stored.source_path())
 }
 
 fn parse_template_mode_answer(value: &str) -> Result<TemplateMode> {
@@ -441,18 +489,14 @@ fn template_identities_match(
     stored: &StoredTemplateState,
     prepared: &PreparedTemplateSource,
 ) -> bool {
-    let prepared_identities = [
-        Some(prepared.source()),
-        prepared.private_answers.template_local_path.as_deref(),
-    ];
+    let prepared_identities = [Some(prepared.source()), prepared.identity.local_path()];
 
-    [
-        Some(stored.src_path.as_str()),
-        stored.template_local_path.as_deref(),
-    ]
-    .into_iter()
-    .flatten()
-    .any(|stored_identity| identity_matches(stored_identity, prepared_identities))
+    stored
+        .identity
+        .candidates()
+        .into_iter()
+        .flatten()
+        .any(|stored_identity| identity_matches(stored_identity, prepared_identities))
 }
 
 fn identity_matches(stored_identity: &str, prepared_identities: [Option<&str>; 2]) -> bool {
@@ -470,13 +514,12 @@ fn final_update_template_state(
     let same_committed_template = stored.template_mode == Some(TemplateMode::Committed)
         && template_identities_match(stored, prepared);
 
-    if same_committed_template {
-        if final_template.private_answers.template_mode.is_none() {
-            final_template.private_answers.template_mode = stored.template_mode;
-        }
-        if final_template.private_answers.template_local_path.is_none() {
-            final_template.private_answers.template_local_path = stored.template_local_path.clone();
-        }
+    if same_committed_template && final_template.identity.local_path.is_none() {
+        // Legacy normalized remote committed state can carry committed mode without
+        // a local checkout path. Preserve the rendered private answer shape while
+        // keeping source identity anchored on _src_path.
+        final_template.identity.local_path =
+            Some(stored.identity.local_path.clone().unwrap_or_default());
     }
 
     final_template

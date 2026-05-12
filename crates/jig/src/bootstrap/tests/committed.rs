@@ -224,6 +224,12 @@ fn update_committed_mode_with_vcs_ref_accepts_legacy_normalized_remote_source() 
     );
     assert_eq!(
         answers
+            .get(YamlValue::String(TEMPLATE_MODE_KEY.into()))
+            .and_then(YamlValue::as_str),
+        Some(TemplateMode::Committed.as_str())
+    );
+    assert_eq!(
+        answers
             .get(YamlValue::String("_commit".into()))
             .and_then(YamlValue::as_str),
         Some(old_ref.as_str())

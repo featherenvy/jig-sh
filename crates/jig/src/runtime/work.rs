@@ -9,9 +9,7 @@ use crate::state::{
     plans_append, plans_close, plans_open, receipts_list, record_receipt, session_end,
     session_start, state_summary,
 };
-use crate::tool_defs::{
-    self, JsonObject, args, required_string_arg, string_arg, string_list_arg, tool,
-};
+use crate::tool_defs::{self, tool};
 
 use super::{execute_manifest_make_tool_without_worktree_fingerprint, requests};
 
@@ -70,53 +68,45 @@ pub(super) fn finish(ctx: &RepoContext, opts: WorkFinishOpts) -> Result<Value> {
     }))
 }
 
-pub(super) fn start_from_args(ctx: &RepoContext, args_obj: &JsonObject) -> Result<Value> {
-    start(ctx, requests::plan_open_request_from_args(args_obj)?)
+pub(super) fn start_from_args(ctx: &RepoContext, args: Value) -> Result<Value> {
+    start(ctx, requests::request_from_args(args)?)
 }
 
-pub(super) fn append_from_args(ctx: &RepoContext, args_obj: &JsonObject) -> Result<Value> {
-    plans_append(ctx, requests::plan_append_request_from_args(args_obj)?)
+pub(super) fn append_from_args(ctx: &RepoContext, args: Value) -> Result<Value> {
+    plans_append(ctx, requests::request_from_args(args)?)
 }
 
-pub(super) fn check_from_args(ctx: &RepoContext, args_obj: &JsonObject) -> Result<Value> {
-    let plan_id = required_string_arg(args_obj, args::PLAN_ID)?;
-    check_tools(
-        ctx,
-        &plan_id,
-        selected_tools(ctx, &string_list_arg(args_obj, args::TOOLS))?,
-    )
+pub(super) fn check_from_args(ctx: &RepoContext, args: Value) -> Result<Value> {
+    let request: requests::WorkCheckRequest = requests::request_from_args(args)?;
+    check_tools(ctx, &request.plan_id, selected_tools(ctx, &request.tools)?)
 }
 
-pub(super) fn gates_from_args(ctx: &RepoContext, args_obj: &JsonObject) -> Result<Value> {
+pub(super) fn gates_from_args(ctx: &RepoContext, args: Value) -> Result<Value> {
+    let request: requests::WorkGatesRequest = requests::request_from_args(args)?;
     gates(
         ctx,
         WorkGatesOpts {
-            plan_id: required_string_arg(args_obj, args::PLAN_ID)?,
+            plan_id: request.plan_id,
         },
     )
 }
 
-pub(super) fn decide_from_args(ctx: &RepoContext, args_obj: &JsonObject) -> Result<Value> {
-    decisions_add(ctx, requests::decision_add_request_from_args(args_obj)?)
+pub(super) fn decide_from_args(ctx: &RepoContext, args: Value) -> Result<Value> {
+    decisions_add(ctx, requests::request_from_args(args)?)
 }
 
-pub(super) fn receipts_from_args(ctx: &RepoContext, args_obj: &JsonObject) -> Result<Value> {
-    receipts_list(
-        ctx,
-        requests::receipt_list_filter_from_args(args_obj, crate::cli::DEFAULT_RECEIPTS_LIMIT),
-    )
+pub(super) fn receipts_from_args(ctx: &RepoContext, args: Value) -> Result<Value> {
+    receipts_list(ctx, requests::request_from_args(args)?)
 }
 
-pub(super) fn finish_from_args(ctx: &RepoContext, args_obj: &JsonObject) -> Result<Value> {
-    let plan_id = required_string_arg(args_obj, args::PLAN_ID)?;
-    let resolution = string_arg(args_obj, args::RESOLUTION);
-    let outcome = string_arg(args_obj, args::OUTCOME);
+pub(super) fn finish_from_args(ctx: &RepoContext, args: Value) -> Result<Value> {
+    let request: requests::WorkFinishRequest = requests::request_from_args(args)?;
     finish(
         ctx,
         WorkFinishOpts {
-            plan_id,
-            resolution,
-            outcome,
+            plan_id: request.plan_id,
+            resolution: request.resolution,
+            outcome: request.outcome,
         },
     )
 }

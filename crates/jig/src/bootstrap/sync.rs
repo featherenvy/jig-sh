@@ -9,10 +9,10 @@ use super::ANSWERS_FILE;
 use super::file_copy::{
     copy_file_or_symlink_with_permissions, path_exists, prepare_copy_destination_and_read_metadata,
 };
-use super::renderer::ROOT_AGENTS_PATH;
+use super::managed_paths;
 use super::staged_render::StagedRender;
 #[cfg(test)]
-use super::{ALWAYS_TASK_MUTATED_PATHS, SQLX_PRUNED_TASK_PATHS, read_optional_answer_bool};
+use super::{ALWAYS_TASK_MUTATED_PATHS, read_optional_answer_bool};
 
 pub(super) struct ApplyRenderOptions<'a> {
     pub(super) force: bool,
@@ -84,7 +84,7 @@ fn staged_render_conflicts(
 }
 
 fn is_root_agents_path(relative: &Path) -> bool {
-    relative == Path::new(ROOT_AGENTS_PATH)
+    managed_paths::is_root_agents_path(relative)
 }
 
 fn destination_is_regular_file(path: &Path) -> Result<bool> {
@@ -145,10 +145,10 @@ pub(super) fn rendered_conflicts(
         }
     }
     if read_optional_answer_bool(answers_path, "sqlx_enabled")? == Some(false) {
-        for relative in SQLX_PRUNED_TASK_PATHS {
-            let path = destination.join(relative);
+        for relative in managed_paths::sqlx_pruned_task_paths() {
+            let path = destination.join(&relative);
             if path.exists() {
-                conflicts.insert((*relative).to_string());
+                conflicts.insert(relative.display().to_string());
             }
         }
     }

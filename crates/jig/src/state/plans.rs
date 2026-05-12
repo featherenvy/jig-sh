@@ -3,6 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result, bail};
+use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::context::RepoContext;
@@ -13,18 +14,21 @@ use super::events::{
 };
 use super::receipts::{StateToolReceipt, record_successful_state_tool};
 
+#[derive(Deserialize)]
 pub(crate) struct PlanOpenRequest {
     pub(crate) title: String,
     pub(crate) body: Option<String>,
     pub(crate) body_file: Option<PathBuf>,
 }
 
+#[derive(Deserialize)]
 pub(crate) struct PlanAppendRequest {
     pub(crate) plan_id: String,
     pub(crate) body: Option<String>,
     pub(crate) body_file: Option<PathBuf>,
 }
 
+#[derive(Deserialize)]
 pub(crate) struct PlanCloseRequest {
     pub(crate) plan_id: String,
     pub(crate) resolution: Option<String>,
@@ -40,15 +44,13 @@ pub(crate) fn plans_open(ctx: &RepoContext, request: PlanOpenRequest) -> Result<
     }
     fs::write(&plan_path, body)?;
 
-    let event = PlanEvent {
-        id: new_id("plan-event"),
-        plan_id: plan_id.clone(),
-        event: "open".into(),
-        timestamp_ms: now_ms(),
-        title: Some(request.title.clone()),
-        body_path: Some(rel_path(ctx.root(), &plan_path)?),
-        resolution: None,
-    };
+    let event = PlanEvent::open(
+        new_id("plan-event"),
+        plan_id.clone(),
+        now_ms(),
+        request.title.clone(),
+        Some(rel_path(ctx.root(), &plan_path)?),
+    );
     append_jsonl(&ctx.state_file("plans.jsonl"), &event)?;
 
     let receipt_id = record_successful_state_tool(
@@ -59,7 +61,7 @@ pub(crate) fn plans_open(ctx: &RepoContext, request: PlanOpenRequest) -> Result<
                 args::OPERATION: "plan_open",
                 "title": request.title,
             }),
-            started_at_ms: event.timestamp_ms,
+            started_at_ms: event.timestamp_ms(),
             plan_id: Some(plan_id.clone()),
             session_override: None,
         },
@@ -68,26 +70,24 @@ pub(crate) fn plans_open(ctx: &RepoContext, request: PlanOpenRequest) -> Result<
     Ok(json!({
         "ok": true,
         "plan_id": plan_id,
-        "body_path": event.body_path,
+        "body_path": event.body_path(),
         "receipt_id": receipt_id,
     }))
 }
 
 pub(crate) fn plans_append(ctx: &RepoContext, request: PlanAppendRequest) -> Result<Value> {
     ensure_state_layout(ctx)?;
+    ensure_plan_is_open(ctx, &request.plan_id)?;
     let body = plan_body(request.body, request.body_file)?;
     let plan_path = ctx.plan_body_path(&request.plan_id);
     append_text(&plan_path, format!("\n\n{body}").as_bytes())?;
 
-    let event = PlanEvent {
-        id: new_id("plan-event"),
-        plan_id: request.plan_id.clone(),
-        event: "append".into(),
-        timestamp_ms: now_ms(),
-        title: None,
-        body_path: Some(rel_path(ctx.root(), &plan_path)?),
-        resolution: None,
-    };
+    let event = PlanEvent::append(
+        new_id("plan-event"),
+        request.plan_id.clone(),
+        now_ms(),
+        Some(rel_path(ctx.root(), &plan_path)?),
+    );
     append_jsonl(&ctx.state_file("plans.jsonl"), &event)?;
 
     let receipt_id = record_successful_state_tool(
@@ -98,15 +98,15 @@ pub(crate) fn plans_append(ctx: &RepoContext, request: PlanAppendRequest) -> Res
                 args::OPERATION: "plan_append",
                 "plan_id": request.plan_id,
             }),
-            started_at_ms: event.timestamp_ms,
-            plan_id: Some(event.plan_id.clone()),
+            started_at_ms: event.timestamp_ms(),
+            plan_id: Some(event.plan_id().to_string()),
             session_override: None,
         },
     )?;
 
     Ok(json!({
         "ok": true,
-        "plan_id": event.plan_id,
+        "plan_id": event.plan_id(),
         "receipt_id": receipt_id,
     }))
 }
@@ -115,15 +115,12 @@ pub(crate) fn plans_close(ctx: &RepoContext, request: PlanCloseRequest) -> Resul
     ensure_state_layout(ctx)?;
     ensure_plan_is_open(ctx, &request.plan_id)?;
 
-    let event = PlanEvent {
-        id: new_id("plan-event"),
-        plan_id: request.plan_id.clone(),
-        event: "close".into(),
-        timestamp_ms: now_ms(),
-        title: None,
-        body_path: None,
-        resolution: request.resolution.clone(),
-    };
+    let event = PlanEvent::close(
+        new_id("plan-event"),
+        request.plan_id.clone(),
+        now_ms(),
+        request.resolution.clone(),
+    );
     append_jsonl(&ctx.state_file("plans.jsonl"), &event)?;
 
     let receipt_id = record_successful_state_tool(
@@ -135,15 +132,15 @@ pub(crate) fn plans_close(ctx: &RepoContext, request: PlanCloseRequest) -> Resul
                 "plan_id": request.plan_id,
                 "resolution": request.resolution,
             }),
-            started_at_ms: event.timestamp_ms,
-            plan_id: Some(event.plan_id.clone()),
+            started_at_ms: event.timestamp_ms(),
+            plan_id: Some(event.plan_id().to_string()),
             session_override: None,
         },
     )?;
 
     Ok(json!({
         "ok": true,
-        "plan_id": event.plan_id,
+        "plan_id": event.plan_id(),
         "receipt_id": receipt_id,
     }))
 }
@@ -154,13 +151,13 @@ pub(crate) fn ensure_plan_is_open(ctx: &RepoContext, plan_id: &str) -> Result<()
     let mut opened = false;
     let mut closed = false;
 
-    for event in events.iter().filter(|event| event.plan_id == plan_id) {
-        match event.event.as_str() {
-            "open" => {
+    for event in events.iter().filter(|event| event.plan_id() == plan_id) {
+        match event {
+            PlanEvent::Open { .. } => {
                 opened = true;
                 closed = false;
             }
-            "close" => closed = true,
+            PlanEvent::Close { .. } => closed = true,
             _ => {}
         }
     }
@@ -176,18 +173,17 @@ pub(super) fn open_plans(events: &[PlanEvent]) -> Vec<Value> {
     let mut closed = HashSet::new();
     let mut opened = BTreeMap::<String, (&str, Option<&str>)>::new();
     for event in events {
-        match event.event.as_str() {
-            "open" => {
-                opened.insert(
-                    event.plan_id.clone(),
-                    (
-                        event.title.as_deref().unwrap_or("Untitled plan"),
-                        event.body_path.as_deref(),
-                    ),
-                );
+        match event {
+            PlanEvent::Open {
+                plan_id,
+                title,
+                body_path,
+                ..
+            } => {
+                opened.insert(plan_id.clone(), (title.as_str(), body_path.as_deref()));
             }
-            "close" => {
-                closed.insert(event.plan_id.clone());
+            PlanEvent::Close { plan_id, .. } => {
+                closed.insert(plan_id.clone());
             }
             _ => {}
         }
