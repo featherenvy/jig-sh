@@ -231,7 +231,6 @@ fn run_make(ctx: &RepoContext, target: &str, args: &Value) -> Result<Output> {
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::io::Write;
     use std::path::Path;
     use std::process::Command;
 
@@ -394,15 +393,35 @@ work:
         plan["plan_id"].as_str().unwrap().to_string()
     }
 
-    fn append_receipt(root: &Path, receipt: Value) {
-        let path = root.join(".agent/state/receipts.jsonl");
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        let mut file = fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)
-            .unwrap();
-        writeln!(file, "{receipt}").unwrap();
+    struct TestReceipt<'a> {
+        tool_name: &'a str,
+        args: Value,
+        plan_id: &'a str,
+        started_at_ms: u64,
+        ended_at_ms: u64,
+        worktree_fingerprint: Option<String>,
+    }
+
+    fn record_test_receipt(ctx: &RepoContext, receipt: TestReceipt<'_>) -> String {
+        record_receipt(
+            ctx,
+            ReceiptInput {
+                tool_name: receipt.tool_name,
+                args: receipt.args,
+                invoked_make_target: None,
+                plan_id: Some(receipt.plan_id.to_string()),
+                started_at_ms: receipt.started_at_ms,
+                ended_at_ms: receipt.ended_at_ms,
+                exit_status: 0,
+                stdout: "",
+                stderr: "",
+                session_override: None,
+                collect_git_metadata: false,
+                collect_worktree_fingerprint: false,
+                worktree_fingerprint_override: receipt.worktree_fingerprint.map(Ok),
+            },
+        )
+        .unwrap()
     }
 
     fn init_git_repo(root: &Path) {
@@ -778,49 +797,27 @@ work:
             .fingerprint
             .expect("git fixture should produce fingerprint");
 
-        append_receipt(
-            temp.path(),
-            json!({
-                "id": "receipt_old_batch",
-                "session_id": null,
-                "plan_id": "plan_1",
-                "tool_name": "jig.work_check",
-                "args": { "plan_id": "plan_1", "tools": ["jig.custom_check"] },
-                "invoked_make_target": null,
-                "started_at_ms": 100,
-                "ended_at_ms": 200,
-                "exit_status": 0,
-                "stdout_preview": "",
-                "stderr_preview": "",
-                "changed_paths": [],
-                "diff_stat": { "files": 0, "insertions": 0, "deletions": 0 },
-                "git_status_error": null,
-                "git_diff_stat_error": null,
-                "worktree_fingerprint": "stale-fingerprint",
-                "worktree_fingerprint_error": null
-            }),
+        record_test_receipt(
+            &ctx,
+            TestReceipt {
+                tool_name: tool::WORK_CHECK,
+                args: json!({ "plan_id": "plan_1", "tools": ["jig.custom_check"] }),
+                plan_id: "plan_1",
+                started_at_ms: 100,
+                ended_at_ms: 200,
+                worktree_fingerprint: Some("stale-fingerprint".into()),
+            },
         );
-        append_receipt(
-            temp.path(),
-            json!({
-                "id": "receipt_direct",
-                "session_id": null,
-                "plan_id": "plan_1",
-                "tool_name": "jig.custom_check",
-                "args": {},
-                "invoked_make_target": "custom-check",
-                "started_at_ms": 200,
-                "ended_at_ms": 200,
-                "exit_status": 0,
-                "stdout_preview": "",
-                "stderr_preview": "",
-                "changed_paths": [],
-                "diff_stat": { "files": 0, "insertions": 0, "deletions": 0 },
-                "git_status_error": null,
-                "git_diff_stat_error": null,
-                "worktree_fingerprint": fingerprint,
-                "worktree_fingerprint_error": null
-            }),
+        let direct_receipt_id = record_test_receipt(
+            &ctx,
+            TestReceipt {
+                tool_name: "jig.custom_check",
+                args: json!({}),
+                plan_id: "plan_1",
+                started_at_ms: 200,
+                ended_at_ms: 200,
+                worktree_fingerprint: Some(fingerprint),
+            },
         );
 
         let gates = dispatch(
@@ -834,11 +831,11 @@ work:
         assert_eq!(gates["overall"], "passed");
         assert_eq!(gates["gates"][0]["status"], "passed");
         assert_eq!(gates["gates"][0]["freshness"], "fresh");
-        assert_eq!(gates["gates"][0]["freshness_receipt_id"], "receipt_direct");
+        assert_eq!(gates["gates"][0]["freshness_receipt_id"], direct_receipt_id);
     }
 
     #[test]
-    fn work_gates_use_exact_batch_receipt_id_when_batches_interleave() {
+    fn work_gates_use_legacy_batch_receipt_without_receipt_ids() {
         let temp = tempdir().unwrap();
         write_fixture_repo(temp.path());
         init_git_repo(temp.path());
@@ -847,79 +844,27 @@ work:
             .fingerprint
             .expect("git fixture should produce fingerprint");
 
-        append_receipt(
-            temp.path(),
-            json!({
-                "id": "receipt_target_tool",
-                "session_id": null,
-                "plan_id": "plan_1",
-                "tool_name": "jig.custom_check",
-                "args": {},
-                "invoked_make_target": "custom-check",
-                "started_at_ms": 100,
-                "ended_at_ms": 110,
-                "exit_status": 0,
-                "stdout_preview": "",
-                "stderr_preview": "",
-                "changed_paths": [],
-                "diff_stat": { "files": 0, "insertions": 0, "deletions": 0 },
-                "git_status_error": null,
-                "git_diff_stat_error": null,
-                "worktree_fingerprint": null,
-                "worktree_fingerprint_error": null
-            }),
+        record_test_receipt(
+            &ctx,
+            TestReceipt {
+                tool_name: "jig.custom_check",
+                args: json!({}),
+                plan_id: "plan_1",
+                started_at_ms: 100,
+                ended_at_ms: 110,
+                worktree_fingerprint: None,
+            },
         );
-        append_receipt(
-            temp.path(),
-            json!({
-                "id": "receipt_target_batch",
-                "session_id": null,
-                "plan_id": "plan_1",
-                "tool_name": "jig.work_check",
-                "args": {
-                    "plan_id": "plan_1",
-                    "tools": ["jig.custom_check"],
-                    "receipt_ids": ["receipt_target_tool"]
-                },
-                "invoked_make_target": null,
-                "started_at_ms": 100,
-                "ended_at_ms": 120,
-                "exit_status": 0,
-                "stdout_preview": "",
-                "stderr_preview": "",
-                "changed_paths": [],
-                "diff_stat": { "files": 0, "insertions": 0, "deletions": 0 },
-                "git_status_error": null,
-                "git_diff_stat_error": null,
-                "worktree_fingerprint": fingerprint,
-                "worktree_fingerprint_error": null
-            }),
-        );
-        append_receipt(
-            temp.path(),
-            json!({
-                "id": "receipt_unrelated_batch",
-                "session_id": null,
-                "plan_id": "plan_1",
-                "tool_name": "jig.work_check",
-                "args": {
-                    "plan_id": "plan_1",
-                    "tools": ["jig.custom_check"],
-                    "receipt_ids": ["receipt_other_tool"]
-                },
-                "invoked_make_target": null,
-                "started_at_ms": 90,
-                "ended_at_ms": 130,
-                "exit_status": 0,
-                "stdout_preview": "",
-                "stderr_preview": "",
-                "changed_paths": [],
-                "diff_stat": { "files": 0, "insertions": 0, "deletions": 0 },
-                "git_status_error": null,
-                "git_diff_stat_error": null,
-                "worktree_fingerprint": "stale-fingerprint",
-                "worktree_fingerprint_error": null
-            }),
+        let legacy_batch_receipt_id = record_test_receipt(
+            &ctx,
+            TestReceipt {
+                tool_name: tool::WORK_CHECK,
+                args: json!({ "plan_id": "plan_1", "tools": ["jig.custom_check"] }),
+                plan_id: "plan_1",
+                started_at_ms: 100,
+                ended_at_ms: 120,
+                worktree_fingerprint: Some(fingerprint),
+            },
         );
 
         let gates = dispatch(
@@ -935,8 +880,74 @@ work:
         assert_eq!(gates["gates"][0]["freshness"], "fresh");
         assert_eq!(
             gates["gates"][0]["freshness_receipt_id"],
-            "receipt_target_batch"
+            legacy_batch_receipt_id
         );
+    }
+
+    #[test]
+    fn work_gates_use_exact_batch_receipt_id_when_batches_interleave() {
+        let temp = tempdir().unwrap();
+        write_fixture_repo(temp.path());
+        init_git_repo(temp.path());
+        let ctx = RepoContext::load_from(temp.path()).unwrap();
+        let fingerprint = crate::state::current_worktree_fingerprint(&ctx)
+            .fingerprint
+            .expect("git fixture should produce fingerprint");
+
+        let tool_receipt_id = record_test_receipt(
+            &ctx,
+            TestReceipt {
+                tool_name: "jig.custom_check",
+                args: json!({}),
+                plan_id: "plan_1",
+                started_at_ms: 100,
+                ended_at_ms: 110,
+                worktree_fingerprint: None,
+            },
+        );
+        let batch_receipt_id = record_test_receipt(
+            &ctx,
+            TestReceipt {
+                tool_name: tool::WORK_CHECK,
+                args: json!({
+                    "plan_id": "plan_1",
+                    "tools": ["jig.custom_check"],
+                    "receipt_ids": [tool_receipt_id],
+                }),
+                plan_id: "plan_1",
+                started_at_ms: 100,
+                ended_at_ms: 120,
+                worktree_fingerprint: Some(fingerprint),
+            },
+        );
+        record_test_receipt(
+            &ctx,
+            TestReceipt {
+                tool_name: tool::WORK_CHECK,
+                args: json!({
+                    "plan_id": "plan_1",
+                    "tools": ["jig.custom_check"],
+                    "receipt_ids": ["receipt_other_tool"],
+                }),
+                plan_id: "plan_1",
+                started_at_ms: 90,
+                ended_at_ms: 130,
+                worktree_fingerprint: Some("stale-fingerprint".into()),
+            },
+        );
+
+        let gates = dispatch(
+            &ctx,
+            CommandKind::Work(crate::cli::WorkCommand::Gates(crate::cli::WorkGatesOpts {
+                plan_id: "plan_1".into(),
+            })),
+        )
+        .unwrap();
+
+        assert_eq!(gates["overall"], "passed");
+        assert_eq!(gates["gates"][0]["status"], "passed");
+        assert_eq!(gates["gates"][0]["freshness"], "fresh");
+        assert_eq!(gates["gates"][0]["freshness_receipt_id"], batch_receipt_id);
     }
 
     #[test]

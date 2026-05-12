@@ -48,6 +48,9 @@ pub(super) fn gates(ctx: &RepoContext, opts: WorkGatesOpts) -> Result<Value> {
 }
 
 pub(super) fn finish(ctx: &RepoContext, opts: WorkFinishOpts) -> Result<Value> {
+    // Check before gate evaluation so unknown or already-closed plans report
+    // plan-state errors instead of misleading gate failures. plans_close
+    // rechecks after gates to preserve the state-layer invariant.
     ensure_plan_is_open(ctx, &opts.plan_id)?;
     ensure_required_gates_passed(ctx, &opts.plan_id)?;
 

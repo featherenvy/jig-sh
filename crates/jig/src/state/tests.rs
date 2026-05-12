@@ -143,6 +143,63 @@ fn plans_append_serializes_concurrent_writers() {
 }
 
 #[test]
+fn plans_close_rejects_unknown_plan() {
+    let temp = tempdir().unwrap();
+    write_fixture_repo(temp.path());
+    let ctx = RepoContext::load_from(temp.path()).unwrap();
+
+    let error = plans_close(
+        &ctx,
+        PlanCloseRequest {
+            plan_id: "plan_missing".into(),
+            resolution: Some("done".into()),
+        },
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("Plan not found: plan_missing"));
+}
+
+#[test]
+fn plans_close_rejects_already_closed_plan() {
+    let temp = tempdir().unwrap();
+    write_fixture_repo(temp.path());
+    let ctx = RepoContext::load_from(temp.path()).unwrap();
+    let plan = plans_open(
+        &ctx,
+        PlanOpenRequest {
+            title: "Close once".into(),
+            body: Some("Initial body".into()),
+            body_file: None,
+        },
+    )
+    .unwrap();
+    let plan_id = plan["plan_id"].as_str().unwrap().to_string();
+
+    plans_close(
+        &ctx,
+        PlanCloseRequest {
+            plan_id: plan_id.clone(),
+            resolution: Some("done".into()),
+        },
+    )
+    .unwrap();
+
+    let error = plans_close(
+        &ctx,
+        PlanCloseRequest {
+            plan_id: plan_id.clone(),
+            resolution: Some("done again".into()),
+        },
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains(&format!("Plan is already closed: {plan_id}")));
+}
+
+#[test]
 fn structured_work_keeps_legacy_state_receipt_tool_names() {
     let temp = tempdir().unwrap();
     write_fixture_repo(temp.path());
