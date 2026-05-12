@@ -3,6 +3,13 @@ name = "jig-sh"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description = "Agent-oriented repository harness and MCP runtime for Rust application repos."
+repository = "https://github.com/bpcakes/jig-sh"
+homepage = "https://github.com/bpcakes/jig-sh"
+documentation = "https://github.com/bpcakes/jig-sh/tree/main/docs"
+readme = "../../README.md"
+keywords = ["agents", "cli", "mcp", "workflow"]
+categories = ["command-line-utilities", "development-tools"]
 
 [lib]
 name = "jig"
