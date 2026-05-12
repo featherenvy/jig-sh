@@ -231,6 +231,7 @@ fn run_make(ctx: &RepoContext, target: &str, args: &Value) -> Result<Output> {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::io::Write;
     use std::path::Path;
     use std::process::Command;
 
@@ -333,6 +334,75 @@ work:
             .unwrap(),
         )
         .unwrap();
+    }
+
+    fn write_failing_check_fixture_repo(root: &Path) {
+        fs::create_dir_all(root.join(".agent")).unwrap();
+        fs::write(
+            root.join(".jig.yml"),
+            r#"_src_path: '/tmp/template'
+_commit: 'abc123'
+repo_name: 'demo'
+default_branch: 'main'
+jig_version: '0.1.0'
+work:
+  gates:
+    - id: custom
+      kind: check
+      tool: jig.custom_check
+"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("Makefile"),
+            "custom-check:\n\t@printf 'check failed\\n' >&2\n\t@exit 7\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join(".agent/jig-contract.json"),
+            serde_json::to_string_pretty(&json!({
+                "contract_version": 1,
+                "tool_namespace": "jig",
+                "jig_version": "0.1.0",
+                "required_make_targets": ["custom-check"],
+                "optional_make_targets": [],
+                "tools": [
+                    {
+                        "name": "jig.custom_check",
+                        "kind": "make",
+                        "description": "Run make custom-check.",
+                        "target": "custom-check"
+                    }
+                ],
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    }
+
+    fn open_test_plan(ctx: &RepoContext) -> String {
+        let plan = crate::state::plans_open(
+            ctx,
+            crate::state::PlanOpenRequest {
+                title: "Test plan".into(),
+                body: Some("Test body".into()),
+                body_file: None,
+            },
+        )
+        .unwrap();
+
+        plan["plan_id"].as_str().unwrap().to_string()
+    }
+
+    fn append_receipt(root: &Path, receipt: Value) {
+        let path = root.join(".agent/state/receipts.jsonl");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let mut file = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .unwrap();
+        writeln!(file, "{receipt}").unwrap();
     }
 
     fn init_git_repo(root: &Path) {
@@ -441,6 +511,10 @@ work:
 
         assert!(tool_receipt["worktree_fingerprint"].is_null());
         assert!(batch_receipt["worktree_fingerprint"].as_str().is_some());
+        assert_eq!(
+            batch_receipt["args"]["receipt_ids"][0],
+            tool_receipt["id"].as_str().unwrap()
+        );
     }
 
     #[test]
@@ -523,12 +597,13 @@ work:
         let temp = tempdir().unwrap();
         write_fixture_repo(temp.path());
         let ctx = RepoContext::load_from(temp.path()).unwrap();
+        let plan_id = open_test_plan(&ctx);
 
         let error = dispatch(
             &ctx,
             CommandKind::Work(crate::cli::WorkCommand::Finish(
                 crate::cli::WorkFinishOpts {
-                    plan_id: "plan_1".into(),
+                    plan_id,
                     resolution: Some("done".into()),
                     outcome: Some("success".into()),
                 },
@@ -542,16 +617,40 @@ work:
     }
 
     #[test]
+    fn work_finish_rejects_unknown_plan_before_checking_gates() {
+        let temp = tempdir().unwrap();
+        write_fixture_repo(temp.path());
+        let ctx = RepoContext::load_from(temp.path()).unwrap();
+
+        let error = dispatch(
+            &ctx,
+            CommandKind::Work(crate::cli::WorkCommand::Finish(
+                crate::cli::WorkFinishOpts {
+                    plan_id: "plan_missing".into(),
+                    resolution: Some("done".into()),
+                    outcome: Some("success".into()),
+                },
+            )),
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("Plan not found: plan_missing"));
+        assert!(!error.contains("Required work gates are not satisfied"));
+    }
+
+    #[test]
     fn work_finish_allows_passing_required_gates() {
         let temp = tempdir().unwrap();
         write_fixture_repo(temp.path());
         init_git_repo(temp.path());
         let ctx = RepoContext::load_from(temp.path()).unwrap();
+        let plan_id = open_test_plan(&ctx);
 
         dispatch(
             &ctx,
             CommandKind::Work(crate::cli::WorkCommand::Check(crate::cli::WorkCheckOpts {
-                plan_id: "plan_1".into(),
+                plan_id: plan_id.clone(),
                 tools: Vec::new(),
             })),
         )
@@ -561,7 +660,7 @@ work:
             &ctx,
             CommandKind::Work(crate::cli::WorkCommand::Finish(
                 crate::cli::WorkFinishOpts {
-                    plan_id: "plan_1".into(),
+                    plan_id: plan_id.clone(),
                     resolution: Some("done".into()),
                     outcome: Some("success".into()),
                 },
@@ -570,7 +669,7 @@ work:
         .unwrap();
 
         assert_eq!(output["ok"], true);
-        assert_eq!(output["plan"]["plan_id"], "plan_1");
+        assert_eq!(output["plan"]["plan_id"], plan_id);
     }
 
     #[test]
@@ -579,11 +678,12 @@ work:
         write_fixture_repo(temp.path());
         init_git_repo(temp.path());
         let ctx = RepoContext::load_from(temp.path()).unwrap();
+        let plan_id = open_test_plan(&ctx);
 
         dispatch(
             &ctx,
             CommandKind::Work(crate::cli::WorkCommand::Check(crate::cli::WorkCheckOpts {
-                plan_id: "plan_1".into(),
+                plan_id: plan_id.clone(),
                 tools: Vec::new(),
             })),
         )
@@ -597,7 +697,7 @@ work:
         let gates = dispatch(
             &ctx,
             CommandKind::Work(crate::cli::WorkCommand::Gates(crate::cli::WorkGatesOpts {
-                plan_id: "plan_1".into(),
+                plan_id: plan_id.clone(),
             })),
         )
         .unwrap();
@@ -611,7 +711,7 @@ work:
             &ctx,
             CommandKind::Work(crate::cli::WorkCommand::Finish(
                 crate::cli::WorkFinishOpts {
-                    plan_id: "plan_1".into(),
+                    plan_id,
                     resolution: Some("done".into()),
                     outcome: Some("success".into()),
                 },
@@ -628,11 +728,12 @@ work:
         let temp = tempdir().unwrap();
         write_fixture_repo(temp.path());
         let ctx = RepoContext::load_from(temp.path()).unwrap();
+        let plan_id = open_test_plan(&ctx);
 
         dispatch(
             &ctx,
             CommandKind::Work(crate::cli::WorkCommand::Check(crate::cli::WorkCheckOpts {
-                plan_id: "plan_1".into(),
+                plan_id: plan_id.clone(),
                 tools: Vec::new(),
             })),
         )
@@ -641,7 +742,7 @@ work:
         let gates = dispatch(
             &ctx,
             CommandKind::Work(crate::cli::WorkCommand::Gates(crate::cli::WorkGatesOpts {
-                plan_id: "plan_1".into(),
+                plan_id: plan_id.clone(),
             })),
         )
         .unwrap();
@@ -655,7 +756,7 @@ work:
             &ctx,
             CommandKind::Work(crate::cli::WorkCommand::Finish(
                 crate::cli::WorkFinishOpts {
-                    plan_id: "plan_1".into(),
+                    plan_id,
                     resolution: Some("done".into()),
                     outcome: Some("success".into()),
                 },
@@ -665,6 +766,208 @@ work:
         .to_string();
 
         assert!(error.contains("Unknown: [custom]"));
+    }
+
+    #[test]
+    fn work_gates_use_direct_receipt_when_prior_batch_ended_in_same_millisecond() {
+        let temp = tempdir().unwrap();
+        write_fixture_repo(temp.path());
+        init_git_repo(temp.path());
+        let ctx = RepoContext::load_from(temp.path()).unwrap();
+        let fingerprint = crate::state::current_worktree_fingerprint(&ctx)
+            .fingerprint
+            .expect("git fixture should produce fingerprint");
+
+        append_receipt(
+            temp.path(),
+            json!({
+                "id": "receipt_old_batch",
+                "session_id": null,
+                "plan_id": "plan_1",
+                "tool_name": "jig.work_check",
+                "args": { "plan_id": "plan_1", "tools": ["jig.custom_check"] },
+                "invoked_make_target": null,
+                "started_at_ms": 100,
+                "ended_at_ms": 200,
+                "exit_status": 0,
+                "stdout_preview": "",
+                "stderr_preview": "",
+                "changed_paths": [],
+                "diff_stat": { "files": 0, "insertions": 0, "deletions": 0 },
+                "git_status_error": null,
+                "git_diff_stat_error": null,
+                "worktree_fingerprint": "stale-fingerprint",
+                "worktree_fingerprint_error": null
+            }),
+        );
+        append_receipt(
+            temp.path(),
+            json!({
+                "id": "receipt_direct",
+                "session_id": null,
+                "plan_id": "plan_1",
+                "tool_name": "jig.custom_check",
+                "args": {},
+                "invoked_make_target": "custom-check",
+                "started_at_ms": 200,
+                "ended_at_ms": 200,
+                "exit_status": 0,
+                "stdout_preview": "",
+                "stderr_preview": "",
+                "changed_paths": [],
+                "diff_stat": { "files": 0, "insertions": 0, "deletions": 0 },
+                "git_status_error": null,
+                "git_diff_stat_error": null,
+                "worktree_fingerprint": fingerprint,
+                "worktree_fingerprint_error": null
+            }),
+        );
+
+        let gates = dispatch(
+            &ctx,
+            CommandKind::Work(crate::cli::WorkCommand::Gates(crate::cli::WorkGatesOpts {
+                plan_id: "plan_1".into(),
+            })),
+        )
+        .unwrap();
+
+        assert_eq!(gates["overall"], "passed");
+        assert_eq!(gates["gates"][0]["status"], "passed");
+        assert_eq!(gates["gates"][0]["freshness"], "fresh");
+        assert_eq!(gates["gates"][0]["freshness_receipt_id"], "receipt_direct");
+    }
+
+    #[test]
+    fn work_gates_use_exact_batch_receipt_id_when_batches_interleave() {
+        let temp = tempdir().unwrap();
+        write_fixture_repo(temp.path());
+        init_git_repo(temp.path());
+        let ctx = RepoContext::load_from(temp.path()).unwrap();
+        let fingerprint = crate::state::current_worktree_fingerprint(&ctx)
+            .fingerprint
+            .expect("git fixture should produce fingerprint");
+
+        append_receipt(
+            temp.path(),
+            json!({
+                "id": "receipt_target_tool",
+                "session_id": null,
+                "plan_id": "plan_1",
+                "tool_name": "jig.custom_check",
+                "args": {},
+                "invoked_make_target": "custom-check",
+                "started_at_ms": 100,
+                "ended_at_ms": 110,
+                "exit_status": 0,
+                "stdout_preview": "",
+                "stderr_preview": "",
+                "changed_paths": [],
+                "diff_stat": { "files": 0, "insertions": 0, "deletions": 0 },
+                "git_status_error": null,
+                "git_diff_stat_error": null,
+                "worktree_fingerprint": null,
+                "worktree_fingerprint_error": null
+            }),
+        );
+        append_receipt(
+            temp.path(),
+            json!({
+                "id": "receipt_target_batch",
+                "session_id": null,
+                "plan_id": "plan_1",
+                "tool_name": "jig.work_check",
+                "args": {
+                    "plan_id": "plan_1",
+                    "tools": ["jig.custom_check"],
+                    "receipt_ids": ["receipt_target_tool"]
+                },
+                "invoked_make_target": null,
+                "started_at_ms": 100,
+                "ended_at_ms": 120,
+                "exit_status": 0,
+                "stdout_preview": "",
+                "stderr_preview": "",
+                "changed_paths": [],
+                "diff_stat": { "files": 0, "insertions": 0, "deletions": 0 },
+                "git_status_error": null,
+                "git_diff_stat_error": null,
+                "worktree_fingerprint": fingerprint,
+                "worktree_fingerprint_error": null
+            }),
+        );
+        append_receipt(
+            temp.path(),
+            json!({
+                "id": "receipt_unrelated_batch",
+                "session_id": null,
+                "plan_id": "plan_1",
+                "tool_name": "jig.work_check",
+                "args": {
+                    "plan_id": "plan_1",
+                    "tools": ["jig.custom_check"],
+                    "receipt_ids": ["receipt_other_tool"]
+                },
+                "invoked_make_target": null,
+                "started_at_ms": 90,
+                "ended_at_ms": 130,
+                "exit_status": 0,
+                "stdout_preview": "",
+                "stderr_preview": "",
+                "changed_paths": [],
+                "diff_stat": { "files": 0, "insertions": 0, "deletions": 0 },
+                "git_status_error": null,
+                "git_diff_stat_error": null,
+                "worktree_fingerprint": "stale-fingerprint",
+                "worktree_fingerprint_error": null
+            }),
+        );
+
+        let gates = dispatch(
+            &ctx,
+            CommandKind::Work(crate::cli::WorkCommand::Gates(crate::cli::WorkGatesOpts {
+                plan_id: "plan_1".into(),
+            })),
+        )
+        .unwrap();
+
+        assert_eq!(gates["overall"], "passed");
+        assert_eq!(gates["gates"][0]["status"], "passed");
+        assert_eq!(gates["gates"][0]["freshness"], "fresh");
+        assert_eq!(
+            gates["gates"][0]["freshness_receipt_id"],
+            "receipt_target_batch"
+        );
+    }
+
+    #[test]
+    fn work_gates_keep_failed_checks_failed_when_freshness_is_unknown() {
+        let temp = tempdir().unwrap();
+        write_failing_check_fixture_repo(temp.path());
+        let ctx = RepoContext::load_from(temp.path()).unwrap();
+
+        let error = dispatch(
+            &ctx,
+            CommandKind::Work(crate::cli::WorkCommand::Check(crate::cli::WorkCheckOpts {
+                plan_id: "plan_1".into(),
+                tools: Vec::new(),
+            })),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("jig.custom_check failed with status 2"));
+
+        let gates = dispatch(
+            &ctx,
+            CommandKind::Work(crate::cli::WorkCommand::Gates(crate::cli::WorkGatesOpts {
+                plan_id: "plan_1".into(),
+            })),
+        )
+        .unwrap();
+
+        assert_eq!(gates["overall"], "blocked");
+        assert_eq!(gates["gates"][0]["status"], "failed");
+        assert_eq!(gates["gates"][0]["freshness"], "unknown");
+        assert_eq!(gates["failed_required"][0], "custom");
     }
 
     #[test]

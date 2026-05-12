@@ -5,9 +5,9 @@ use crate::cli::{WorkCheckOpts, WorkCommand, WorkFinishOpts, WorkGatesOpts};
 use crate::context::{RepoContext, WorkGateConfig};
 use crate::state::{
     ReceiptInput, current_session, current_worktree_fingerprint, decisions_add,
-    latest_plan_tool_receipt, latest_plan_work_check_receipt_for_tool, now_ms, plans_append,
-    plans_close, plans_open, receipts_list, record_receipt, session_end, session_start,
-    state_summary,
+    ensure_plan_is_open, latest_plan_tool_receipt, latest_plan_work_check_receipt_for_tool, now_ms,
+    plans_append, plans_close, plans_open, receipts_list, record_receipt, session_end,
+    session_start, state_summary,
 };
 use crate::tool_defs::{
     self, JsonObject, args, required_string_arg, string_arg, string_list_arg, tool,
@@ -48,6 +48,7 @@ pub(super) fn gates(ctx: &RepoContext, opts: WorkGatesOpts) -> Result<Value> {
 }
 
 pub(super) fn finish(ctx: &RepoContext, opts: WorkFinishOpts) -> Result<Value> {
+    ensure_plan_is_open(ctx, &opts.plan_id)?;
     ensure_required_gates_passed(ctx, &opts.plan_id)?;
 
     let plan = plans_close(ctx, (&opts).into())?;
@@ -145,6 +146,10 @@ fn check_tools(ctx: &RepoContext, plan_id: &str, tools: Vec<String>) -> Result<V
             Some(plan_id.to_string()),
         )?);
     }
+    let receipt_ids = results
+        .iter()
+        .filter_map(|result| result["receipt_id"].as_str())
+        .collect::<Vec<_>>();
     let after_fingerprint = current_worktree_fingerprint(ctx);
     let worktree_fingerprint_override =
         work_check_fingerprint_evidence(&before_fingerprint, &after_fingerprint);
@@ -155,6 +160,7 @@ fn check_tools(ctx: &RepoContext, plan_id: &str, tools: Vec<String>) -> Result<V
             args: json!({
                 "plan_id": plan_id,
                 "tools": tools,
+                "receipt_ids": receipt_ids,
             }),
             invoked_make_target: None,
             plan_id: Some(plan_id.to_string()),
@@ -270,7 +276,7 @@ fn gate_status_value(
                         ctx,
                         plan_id,
                         tool_name,
-                        receipt.ended_at_ms,
+                        &receipt.receipt_id,
                     )?
                     .or_else(|| Some(receipt.clone()))
                 }

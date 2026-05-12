@@ -9,7 +9,8 @@ use events::{DecisionRecord, append_jsonl, ensure_state_layout, new_id};
 #[cfg(test)]
 use events::{PlanEvent, ReceiptRecord, read_jsonl, truncate};
 pub(crate) use plans::{
-    PlanAppendRequest, PlanCloseRequest, PlanOpenRequest, plans_append, plans_close, plans_open,
+    PlanAppendRequest, PlanCloseRequest, PlanOpenRequest, ensure_plan_is_open, plans_append,
+    plans_close, plans_open,
 };
 pub(crate) use receipts::{
     CurrentWorktreeFingerprint, ToolReceiptStatus, current_worktree_fingerprint,

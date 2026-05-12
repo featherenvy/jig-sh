@@ -9,7 +9,7 @@ use crate::context::RepoContext;
 use crate::tool_defs::{args, tool};
 
 use super::events::{
-    PlanEvent, append_jsonl, append_text, ensure_state_layout, new_id, now_ms, rel_path,
+    PlanEvent, append_jsonl, append_text, ensure_state_layout, new_id, now_ms, read_jsonl, rel_path,
 };
 use super::receipts::{StateToolReceipt, record_successful_state_tool};
 
@@ -113,6 +113,8 @@ pub(crate) fn plans_append(ctx: &RepoContext, request: PlanAppendRequest) -> Res
 
 pub(crate) fn plans_close(ctx: &RepoContext, request: PlanCloseRequest) -> Result<Value> {
     ensure_state_layout(ctx)?;
+    ensure_plan_is_open(ctx, &request.plan_id)?;
+
     let event = PlanEvent {
         id: new_id("plan-event"),
         plan_id: request.plan_id.clone(),
@@ -144,6 +146,30 @@ pub(crate) fn plans_close(ctx: &RepoContext, request: PlanCloseRequest) -> Resul
         "plan_id": event.plan_id,
         "receipt_id": receipt_id,
     }))
+}
+
+pub(crate) fn ensure_plan_is_open(ctx: &RepoContext, plan_id: &str) -> Result<()> {
+    ensure_state_layout(ctx)?;
+    let events = read_jsonl::<PlanEvent>(&ctx.state_file("plans.jsonl"))?;
+    let mut opened = false;
+    let mut closed = false;
+
+    for event in events.iter().filter(|event| event.plan_id == plan_id) {
+        match event.event.as_str() {
+            "open" => {
+                opened = true;
+                closed = false;
+            }
+            "close" => closed = true,
+            _ => {}
+        }
+    }
+
+    match (opened, closed) {
+        (true, false) => Ok(()),
+        (true, true) => bail!("Plan is already closed: {plan_id}"),
+        (false, _) => bail!("Plan not found: {plan_id}"),
+    }
 }
 
 pub(super) fn open_plans(events: &[PlanEvent]) -> Vec<Value> {

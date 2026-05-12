@@ -89,13 +89,7 @@ pub(crate) fn latest_plan_tool_receipt(
             .find(|receipt| {
                 receipt.plan_id.as_deref() == Some(plan_id) && receipt.tool_name == tool_name
             })
-            .map(|receipt| ToolReceiptStatus {
-                receipt_id: receipt.id,
-                exit_status: receipt.exit_status,
-                ended_at_ms: receipt.ended_at_ms,
-                worktree_fingerprint: receipt.worktree_fingerprint,
-                worktree_fingerprint_error: receipt.worktree_fingerprint_error,
-            }),
+            .map(tool_receipt_status),
     )
 }
 
@@ -103,28 +97,38 @@ pub(crate) fn latest_plan_work_check_receipt_for_tool(
     ctx: &RepoContext,
     plan_id: &str,
     tool_name: &str,
-    after_ended_at_ms: u64,
+    tool_receipt_id: &str,
 ) -> Result<Option<ToolReceiptStatus>> {
     ensure_state_layout(ctx)?;
-    Ok(
-        read_jsonl::<ReceiptRecord>(&ctx.state_file("receipts.jsonl"))?
-            .into_iter()
+    let receipts = read_jsonl::<ReceiptRecord>(&ctx.state_file("receipts.jsonl"))?;
+    let Some(tool_receipt_index) = receipts
+        .iter()
+        .position(|receipt| receipt.id == tool_receipt_id)
+    else {
+        return Ok(None);
+    };
+
+    let mut candidate_batches =
+        receipts
+            .iter()
+            .skip(tool_receipt_index + 1)
             .rev()
-            .find(|receipt| {
+            .filter(|receipt| {
                 receipt.plan_id.as_deref() == Some(plan_id)
                     && receipt.tool_name == tool::WORK_CHECK
                     && receipt.exit_status == 0
-                    && receipt.ended_at_ms >= after_ended_at_ms
                     && receipt_args_include_tool(receipt, tool_name)
-            })
-            .map(|receipt| ToolReceiptStatus {
-                receipt_id: receipt.id,
-                exit_status: receipt.exit_status,
-                ended_at_ms: receipt.ended_at_ms,
-                worktree_fingerprint: receipt.worktree_fingerprint,
-                worktree_fingerprint_error: receipt.worktree_fingerprint_error,
-            }),
-    )
+            });
+
+    let exact_batch = candidate_batches
+        .clone()
+        .find(|receipt| receipt_args_include_receipt_id(receipt, tool_receipt_id));
+    let legacy_batch = candidate_batches.find(|receipt| !receipt_args_has_receipt_ids(receipt));
+
+    Ok(exact_batch
+        .or(legacy_batch)
+        .cloned()
+        .map(tool_receipt_status))
 }
 
 pub(crate) fn current_worktree_fingerprint(ctx: &RepoContext) -> CurrentWorktreeFingerprint {
@@ -236,6 +240,26 @@ fn receipt_args_include_tool(receipt: &ReceiptRecord, tool_name: &str) -> bool {
         .is_some_and(|tools| tools.iter().any(|tool| tool.as_str() == Some(tool_name)))
 }
 
+fn receipt_args_include_receipt_id(receipt: &ReceiptRecord, receipt_id: &str) -> bool {
+    receipt
+        .args
+        .get("receipt_ids")
+        .and_then(Value::as_array)
+        .is_some_and(|receipt_ids| {
+            receipt_ids
+                .iter()
+                .any(|candidate| candidate.as_str() == Some(receipt_id))
+        })
+}
+
+fn receipt_args_has_receipt_ids(receipt: &ReceiptRecord) -> bool {
+    receipt
+        .args
+        .get("receipt_ids")
+        .and_then(Value::as_array)
+        .is_some()
+}
+
 fn receipt_list_value(receipt: ReceiptRecord) -> Result<Value> {
     let diff_summary = receipt_diff_summary(&receipt);
     let mut value = serde_json::to_value(receipt)?;
@@ -243,6 +267,16 @@ fn receipt_list_value(receipt: ReceiptRecord) -> Result<Value> {
         object.insert("diff_summary".to_string(), Value::String(diff_summary));
     }
     Ok(value)
+}
+
+fn tool_receipt_status(receipt: ReceiptRecord) -> ToolReceiptStatus {
+    ToolReceiptStatus {
+        receipt_id: receipt.id,
+        exit_status: receipt.exit_status,
+        ended_at_ms: receipt.ended_at_ms,
+        worktree_fingerprint: receipt.worktree_fingerprint,
+        worktree_fingerprint_error: receipt.worktree_fingerprint_error,
+    }
 }
 
 pub(super) fn receipt_diff_summary(receipt: &ReceiptRecord) -> String {
