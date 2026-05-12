@@ -7,6 +7,7 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 
 cargo build -p jig-sh --bin jig >/dev/null
 export JIG_DEV_BIN="$ROOT_DIR/target/debug/jig"
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$TMP_DIR/cargo-target}"
 
 source "$ROOT_DIR/scripts/fixtures/lib.sh"
 source "$ROOT_DIR/scripts/fixtures/runtime-smoke.sh"
@@ -30,6 +31,7 @@ validate_tooling_only_fixture "$TOOLING_ONLY_DIR"
 validate_unpushed_commit_stays_local
 validate_explicit_template_source_url_rewrites_src_path
 validate_quoted_local_src_path_installs_jig
+validate_template_source_url_installs_from_git_tag
 validate_quoted_template_source_url_rewrites_src_path
 
 echo "Fixture validation passed."

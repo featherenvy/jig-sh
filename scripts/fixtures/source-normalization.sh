@@ -65,8 +65,10 @@ validate_quoted_local_src_path_installs_jig() {
   local template_snapshot="$TMP_DIR/template-quoted-local'source"
   local answers_file="$TMP_DIR/backend-quoted-local.yaml"
   local rendered_dir="$TMP_DIR/render-quoted-local"
+  local jig_version
 
   create_template_snapshot_repo "$template_snapshot"
+  jig_version="$(answers_get "$template_snapshot/.jig.yml" jig_version)"
 
   cp "$ROOT_DIR/tests/fixtures/backend-only.yaml" "$answers_file"
   answers_set "$answers_file" template_source_url ""
@@ -86,7 +88,41 @@ validate_quoted_local_src_path_installs_jig() {
     cd "$rendered_dir"
     rm -rf .git .agent/.cache
     env -u JIG_DEV_BIN scripts/install-jig.sh >/dev/null
-    [[ -x .agent/.cache/jig/0.1.0/bin/jig ]]
+    [[ -x ".agent/.cache/jig/$jig_version/bin/jig" ]]
+  )
+}
+
+validate_template_source_url_installs_from_git_tag() {
+  local bare_remote="$TMP_DIR/template-git-install.git"
+  local template_snapshot="$TMP_DIR/template-git-install-snapshot"
+  local answers_file="$TMP_DIR/backend-git-install.yaml"
+  local rendered_dir="$TMP_DIR/render-git-install"
+  local jig_version
+
+  create_template_snapshot_repo "$template_snapshot"
+  jig_version="$(answers_get "$template_snapshot/.jig.yml" jig_version)"
+  git -C "$template_snapshot" tag -a "v$jig_version" -m "fixture release" >/dev/null
+  git clone --bare "$template_snapshot" "$bare_remote" >/dev/null 2>&1
+
+  cp "$ROOT_DIR/tests/fixtures/backend-only.yaml" "$answers_file"
+  answers_set "$answers_file" template_source_url "file://$bare_remote"
+
+  render_fixture_from_template "$template_snapshot" "$answers_file" "$rendered_dir"
+
+  actual_src_path="$(answers_get "$rendered_dir/.jig.yml" _src_path)"
+  if [[ "$actual_src_path" != "file://$bare_remote" ]]; then
+    echo "Expected template_source_url to be used as the generated _src_path." >&2
+    echo "Expected: file://$bare_remote" >&2
+    echo "Actual:   $actual_src_path" >&2
+    exit 1
+  fi
+
+  (
+    cd "$rendered_dir"
+    rm -rf .git .agent/.cache
+    env -u JIG_DEV_BIN scripts/install-jig.sh >/dev/null
+    [[ -x ".agent/.cache/jig/$jig_version/bin/jig" ]]
+    [[ "$(".agent/.cache/jig/$jig_version/bin/jig" --version)" == "jig $jig_version" ]]
   )
 }
 
@@ -116,10 +152,12 @@ validate_quoted_template_source_url_rewrites_src_path() {
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   set -euo pipefail
   fixture_create_tmp_dir_if_needed
+  export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$TMP_DIR/cargo-target}"
 
   validate_unpushed_commit_stays_local
   validate_explicit_template_source_url_rewrites_src_path
   validate_quoted_local_src_path_installs_jig
+  validate_template_source_url_installs_from_git_tag
   validate_quoted_template_source_url_rewrites_src_path
 
   echo "Template source fixture validation passed."

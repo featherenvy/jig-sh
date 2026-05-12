@@ -134,7 +134,7 @@ Use this sequence for public contract changes:
 1. Add the new field, tool, or command in a backward-compatible way.
 2. Update `.agent/jig-contract.json.jinja`, runtime dispatch, MCP exposure, and docs in the same change.
 3. Keep old fields and commands working for the current contract version.
-4. Run `make contract-check` and fixture validation before release.
+4. Run `make release-check` before release.
 5. Only remove or redefine stable behavior after incrementing `contract_version`.
 
 Generated repos can rely on:

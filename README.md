@@ -147,3 +147,23 @@ Generated repos also expect Rust to be available for `scripts/install-jig.sh`, w
 ```sh
 ./scripts/validate-fixtures.sh
 ```
+
+## Release Jig
+
+Use the release script as the single local entrypoint for release validation, tagging, and publishing:
+
+```sh
+make release-check
+make release-tag
+make release-publish
+```
+
+The release version defaults to the `jig-sh` package version from Cargo metadata. To override it explicitly:
+
+```sh
+make release-check RELEASE_VERSION=0.1.0
+```
+
+`release-check` requires a clean worktree, verifies repo version wiring, runs `make ci`, validates rendered fixtures, and runs a crates.io publish dry run. `release-tag` creates the annotated `vVERSION` tag after the same checks. `release-publish` first requires that tag to point at `HEAD`, then reruns the full checks, pushes the tag to `origin` if needed, verifies the remote tag resolves to `HEAD`, and publishes `jig-sh` to crates.io.
+
+Before running `release-publish`, authenticate cargo with `cargo login` or `CARGO_REGISTRY_TOKEN`. If publishing fails after the tag is pushed, fix the registry/auth/network issue and rerun `make release-publish`; it will reuse the existing remote tag when it still points at `HEAD`. If crates.io rejects the crate contents, bump the version before trying again because the release tag for the rejected version is already public.

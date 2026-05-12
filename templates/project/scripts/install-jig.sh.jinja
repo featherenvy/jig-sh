@@ -87,7 +87,7 @@ install_from_git_source() {
     --root "$INSTALL_ROOT" \
     --locked \
     --force \
-    jig
+    jig-sh
 
   assert_exact_version "$BIN_PATH"
 }

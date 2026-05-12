@@ -19,7 +19,7 @@ DEV_COMMAND := cargo test --workspace
 .PHONY: contract-check
 
 .PHONY: check-agent-map check-agent-guides check-rust-file-loc check-no-mod-rs
-.PHONY: enforce-coverage ci ci-webapps
+.PHONY: enforce-coverage release-check release-tag release-publish ci ci-webapps
 
 
 help: ## Show all available targets
@@ -94,9 +94,18 @@ check-no-mod-rs: ## Fail if disallowed mod.rs files exist under configured crate
 enforce-coverage: ## Enforce a coverage threshold from COVERAGE_THRESHOLD against COVERAGE_DIR
 	@COVERAGE_DIR="$(COVERAGE_DIR)" COVERAGE_THRESHOLD="$(COVERAGE_THRESHOLD)" $(NODE) scripts/enforce-coverage.js
 
+release-check: ## Run local release validation and cargo publish dry run
+	scripts/release.sh check $(RELEASE_VERSION)
+
+release-tag: ## Validate and create annotated release tag vVERSION
+	scripts/release.sh tag $(RELEASE_VERSION)
+
+release-publish: ## Validate tagged HEAD, push tag to origin, and publish jig-sh
+	scripts/release.sh publish $(RELEASE_VERSION)
+
 
 ci-webapps: ## No configured web apps
 	@echo "No web apps configured."
 
 
-ci: fmt-check clippy test-rust-locked check-rust-file-loc check-no-mod-rs check-agent-map check-agent-guides ci-webapps ## Run the standard CI validation set
+ci: fmt-check clippy test-rust-locked contract-check check-rust-file-loc check-no-mod-rs check-agent-map check-agent-guides ci-webapps ## Run the standard CI validation set
