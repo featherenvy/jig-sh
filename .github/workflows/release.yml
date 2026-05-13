@@ -1,0 +1,266 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release. Leave blank to bump the current Cargo.toml version."
+        required: false
+        default: ""
+      bump:
+        description: "Version bump to use when version is blank."
+        required: true
+        type: choice
+        default: patch
+        options:
+          - patch
+          - minor
+          - major
+      dry_run:
+        description: "Run all local release steps without pushing, publishing, or creating a GitHub Release."
+        required: true
+        type: boolean
+        default: false
+      backfill_v0_1_0:
+        description: "Only create the missing GitHub Release for existing tag v0.1.0."
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Publish release
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.backfill_v0_1_0 != 'true' }}
+    environment: crates-io
+    steps:
+      - name: Require default branch
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          if [[ "$GITHUB_REF" != "refs/heads/$DEFAULT_BRANCH" ]]; then
+            echo "Release workflow must run from default branch '$DEFAULT_BRANCH'; got '$GITHUB_REF'." >&2
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: false
+          # Keep cargo publish verification on Cargo's default rustc warning
+          # behavior; make ci still enforces clippy warnings explicitly.
+          rustflags: ""
+          components: rustfmt,clippy
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Configure release git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        env:
+          RELEASE_VERSION_INPUT: ${{ github.event.inputs.version }}
+          RELEASE_BUMP: ${{ github.event.inputs.bump }}
+        run: |
+          set -euo pipefail
+          version="$RELEASE_VERSION_INPUT"
+          if [[ -z "$version" ]]; then
+            current_version="$(scripts/release.sh version)"
+            if ! git rev-parse --verify --quiet "refs/tags/v$current_version" >/dev/null; then
+              echo "Cargo.toml is already prepared for untagged v$current_version." >&2
+              echo "Rerun with version=$current_version to resume a prepared release, or tag/publish/restore it before auto-bumping." >&2
+              exit 1
+            fi
+            version="$(scripts/release.sh next-version "$RELEASE_BUMP")"
+          else
+            echo "Explicit version supplied; ignoring bump=$RELEASE_BUMP."
+          fi
+          version="${version#v}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Version must be MAJOR.MINOR.PATCH, got '$version'." >&2
+            exit 1
+          fi
+          tag_exists=false
+          if git rev-parse --verify --quiet "refs/tags/v$version" >/dev/null; then
+            # Explicit-version runs may resume after a prior attempt pushed the tag
+            # but failed during crates.io publish or GitHub Release creation.
+            if [[ -z "$RELEASE_VERSION_INPUT" ]]; then
+              echo "Tag v$version already exists; choose an explicit version to resume it." >&2
+              exit 1
+            fi
+            tag_type="$(git cat-file -t "v$version")"
+            if [[ "$tag_type" != "tag" ]]; then
+              echo "Tag v$version is $tag_type, expected an annotated tag object." >&2
+              exit 1
+            fi
+            tag_commit="$(git rev-list -n 1 "v$version")"
+            head_commit="$(git rev-parse HEAD)"
+            if [[ "$tag_commit" != "$head_commit" ]]; then
+              echo "Tag v$version points at $tag_commit, but this workflow checked out $head_commit." >&2
+              exit 1
+            fi
+            tag_exists=true
+          fi
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+          echo "tag_exists=$tag_exists" >>"$GITHUB_OUTPUT"
+          echo "Resolved release version: $version"
+
+      - name: Prepare release files
+        if: ${{ steps.version.outputs.tag_exists != 'true' }}
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          # CI owns generated release notes; local runs keep the no-overwrite
+          # guard unless the caller opts in.
+          RELEASE_NOTES_FORCE: "1"
+        run: scripts/release.sh prepare "$VERSION"
+
+      - name: Check release prep diff
+        if: ${{ steps.version.outputs.tag_exists != 'true' }}
+        env:
+          RELEASE_VERSION_INPUT: ${{ github.event.inputs.version }}
+        run: |
+          if git diff --quiet; then
+            if [[ -z "$RELEASE_VERSION_INPUT" ]]; then
+              echo "release prepare produced no changes." >&2
+              exit 1
+            fi
+            echo "No release prep diff; continuing explicit-version resume."
+          fi
+
+      - name: Validate prepared release
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: ALLOW_DIRTY=1 scripts/release.sh check "$VERSION"
+
+      - name: Commit release prep
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          scripts/release.sh stage
+          if git diff --cached --quiet; then
+            echo "No release prep changes to commit."
+          else
+            git commit -m "Release v$VERSION"
+          fi
+
+      - name: Validate committed release
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: scripts/release.sh check "$VERSION"
+
+      - name: Create local tag
+        if: ${{ github.event.inputs.dry_run != 'true' && steps.version.outputs.tag_exists != 'true' }}
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: scripts/release.sh tag "$VERSION"
+
+      - name: Stop before remote side effects
+        if: ${{ github.event.inputs.dry_run == 'true' }}
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          echo "Dry run complete for v$VERSION."
+          echo "No branch, tag, crate, or GitHub Release was published."
+
+      - name: Push release commit
+        if: ${{ github.event.inputs.dry_run != 'true' && steps.version.outputs.tag_exists != 'true' }}
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: git push origin "HEAD:$DEFAULT_BRANCH"
+
+      - name: Authenticate to crates.io
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        id: crates
+        uses: rust-lang/crates-io-auth-action@v1
+
+      - name: Publish crate
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG_EXISTS: ${{ steps.version.outputs.tag_exists }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates.outputs.token }}
+        run: |
+          # scripts/release.sh publish pushes the tag immediately before cargo publish.
+          # If a later step fails, rerun this workflow with the explicit version.
+          status=""
+          if [[ "$TAG_EXISTS" == "true" ]]; then
+            for attempt in 1 2; do
+              status="$(curl -sS -o /tmp/jig-sh-crate-version.json -w '%{http_code}' "https://crates.io/api/v1/crates/jig-sh/$VERSION" || true)"
+              if [[ "$status" == "200" || "$status" == "404" || "$attempt" == "2" ]]; then
+                break
+              fi
+              echo "crates.io version probe returned HTTP $status; retrying once." >&2
+              sleep 5
+            done
+            case "$status" in
+              200)
+                echo "jig-sh v$VERSION is already published; continuing to GitHub Release creation."
+                exit 0
+                ;;
+              404)
+                ;;
+              *)
+                echo "Could not determine whether jig-sh v$VERSION is already published; crates.io returned HTTP $status." >&2
+                exit 1
+                ;;
+            esac
+          fi
+          if [[ "$TAG_EXISTS" != "true" || "$status" == "404" ]]; then
+            scripts/release.sh publish "$VERSION"
+          fi
+
+      - name: Create GitHub Release
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/release.sh github "$VERSION"
+
+  backfill-v0-1-0:
+    name: Backfill v0.1.0 GitHub Release
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.backfill_v0_1_0 == 'true' }}
+    steps:
+      - name: Require default branch
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          if [[ "$GITHUB_REF" != "refs/heads/$DEFAULT_BRANCH" ]]; then
+            echo "Release workflow must run from default branch '$DEFAULT_BRANCH'; got '$GITHUB_REF'." >&2
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Verify backfill inputs
+        run: |
+          git rev-parse --verify --quiet refs/tags/v0.1.0
+          scripts/release-notes.sh print 0.1.0 >/dev/null
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/release.sh github 0.1.0

@@ -65,7 +65,7 @@ The default rendered config declares the Jig Codex skills marketplace:
 ```toml
 [[agent_tooling.codex.marketplaces]]
 id = "jig-skills"
-source = "featherenvy/jig-skills"
+source = "bpcakes/jig-skills"
 plugins = [
   "jig-rust@jig-skills",
   "jig-swift@jig-skills",
@@ -74,7 +74,7 @@ plugins = [
 ]
 ```
 
-Jig Codex skills are optional Codex plugin bundles used by agents working in generated Jig repos; the default marketplace source is `featherenvy/jig-skills`.
+Jig Codex skills are optional Codex plugin bundles used by agents working in generated Jig repos; the default marketplace source is `bpcakes/jig-skills`.
 
 Use `scripts/jig agent doctor` to report whether the local Codex installation can use the configured marketplace and to show diagnostic plugin enablement flags. The top-level `ok` result requires Codex marketplace support and registered marketplace sources; plugin enablement is reported separately because the supported Codex bootstrap path is marketplace registration. Use `scripts/jig agent bootstrap` to run `codex plugin marketplace add` when exactly one marketplace is configured. If multiple marketplaces are configured, `agent bootstrap` requires `--marketplace <source>` so a repo cannot install several user-level Codex marketplaces by default. `agent bootstrap` mutates user-level Codex config, so it is intentionally separate from the project-owned `bootstrap_command`.
 

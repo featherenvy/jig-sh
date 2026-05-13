@@ -159,12 +159,23 @@ Generated repos also expect Rust to be available for `scripts/install-jig.sh`, w
 
 ## Release Jig
 
-Use the release script as the single local entrypoint for release validation, tagging, and publishing:
+Use the GitHub Actions `Release` workflow for the lowest-touch release path. Leave `version` blank to publish the next patch version, or set it explicitly. The workflow prepares the release commit, updates `CHANGELOG.md`, tags the commit, publishes `jig-sh` to crates.io through trusted publishing, and creates the GitHub Release.
+
+For the already-published `v0.1.0`, run the same workflow with `backfill_v0_1_0=true` to create the missing GitHub Release without publishing or retagging.
+
+`CHANGELOG.md` release sections are generated from git history and owned by the release automation. Conventional commit prefixes (`feat:`, `fix:`, `docs:`, `test:`, `tests:`, `refactor:`, `perf:`, `build:`, `ci:`, `chore:`) drive the release-note categories; unprefixed commits land in `Other`. Do not hand-edit an upcoming version section before running the workflow; put any wording changes in a follow-up commit after the generated release notes exist.
+
+The local release script remains the typed entrypoint for validation and manual recovery. The `release-github` target requires the GitHub CLI (`gh`) with permission to create releases.
 
 ```sh
-make release-check
-make release-tag
-make release-publish
+make release-prepare RELEASE_VERSION=0.1.1
+ALLOW_DIRTY=1 make release-check RELEASE_VERSION=0.1.1
+make release-stage
+git commit -m "Release v0.1.1"
+make release-check RELEASE_VERSION=0.1.1
+make release-tag RELEASE_VERSION=0.1.1
+make release-publish RELEASE_VERSION=0.1.1
+make release-github RELEASE_VERSION=0.1.1
 ```
 
 The release version defaults to the `jig-sh` package version from Cargo metadata. To override it explicitly:
@@ -173,6 +184,8 @@ The release version defaults to the `jig-sh` package version from Cargo metadata
 make release-check RELEASE_VERSION=0.1.0
 ```
 
-`release-check` requires a clean worktree, verifies repo version wiring, runs `make ci`, validates rendered fixtures, and runs a crates.io publish dry run. `release-tag` creates the annotated `vVERSION` tag after the same checks. `release-publish` first requires that tag to point at `HEAD`, then reruns the full checks, pushes the tag to `origin` if needed, verifies the remote tag resolves to `HEAD`, and publishes `jig-sh` to crates.io.
+`release-prepare` updates all pinned version files and regenerates `CHANGELOG.md`; run it before `release-tag` when bumping versions locally. `release-check` requires a clean worktree, verifies repo version wiring and changelog coverage, runs `make ci`, validates rendered fixtures, and runs a crates.io publish dry run. `release-tag` creates the annotated `vVERSION` tag after the same checks. `release-publish` first requires that tag to point at `HEAD`, then reruns the full checks, pushes the tag to `origin` if needed, verifies the remote tag resolves to `HEAD`, and publishes `jig-sh` to crates.io. `release-github` creates the GitHub Release from the matching `CHANGELOG.md` section.
 
-Before running `release-publish`, authenticate cargo with `cargo login` or `CARGO_REGISTRY_TOKEN`. If publishing fails after the tag is pushed, fix the registry/auth/network issue and rerun `make release-publish`; it will reuse the existing remote tag when it still points at `HEAD`. If crates.io rejects the crate contents, bump the version before trying again because the release tag for the rejected version is already public.
+The GitHub workflow expects crates.io Trusted Publishing to be configured for package `jig-sh`, repository `bpcakes/jig-sh`, workflow `release.yml`, and environment `crates-io`. If publishing fails after the tag is pushed, fix the registry/auth/network issue and rerun the publish step or `make release-publish`; it will reuse the existing remote tag when it still points at `HEAD`. If crates.io rejects the crate contents, bump the version before trying again because the release tag for the rejected version is already public.
+
+If a workflow run pushes the release commit but fails before the tag is pushed, rerun the workflow with the explicit prepared version instead of leaving `version` blank.

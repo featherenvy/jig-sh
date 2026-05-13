@@ -19,6 +19,13 @@ mcp_path = root / ".mcp.json"
 jig_script = root / "scripts" / "jig"
 install_script = root / "scripts" / "install-jig.sh"
 jig_toml_script = root / "scripts" / "jig-toml.sh"
+jig_toml_template = root / "templates" / "project" / "scripts" / "jig-toml.sh.jinja"
+# These templates are byte-for-byte script mirrors by design. If a future
+# template needs Jinja directives, replace this parity check with a render check.
+script_template_pairs = [
+    (jig_toml_script, jig_toml_template),
+    (root / "scripts" / "check-jig-contract.sh", root / "templates" / "project" / "scripts" / "check-jig-contract.sh.jinja"),
+]
 
 manifest = json.loads(manifest_path.read_text())
 makefile_text = makefile_path.read_text()
@@ -50,6 +57,10 @@ else:
             errors.append(
                 f"jig_version mismatch: .jig.toml has {answers_version}, manifest has {manifest['jig_version']}."
             )
+
+for script_path, template_path in script_template_pairs:
+    if template_path.exists() and script_path.read_text() != template_path.read_text():
+        errors.append(f"{script_path.relative_to(root)} and {template_path.relative_to(root)} differ.")
 
 targets = set(re.findall(r"^([A-Za-z0-9._-]+):", makefile_text, re.MULTILINE))
 missing_targets = [target for target in manifest["required_make_targets"] if target not in targets]

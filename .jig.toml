@@ -1,12 +1,12 @@
 _commit = "e97146a891ac744b0cfb199cdd30add99fea630a"
-_src_path = "/Users/aa/Documents/jig-sh/.agent/.cache/template-source"
-_template_mode = "working-tree"
-_template_local_path = "/Users/aa/Documents/jig-sh"
+_src_path = "https://github.com/bpcakes/jig-sh.git"
+_template_mode = "committed"
+_template_local_path = ""
 repo_name = "jig-sh"
-default_branch = "main"
+default_branch = "master"
 ci_github_runner = "ubuntu-latest"
 jig_version = "0.1.0"
-template_source_url = ""
+template_source_url = "https://github.com/bpcakes/jig-sh.git"
 sqlx_enabled = false
 rust_crate_roots = ["crates"]
 schema_dump_enabled = false
@@ -32,7 +32,7 @@ tool = "jig.test"
 
 [[agent_tooling.codex.marketplaces]]
 id = "jig-skills"
-source = "featherenvy/jig-skills"
+source = "bpcakes/jig-skills"
 plugins = [
   "jig-rust@jig-skills",
   "jig-swift@jig-skills",

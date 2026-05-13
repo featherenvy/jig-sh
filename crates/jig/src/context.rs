@@ -10,7 +10,7 @@ const CURRENT_SESSION_FILE: &str = "jig-current-session.txt";
 pub(crate) const DEFAULT_CODEX_MARKETPLACE_ID: &str = "jig-skills";
 // jig.sh generated repos default to the shared Jig skills marketplace; forks can
 // override or opt out through agent_tooling.codex.marketplaces in .jig.toml.
-pub(crate) const DEFAULT_CODEX_MARKETPLACE_SOURCE: &str = "featherenvy/jig-skills";
+pub(crate) const DEFAULT_CODEX_MARKETPLACE_SOURCE: &str = "bpcakes/jig-skills";
 pub(crate) const DEFAULT_CODEX_MARKETPLACE_PLUGINS: &[&str] = &[
     "jig-rust@jig-skills",
     "jig-swift@jig-skills",
@@ -455,7 +455,7 @@ jig_version = "0.1.0"
         let marketplaces = ctx.codex_marketplaces();
         assert_eq!(marketplaces.len(), 1);
         assert_eq!(marketplaces[0].id, "jig-skills");
-        assert_eq!(marketplaces[0].source, "featherenvy/jig-skills");
+        assert_eq!(marketplaces[0].source, "bpcakes/jig-skills");
         assert_eq!(
             marketplaces[0].plugins,
             vec![

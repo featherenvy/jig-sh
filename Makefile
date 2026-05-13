@@ -19,7 +19,7 @@ DEV_COMMAND := cargo test --workspace
 .PHONY: contract-check
 
 .PHONY: check-agent-map check-agent-guides check-rust-file-loc check-no-mod-rs
-.PHONY: enforce-coverage release-check release-tag release-publish ci ci-webapps
+.PHONY: enforce-coverage release-notes release-prepare release-stage release-check release-tag release-publish release-github ci ci-webapps
 
 
 help: ## Show all available targets
@@ -94,6 +94,15 @@ check-no-mod-rs: ## Fail if disallowed mod.rs files exist under configured crate
 enforce-coverage: ## Enforce a coverage threshold from COVERAGE_THRESHOLD against COVERAGE_DIR
 	@COVERAGE_DIR="$(COVERAGE_DIR)" COVERAGE_THRESHOLD="$(COVERAGE_THRESHOLD)" $(NODE) scripts/enforce-coverage.js
 
+release-notes: ## Generate CHANGELOG.md notes for RELEASE_VERSION
+	scripts/release.sh notes $(RELEASE_VERSION)
+
+release-prepare: ## Update pinned versions and CHANGELOG.md for RELEASE_VERSION
+	scripts/release.sh prepare $(RELEASE_VERSION)
+
+release-stage: ## Stage files updated by release-prepare
+	scripts/release.sh stage
+
 release-check: ## Run local release validation and cargo publish dry run
 	scripts/release.sh check $(RELEASE_VERSION)
 
@@ -102,6 +111,9 @@ release-tag: ## Validate and create annotated release tag vVERSION
 
 release-publish: ## Validate tagged HEAD, push tag to origin, and publish jig-sh
 	scripts/release.sh publish $(RELEASE_VERSION)
+
+release-github: ## Create the GitHub Release for vVERSION from CHANGELOG.md
+	scripts/release.sh github $(RELEASE_VERSION)
 
 
 ci-webapps: ## No configured web apps

@@ -251,14 +251,14 @@ fn agent_doctor_reports_configured_codex_marketplace() {
     let _guard = lock_env();
     let temp = tempdir().unwrap();
     write_fixture_repo(temp.path());
-    fs::create_dir_all(temp.path().join("featherenvy/jig-skills")).unwrap();
+    fs::create_dir_all(temp.path().join("bpcakes/jig-skills")).unwrap();
     let codex_home = temp.path().join("codex-home");
     fs::create_dir_all(&codex_home).unwrap();
     fs::write(
         codex_home.join("config.toml"),
         r#"[marketplaces.jig-skills]
 source_type = "git"
-source = "https://github.com/featherenvy/jig-skills.git"
+source = "https://github.com/bpcakes/jig-skills.git"
 
 [plugins."jig-rust@jig-skills"]
 enabled = true
@@ -304,7 +304,7 @@ fn agent_doctor_accepts_registered_marketplace_without_plugin_entries() {
         codex_home.join("config.toml"),
         r#"[marketplaces.jig-skills]
 source_type = "git"
-source = "https://github.com/featherenvy/jig-skills.git"
+source = "https://github.com/bpcakes/jig-skills.git"
 "#,
     )
     .unwrap();
@@ -384,7 +384,7 @@ fn agent_doctor_reports_unsupported_codex_when_marketplace_required() {
         codex_home.join("config.toml"),
         r#"[marketplaces.jig-skills]
 source_type = "git"
-source = "https://github.com/featherenvy/jig-skills.git"
+source = "https://github.com/bpcakes/jig-skills.git"
 "#,
     )
     .unwrap();
@@ -542,12 +542,12 @@ fn agent_bootstrap_then_doctor_passes_with_marketplace_registration() {
     let _guard = lock_env();
     let temp = tempdir().unwrap();
     write_fixture_repo(temp.path());
-    fs::create_dir_all(temp.path().join("featherenvy/jig-skills")).unwrap();
+    fs::create_dir_all(temp.path().join("bpcakes/jig-skills")).unwrap();
     let codex_home = temp.path().join("codex-home");
     let codex_path = temp.path().join("codex-stub.sh");
     write_codex_stub(
         &codex_path,
-        "#!/bin/sh\nif [ \"$1 $2 $3 $4\" = \"plugin marketplace add --help\" ]; then exit 0; fi\nif [ \"$1 $2 $3\" = \"plugin marketplace add\" ]; then\n  mkdir -p \"$CODEX_HOME\"\n  cat > \"$CODEX_HOME/config.toml\" <<'EOF'\n[marketplaces.jig-skills]\nsource_type = \"git\"\nsource = \"https://github.com/featherenvy/jig-skills.git\"\nEOF\n  exit 0\nfi\nexit 2\n",
+        "#!/bin/sh\nif [ \"$1 $2 $3 $4\" = \"plugin marketplace add --help\" ]; then exit 0; fi\nif [ \"$1 $2 $3\" = \"plugin marketplace add\" ]; then\n  mkdir -p \"$CODEX_HOME\"\n  cat > \"$CODEX_HOME/config.toml\" <<'EOF'\n[marketplaces.jig-skills]\nsource_type = \"git\"\nsource = \"https://github.com/bpcakes/jig-skills.git\"\nEOF\n  exit 0\nfi\nexit 2\n",
     );
 
     let _codex_bin = EnvVarGuard::set("JIG_CODEX_BIN", &codex_path);
@@ -565,10 +565,7 @@ fn agent_bootstrap_then_doctor_passes_with_marketplace_registration() {
         dispatch(&ctx, CommandKind::Agent(crate::cli::AgentCommand::Doctor)).unwrap();
 
     assert_eq!(bootstrap_output["ok"], true);
-    assert_eq!(
-        bootstrap_output["marketplace_source"],
-        "featherenvy/jig-skills"
-    );
+    assert_eq!(bootstrap_output["marketplace_source"], "bpcakes/jig-skills");
     assert_eq!(doctor_output["ok"], true, "{doctor_output:#}");
     assert_eq!(
         doctor_output["readiness"]["ok_requires_plugins_enabled"],
@@ -769,7 +766,7 @@ fn agent_bootstrap_fails_when_codex_marketplace_add_fails() {
     .unwrap_err()
     .to_string();
 
-    assert!(error.contains("plugin marketplace add featherenvy/jig-skills failed"));
+    assert!(error.contains("plugin marketplace add bpcakes/jig-skills failed"));
     assert!(error.contains("exit status 9"));
     assert!(error.contains("bad source"));
 }
@@ -793,7 +790,7 @@ fn agent_bootstrap_fails_when_codex_cannot_be_started() {
     .to_string();
 
     assert!(error.contains("Failed to run"));
-    assert!(error.contains("plugin marketplace add featherenvy/jig-skills"));
+    assert!(error.contains("plugin marketplace add bpcakes/jig-skills"));
 }
 
 #[test]

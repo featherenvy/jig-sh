@@ -4,19 +4,35 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 PACKAGE_NAME="jig-sh"
 BIN_NAME="jig"
+RELEASE_FIXTURE_FILES=(
+  tests/fixtures/backend-only.toml
+  tests/fixtures/full-stack.toml
+  tests/fixtures/tooling-only.toml
+)
 
 print_usage() {
   cat <<'EOF'
 Usage:
   scripts/release.sh check [VERSION]
+  scripts/release.sh prepare [VERSION]
+  scripts/release.sh notes [VERSION]
+  scripts/release.sh stage
   scripts/release.sh tag [VERSION]
   scripts/release.sh publish [VERSION]
+  scripts/release.sh github [VERSION]
+  scripts/release.sh next-version [major|minor|patch]
   scripts/release.sh version
 
 Commands:
   check     Run the full local release validation and cargo publish dry run.
+  prepare   Update pinned versions and CHANGELOG.md for VERSION.
+  notes     Generate or replace the CHANGELOG.md section for VERSION.
+  stage     Stage files updated by release-prepare.
   tag       Run release validation, then create annotated tag vVERSION.
   publish   Run release validation, ensure vVERSION is on origin at HEAD, then cargo publish.
+  github    Create the GitHub Release for vVERSION from CHANGELOG.md.
+  next-version
+            Print the next semantic version using the requested bump. Defaults to patch.
   version   Print the jig-sh package version from Cargo metadata.
 
 VERSION defaults to the package version from Cargo metadata.
@@ -73,6 +89,39 @@ release_version() {
   else
     manifest_version
   fi
+}
+
+next_version() {
+  local bump="${1:-patch}"
+  if [[ $# -gt 1 ]]; then
+    usage
+  fi
+
+  python3 - "$(manifest_version)" "$bump" <<'PY'
+import re
+import sys
+
+version = sys.argv[1]
+bump = sys.argv[2]
+match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", version)
+if not match:
+    raise SystemExit(f"Cannot bump non-semver version: {version}")
+
+major, minor, patch = (int(part) for part in match.groups())
+if bump == "major":
+    major += 1
+    minor = 0
+    patch = 0
+elif bump == "minor":
+    minor += 1
+    patch = 0
+elif bump == "patch":
+    patch += 1
+else:
+    raise SystemExit("Bump must be major, minor, or patch.")
+
+print(f"{major}.{minor}.{patch}")
+PY
 }
 
 require_clean_tree() {
@@ -148,17 +197,23 @@ PY
 
   local answer_files
   local fixture_files
-  mapfile -t answer_files < <(git ls-files -- '.jig.toml' '**/.jig.toml')
+  mapfile -t answer_files < <(git ls-files | awk '$0 ~ /(^|\/)\.jig\.toml$/ { print }')
   if [[ "${#answer_files[@]}" -eq 0 ]]; then
     echo "No tracked jig answer files found." >&2
     exit 1
   fi
 
-  mapfile -t fixture_files < <(git ls-files -- 'tests/fixtures/*.toml')
+  mapfile -t fixture_files < <(git ls-files -- "${RELEASE_FIXTURE_FILES[@]}")
   if [[ "${#fixture_files[@]}" -eq 0 ]]; then
     echo "No tracked fixture answer files found." >&2
     exit 1
   fi
+  for fixture_file in "${fixture_files[@]}"; do
+    if ! grep -Eq '^jig_version\s*=' "$ROOT_DIR/$fixture_file"; then
+      echo "$fixture_file is a release-pinned fixture and must include jig_version." >&2
+      exit 1
+    fi
+  done
 
   local version_files=("${answer_files[@]}" "${fixture_files[@]}")
 
@@ -213,6 +268,219 @@ for package in metadata["packages"]:
   fi
 }
 
+require_changelog_entry() {
+  local version="$1"
+
+  if [[ ! -f "$ROOT_DIR/CHANGELOG.md" ]]; then
+    echo "CHANGELOG.md is missing. Run scripts/release.sh notes $version." >&2
+    exit 1
+  fi
+
+  if ! "$ROOT_DIR/scripts/release-notes.sh" print "$version" >/dev/null; then
+    echo "CHANGELOG.md is missing release notes for v$version." >&2
+    echo "Run scripts/release.sh notes $version before release validation." >&2
+    exit 1
+  fi
+}
+
+update_version_files() {
+  local version="$1"
+
+  python3 - "$ROOT_DIR" "$version" "${RELEASE_FIXTURE_FILES[@]}" <<'PY'
+import json
+import pathlib
+import re
+import subprocess
+import sys
+
+root = pathlib.Path(sys.argv[1])
+version = sys.argv[2]
+release_fixture_files = sys.argv[3:]
+if not re.fullmatch(r"\d+\.\d+\.\d+", version):
+    raise SystemExit(f"Version must be MAJOR.MINOR.PATCH, got {version!r}.")
+
+def replace_required(path, pattern, replacement, label=None, flags=0):
+    text = path.read_text()
+    next_text, count = re.subn(pattern, replacement, text, flags=flags)
+    if count == 0:
+        raise SystemExit(f"Could not update {label or pattern!r} in {path}.")
+    path.write_text(next_text)
+
+def replace_exactly_once(path, pattern, replacement, label=None, flags=0):
+    text = path.read_text()
+    next_text, count = re.subn(pattern, replacement, text, flags=flags)
+    if count != 1:
+        raise SystemExit(f"Expected to update {label or pattern!r} exactly once in {path}; updated {count}.")
+    path.write_text(next_text)
+
+def replace_optional(path, pattern, replacement, flags=0):
+    if path.exists():
+        replace_required(path, pattern, replacement, flags=flags)
+
+def update_jig_toml(path):
+    replace_required(
+        path,
+        r'(?m)^jig_version\s*=\s*"[^"]*"\s*$',
+        f'jig_version = "{version}"',
+        "jig_version",
+    )
+
+def has_jig_version(path):
+    return bool(re.search(r'(?m)^jig_version\s*=', path.read_text()))
+
+def git_ls_files(*patterns):
+    return subprocess.check_output(
+        ["git", "-C", str(root), "ls-files", "--", *patterns],
+        text=True,
+    ).splitlines()
+
+replace_exactly_once(
+    root / "Cargo.toml",
+    r'(?ms)(^\[workspace\.package\]\n(?:(?!^\[).)*?^version\s*=\s*)"[^"]*"',
+    rf'\g<1>"{version}"',
+    "workspace package version",
+)
+# jig-sh is currently the only package entry whose own version changes during
+# release prep. If the workspace later adds packages that depend on this version,
+# replace this targeted edit with a cargo update based lock refresh.
+replace_exactly_once(
+    root / "Cargo.lock",
+    r'(?ms)(\[\[package\]\]\nname = "jig-sh"\nversion = )"[^"]*"',
+    rf'\g<1>"{version}"',
+    "Cargo.lock jig-sh package version",
+)
+replace_exactly_once(
+    root / "Makefile",
+    r'(?m)^JIG_VERSION\s*\?=\s*[^\n]+$',
+    f"JIG_VERSION ?= {version}",
+    "JIG_VERSION",
+)
+replace_exactly_once(
+    root / "scripts" / "jig",
+    r'(?m)^JIG_VERSION="[^"]*"$',
+    f'JIG_VERSION="{version}"',
+    "launcher JIG_VERSION",
+)
+
+contract_path = root / ".agent" / "jig-contract.json"
+contract = json.loads(contract_path.read_text())
+contract["jig_version"] = version
+contract_path.write_text(json.dumps(contract, indent=2) + "\n")
+
+jig_toml_paths = set()
+for relative_path in git_ls_files():
+    if pathlib.Path(relative_path).name != ".jig.toml":
+        continue
+    path = root / relative_path
+    jig_toml_paths.add(path)
+for relative_path in git_ls_files(*release_fixture_files):
+    path = root / relative_path
+    if not has_jig_version(path):
+        raise SystemExit(f"{path.relative_to(root)} is a release-pinned fixture and must include jig_version.")
+    jig_toml_paths.add(path)
+if not jig_toml_paths:
+    raise SystemExit("No .jig.toml or fixture TOML files found to update.")
+for path in sorted(jig_toml_paths):
+    update_jig_toml(path)
+
+replace_optional(
+    root / "scripts" / "fixtures" / "rendered-repos.sh",
+    # This file stores the expected grep pattern literally, including ^ and $.
+    r"\^JIG_VERSION \?= \d+\.\d+\.\d+\$",
+    f"^JIG_VERSION ?= {version}$",
+)
+replace_optional(
+    root / "scripts" / "fixtures" / "runtime-smoke.sh",
+    r"\.git/jig-tools/\d+\.\d+\.\d+/bin/jig",
+    f".git/jig-tools/{version}/bin/jig",
+)
+PY
+}
+
+release_notes() {
+  local version="$1"
+  run "$ROOT_DIR/scripts/release-notes.sh" update "$version"
+}
+
+release_stage() {
+  local release_path
+
+  for release_path in \
+    Cargo.toml Cargo.lock Makefile scripts/jig .agent/jig-contract.json CHANGELOG.md \
+    scripts/fixtures/rendered-repos.sh scripts/fixtures/runtime-smoke.sh
+  do
+    if [[ -e "$ROOT_DIR/$release_path" ]]; then
+      run git add "$release_path"
+    fi
+  done
+
+  git ls-files -z |
+    while IFS= read -r -d '' release_path; do
+      case "$release_path" in
+        .jig.toml|*/.jig.toml)
+          run git add "$release_path"
+          ;;
+      esac
+    done
+
+  git ls-files -z -- "${RELEASE_FIXTURE_FILES[@]}" |
+    while IFS= read -r -d '' release_path; do
+      run git add "$release_path"
+    done
+}
+
+require_changelog_update_allowed() {
+  local version="$1"
+
+  # Check before rewriting version files so an existing generated section fails
+  # without leaving a partially prepared release in the worktree.
+  if [[ "${RELEASE_NOTES_FORCE:-}" == "1" ]]; then
+    return 0
+  fi
+  if "$ROOT_DIR/scripts/release-notes.sh" print "$version" >/dev/null 2>&1; then
+    echo "CHANGELOG.md already has a v$version section. Set RELEASE_NOTES_FORCE=1 to replace it." >&2
+    exit 1
+  fi
+}
+
+release_prepare() {
+  local version="$1"
+
+  require_changelog_update_allowed "$version"
+  update_version_files "$version"
+  run cargo metadata --format-version 1 --no-deps >/dev/null
+  release_notes "$version"
+
+  echo "Prepared release files for $PACKAGE_NAME v$version."
+}
+
+release_github() {
+  local version="$1"
+  local tag="v$version"
+  local notes_file
+
+  if ! command -v gh >/dev/null 2>&1; then
+    echo "GitHub CLI 'gh' is required to create GitHub releases." >&2
+    exit 1
+  fi
+
+  if gh release view "$tag" >/dev/null 2>&1; then
+    echo "GitHub Release $tag already exists."
+    return 0
+  fi
+
+  notes_file="$(mktemp)"
+  if ! "$ROOT_DIR/scripts/release-notes.sh" print "$version" >"$notes_file"; then
+    rm -f "$notes_file"
+    return 1
+  fi
+  if ! run gh release create "$tag" --verify-tag --title "$tag" --notes-file "$notes_file"; then
+    rm -f "$notes_file"
+    return 1
+  fi
+  rm -f "$notes_file"
+}
+
 cargo_dirty_flag=()
 cargo_dirty_flags() {
   cargo_dirty_flag=()
@@ -228,6 +496,7 @@ release_check() {
   require_clean_tree
   require_version_consistency "$version"
   require_expected_binary_name
+  require_changelog_entry "$version"
 
   run make ci
   run bash scripts/validate-fixtures.sh
@@ -332,6 +601,20 @@ case "$command" in
     version="$(release_version "$@")" || exit $?
     release_check "$version"
     ;;
+  prepare)
+    version="$(release_version "$@")" || exit $?
+    release_prepare "$version"
+    ;;
+  notes)
+    version="$(release_version "$@")" || exit $?
+    release_notes "$version"
+    ;;
+  stage)
+    if [[ $# -ne 0 ]]; then
+      usage
+    fi
+    release_stage
+    ;;
   tag)
     version="$(release_version "$@")" || exit $?
     release_tag "$version"
@@ -339,6 +622,13 @@ case "$command" in
   publish)
     version="$(release_version "$@")" || exit $?
     release_publish "$version"
+    ;;
+  github)
+    version="$(release_version "$@")" || exit $?
+    release_github "$version"
+    ;;
+  next-version)
+    next_version "$@"
     ;;
   version)
     if [[ $# -ne 0 ]]; then
