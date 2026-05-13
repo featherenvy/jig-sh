@@ -249,9 +249,7 @@ fn run_init_uses_native_renderer_and_git() {
         fs::set_permissions(&git_path, fs::Permissions::from_mode(0o755)).unwrap();
     }
 
-    unsafe {
-        env::set_var(GIT_BIN_ENV, &git_path);
-    }
+    let _git_bin = EnvVarGuard::set(GIT_BIN_ENV, &git_path);
 
     let template = materialize_template_worktree();
     let destination = temp.path().join("repo");
@@ -271,16 +269,94 @@ fn run_init_uses_native_renderer_and_git() {
     })
     .unwrap();
 
-    unsafe {
-        env::remove_var(GIT_BIN_ENV);
-    }
-
     assert_eq!(output["git_initialized"], true);
     let log = fs::read_to_string(&log_path).unwrap();
     assert!(log.contains("git init -b main"));
     assert!(destination.exists());
     assert!(destination.join(".jig.yml").exists());
     assert!(destination.join("scripts/jig").exists());
+}
+
+#[test]
+fn run_init_renders_empty_agent_tooling_lists_as_yaml_sequences() {
+    let _guard = lock_env();
+    let temp = tempdir().unwrap();
+    let template = materialize_template_worktree();
+    let answers_file = temp.path().join("answers.yml");
+    fs::write(
+        &answers_file,
+        r#"repo_name: demo
+sqlx_enabled: false
+agent_tooling:
+  codex:
+    marketplaces: []
+"#,
+    )
+    .unwrap();
+    let destination = temp.path().join("repo");
+
+    run_init(InitOpts {
+        path: destination.clone(),
+        template: template.path().display().to_string(),
+        template_mode: None,
+        vcs_ref: None,
+        force: false,
+        defaults: false,
+        no_input: true,
+        answers: AnswerOpts {
+            answers_file: Some(answers_file),
+            ..AnswerOpts::default()
+        },
+    })
+    .unwrap();
+
+    let rendered = fs::read_to_string(destination.join(".jig.yml")).unwrap();
+    assert!(rendered.contains("marketplaces: []"));
+    let ctx = crate::context::RepoContext::load_from(&destination).unwrap();
+    assert!(ctx.codex_marketplaces().is_empty());
+}
+
+#[test]
+fn run_init_renders_empty_agent_tooling_plugin_lists_as_yaml_sequences() {
+    let _guard = lock_env();
+    let temp = tempdir().unwrap();
+    let template = materialize_template_worktree();
+    let answers_file = temp.path().join("answers.yml");
+    fs::write(
+        &answers_file,
+        r#"repo_name: demo
+sqlx_enabled: false
+agent_tooling:
+  codex:
+    marketplaces:
+      - id: local-skills
+        source: ../jig-skills
+        plugins: []
+"#,
+    )
+    .unwrap();
+    let destination = temp.path().join("repo");
+
+    run_init(InitOpts {
+        path: destination.clone(),
+        template: template.path().display().to_string(),
+        template_mode: None,
+        vcs_ref: None,
+        force: false,
+        defaults: false,
+        no_input: true,
+        answers: AnswerOpts {
+            answers_file: Some(answers_file),
+            ..AnswerOpts::default()
+        },
+    })
+    .unwrap();
+
+    let rendered = fs::read_to_string(destination.join(".jig.yml")).unwrap();
+    assert!(rendered.contains("plugins: []"));
+    let ctx = crate::context::RepoContext::load_from(&destination).unwrap();
+    assert_eq!(ctx.codex_marketplaces().len(), 1);
+    assert!(ctx.codex_marketplaces()[0].plugins.is_empty());
 }
 
 #[test]
@@ -306,9 +382,7 @@ fn run_init_falls_back_only_for_unsupported_git_branch_flag() {
         fs::set_permissions(&git_path, fs::Permissions::from_mode(0o755)).unwrap();
     }
 
-    unsafe {
-        env::set_var(GIT_BIN_ENV, &git_path);
-    }
+    let _git_bin = EnvVarGuard::set(GIT_BIN_ENV, &git_path);
 
     let template = materialize_template_worktree();
     let destination = temp.path().join("repo");
@@ -328,10 +402,6 @@ fn run_init_falls_back_only_for_unsupported_git_branch_flag() {
         },
     })
     .unwrap();
-
-    unsafe {
-        env::remove_var(GIT_BIN_ENV);
-    }
 
     assert_eq!(output["git_initialized"], true);
     let log = fs::read_to_string(&log_path).unwrap();
@@ -363,9 +433,7 @@ fn run_init_surfaces_git_branch_init_failures() {
         fs::set_permissions(&git_path, fs::Permissions::from_mode(0o755)).unwrap();
     }
 
-    unsafe {
-        env::set_var(GIT_BIN_ENV, &git_path);
-    }
+    let _git_bin = EnvVarGuard::set(GIT_BIN_ENV, &git_path);
 
     let template = materialize_template_worktree();
     let error = run_init(InitOpts {
@@ -384,10 +452,6 @@ fn run_init_surfaces_git_branch_init_failures() {
     })
     .unwrap_err()
     .to_string();
-
-    unsafe {
-        env::remove_var(GIT_BIN_ENV);
-    }
 
     assert!(error.contains("git init -b main failed"));
     assert!(error.contains("repository storage is broken"));

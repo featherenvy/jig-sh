@@ -34,6 +34,7 @@ For local git template checkouts, `jig init` / `jig adopt` use a committed sourc
 - `ci_github_runner`: runner label for GitHub Actions jobs
 - `jig_version`: exact runtime version expected by generated repos
 - `work.gates`: required work evidence gates evaluated before `scripts/jig work finish`
+- `agent_tooling`: agent-client tooling expected for this repository, including Jig Codex skills
 - `template_source_url`: optional canonical template source URL for portable recopy/update
 - `sqlx_enabled`: whether to generate SQLx and migration-specific contract pieces
 - `rust_crate_roots`: list of directories whose direct child directories are considered crates
@@ -56,6 +57,36 @@ When `sqlx_enabled` is `true`, these additional keys are required:
 - `rust_test_locked_command`
 - `web_package_manager`: currently `bun`
 - `frontend_apps`: list of app definitions
+
+## `agent_tooling` Shape
+
+The default rendered config declares the Jig Codex skills marketplace:
+
+```yaml
+agent_tooling:
+  codex:
+    marketplaces:
+      - id: jig-skills
+        source: featherenvy/jig-skills
+        plugins:
+          - jig-rust@jig-skills
+          - jig-swift@jig-skills
+          - jig-typescript@jig-skills
+          - jig-exec-plans@jig-skills
+```
+
+Jig Codex skills are optional Codex plugin bundles used by agents working in generated Jig repos; the default marketplace source is `featherenvy/jig-skills`.
+
+Use `scripts/jig agent doctor` to report whether the local Codex installation can use the configured marketplace and to show diagnostic plugin enablement flags. The top-level `ok` result requires Codex marketplace support and registered marketplace sources; plugin enablement is reported separately because the supported Codex bootstrap path is marketplace registration. Use `scripts/jig agent bootstrap` to run `codex plugin marketplace add` when exactly one marketplace is configured. If multiple marketplaces are configured, `agent bootstrap` requires `--marketplace <source>` so a repo cannot install several user-level Codex marketplaces by default. `agent bootstrap` mutates user-level Codex config, so it is intentionally separate from the project-owned `bootstrap_command`.
+
+Omitting `agent_tooling`, `agent_tooling.codex`, or `agent_tooling.codex.marketplaces` uses the default Jig skills marketplace. Set `marketplaces: []` to opt out explicitly. In `agent doctor` output, `codex.available` is `true` or `false` when Codex is required, and `null` when the Codex probe is skipped because `marketplaces: []`.
+
+For local development against a sibling checkout, either pass `--marketplace` or set `JIG_SKILLS_MARKETPLACE`. Explicit `--marketplace` wins over `JIG_SKILLS_MARKETPLACE`, and the env var wins over `.jig.yml`; both overrides affect only `agent bootstrap`. Local path sources must be absolute or start with `./` or `../`; they are resolved from the repo root before Codex is invoked, and missing local paths fail before mutating Codex config. Bare `owner/repo` values are treated as marketplace shorthands, not local paths.
+
+```sh
+scripts/jig agent bootstrap --marketplace ../jig-skills
+JIG_SKILLS_MARKETPLACE=../jig-skills scripts/jig agent bootstrap
+```
 
 ## `work` Shape
 
@@ -170,6 +201,8 @@ The generated `scripts/jig` launcher enforces the exact `jig_version` pinned in 
 
 It also provides runtime-owned append-only memory under `.agent/state/*.jsonl` through the structured work namespace:
 
+- `scripts/jig agent doctor`
+- `scripts/jig agent bootstrap`
 - `scripts/jig work start --title ...`
 - `scripts/jig work append --plan-id ...`
 - `scripts/jig work check --plan-id ...`

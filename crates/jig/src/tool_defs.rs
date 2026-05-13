@@ -24,6 +24,9 @@ pub(crate) mod args {
 
 pub(crate) mod cli_command {
     pub(crate) const ADOPT: &str = "adopt";
+    pub(crate) const AGENT: &str = "agent";
+    pub(crate) const AGENT_BOOTSTRAP: &str = "bootstrap";
+    pub(crate) const AGENT_DOCTOR: &str = "doctor";
     pub(crate) const CLIPPY: &str = "clippy";
     pub(crate) const CONTRACT_CHECK: &str = "contract-check";
     pub(crate) const FMT_CHECK: &str = "fmt-check";
@@ -53,6 +56,7 @@ pub(crate) mod kind {
 }
 
 pub(crate) mod tool {
+    pub(crate) const AGENT_DOCTOR: &str = "jig.agent_doctor";
     pub(crate) const CLIPPY: &str = "jig.clippy";
     pub(crate) const CONTRACT_CHECK: &str = "jig.contract_check";
     pub(crate) const DECISIONS_ADD: &str = "jig.decisions_add";
@@ -83,6 +87,7 @@ pub(crate) type JsonObject = Map<String, Value>;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum MemoryTool {
+    AgentDoctor,
     Start,
     Append,
     Check,
@@ -94,7 +99,8 @@ pub(crate) enum MemoryTool {
 }
 
 impl MemoryTool {
-    const ALL: [Self; 8] = [
+    const ALL: [Self; 9] = [
+        Self::AgentDoctor,
         Self::Start,
         Self::Append,
         Self::Check,
@@ -107,6 +113,7 @@ impl MemoryTool {
 
     pub(crate) fn from_name(name: &str) -> Option<Self> {
         match name {
+            tool::AGENT_DOCTOR => Some(Self::AgentDoctor),
             tool::WORK_START => Some(Self::Start),
             tool::WORK_APPEND => Some(Self::Append),
             tool::WORK_CHECK => Some(Self::Check),
@@ -121,6 +128,7 @@ impl MemoryTool {
 
     fn name(self) -> &'static str {
         match self {
+            Self::AgentDoctor => tool::AGENT_DOCTOR,
             Self::Start => tool::WORK_START,
             Self::Append => tool::WORK_APPEND,
             Self::Check => tool::WORK_CHECK,
@@ -134,6 +142,7 @@ impl MemoryTool {
 
     fn description(self) -> &'static str {
         match self {
+            Self::AgentDoctor => "Report local Codex agent tooling status for this repo.",
             Self::Start => "Start structured work by opening a session and plan.",
             Self::Append => "Append to a structured work plan.",
             Self::Check => "Run configured or selected work checks.",
@@ -147,7 +156,7 @@ impl MemoryTool {
 
     fn input_schema(self) -> Value {
         match self {
-            Self::Status => empty_input_schema(),
+            Self::AgentDoctor | Self::Status => empty_input_schema(),
             Self::Gates => object_schema(&[(args::PLAN_ID, string_schema())], &[args::PLAN_ID]),
             Self::Start => object_schema(
                 &[

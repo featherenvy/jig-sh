@@ -29,6 +29,15 @@ The template renders these repo-owned assets into a consumer repository:
 
 Generated repos keep `make` as the execution backend, but they also get a `scripts/jig` launcher, MCP wiring, and append-only repo memory under `.agent/state/*.jsonl`.
 
+On fresh machines, generated repos can check and bootstrap expected Codex-side Jig skills through the launcher:
+
+```sh
+scripts/jig agent doctor
+scripts/jig agent bootstrap
+```
+
+For local dogfooding with an existing sibling `jig-skills` checkout, pass `--marketplace ../jig-skills` to `agent bootstrap`.
+
 The template does not try to generate your application code, crate-level `AGENTS.md` files, or a schema dump implementation. Those remain project-owned. SQLx, migration, and schema-check contract pieces are optional via `sqlx_enabled`.
 
 For existing repositories, root `AGENTS.md` remains repo-owned. `jig adopt` inserts or updates only the marked Jig managed block and preserves the rest of the file.

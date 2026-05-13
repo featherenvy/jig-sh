@@ -7,6 +7,16 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
 const CURRENT_SESSION_FILE: &str = "jig-current-session.txt";
+pub(crate) const DEFAULT_CODEX_MARKETPLACE_ID: &str = "jig-skills";
+// jig.sh generated repos default to the shared Jig skills marketplace; forks can
+// override or opt out through agent_tooling.codex.marketplaces in .jig.yml.
+pub(crate) const DEFAULT_CODEX_MARKETPLACE_SOURCE: &str = "featherenvy/jig-skills";
+pub(crate) const DEFAULT_CODEX_MARKETPLACE_PLUGINS: &[&str] = &[
+    "jig-rust@jig-skills",
+    "jig-swift@jig-skills",
+    "jig-typescript@jig-skills",
+    "jig-exec-plans@jig-skills",
+];
 
 #[derive(Clone, Debug, Deserialize)]
 struct RepoConfig {
@@ -19,6 +29,8 @@ struct RepoConfig {
     jig_version: String,
     #[serde(default)]
     work: WorkConfig,
+    #[serde(default)]
+    agent_tooling: AgentToolingConfig,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -30,6 +42,34 @@ struct WorkConfig {
     #[allow(dead_code)]
     #[serde(default)]
     refinements: Vec<WorkRefinementConfig>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub(crate) struct AgentToolingConfig {
+    #[serde(default)]
+    pub(crate) codex: CodexToolingConfig,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub(crate) struct CodexToolingConfig {
+    #[serde(default = "default_codex_marketplaces")]
+    pub(crate) marketplaces: Vec<CodexMarketplaceConfig>,
+}
+
+impl Default for CodexToolingConfig {
+    fn default() -> Self {
+        Self {
+            marketplaces: default_codex_marketplaces(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub(crate) struct CodexMarketplaceConfig {
+    pub(crate) id: String,
+    pub(crate) source: String,
+    #[serde(default)]
+    pub(crate) plugins: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -191,6 +231,10 @@ impl RepoContext {
             .collect()
     }
 
+    pub(crate) fn codex_marketplaces(&self) -> &[CodexMarketplaceConfig] {
+        &self.config.agent_tooling.codex.marketplaces
+    }
+
     pub(crate) fn state_dir(&self) -> PathBuf {
         self.root.join(".agent/state")
     }
@@ -210,6 +254,21 @@ impl RepoContext {
 
 fn default_required() -> bool {
     true
+}
+
+fn default_codex_marketplaces() -> Vec<CodexMarketplaceConfig> {
+    vec![CodexMarketplaceConfig {
+        id: DEFAULT_CODEX_MARKETPLACE_ID.into(),
+        source: DEFAULT_CODEX_MARKETPLACE_SOURCE.into(),
+        plugins: default_codex_marketplace_plugins(),
+    }]
+}
+
+pub(crate) fn default_codex_marketplace_plugins() -> Vec<String> {
+    DEFAULT_CODEX_MARKETPLACE_PLUGINS
+        .iter()
+        .map(|plugin| (*plugin).into())
+        .collect()
 }
 
 fn validate_work_config(config: &RepoConfig) -> Result<()> {
@@ -362,6 +421,93 @@ work:
         assert_eq!(gates[0].kind, "check");
         assert_eq!(gates[0].tool.as_deref(), Some("jig.contract_check"));
         assert!(gates[0].required);
+    }
+
+    #[test]
+    fn missing_agent_tooling_uses_jig_skills_defaults() {
+        let temp = tempdir().unwrap();
+        fs::create_dir_all(temp.path().join(".agent")).unwrap();
+        fs::write(
+            temp.path().join(".jig.yml"),
+            r#"_src_path: '/tmp/template'
+_commit: 'abc123'
+repo_name: 'demo'
+default_branch: 'main'
+jig_version: '0.1.0'
+"#,
+        )
+        .unwrap();
+        fs::write(
+            temp.path().join(".agent/jig-contract.json"),
+            serde_json::to_string_pretty(&json!({
+                "contract_version": 1,
+                "tool_namespace": "jig",
+                "jig_version": "0.1.0",
+                "required_make_targets": ["contract-check"],
+                "optional_make_targets": [],
+                "tools": [],
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let ctx = RepoContext::load_from(temp.path()).unwrap();
+        let marketplaces = ctx.codex_marketplaces();
+        assert_eq!(marketplaces.len(), 1);
+        assert_eq!(marketplaces[0].id, "jig-skills");
+        assert_eq!(marketplaces[0].source, "featherenvy/jig-skills");
+        assert_eq!(
+            marketplaces[0].plugins,
+            vec![
+                "jig-rust@jig-skills",
+                "jig-swift@jig-skills",
+                "jig-typescript@jig-skills",
+                "jig-exec-plans@jig-skills",
+            ]
+        );
+    }
+
+    #[test]
+    fn explicit_agent_tooling_config_is_loaded() {
+        let temp = tempdir().unwrap();
+        fs::create_dir_all(temp.path().join(".agent")).unwrap();
+        fs::write(
+            temp.path().join(".jig.yml"),
+            r#"_src_path: '/tmp/template'
+_commit: 'abc123'
+repo_name: 'demo'
+default_branch: 'main'
+jig_version: '0.1.0'
+agent_tooling:
+  codex:
+    marketplaces:
+      - id: local-skills
+        source: ../jig-skills
+        plugins:
+          - local-rust@local-skills
+"#,
+        )
+        .unwrap();
+        fs::write(
+            temp.path().join(".agent/jig-contract.json"),
+            serde_json::to_string_pretty(&json!({
+                "contract_version": 1,
+                "tool_namespace": "jig",
+                "jig_version": "0.1.0",
+                "required_make_targets": ["contract-check"],
+                "optional_make_targets": [],
+                "tools": [],
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let ctx = RepoContext::load_from(temp.path()).unwrap();
+        let marketplaces = ctx.codex_marketplaces();
+        assert_eq!(marketplaces.len(), 1);
+        assert_eq!(marketplaces[0].id, "local-skills");
+        assert_eq!(marketplaces[0].source, "../jig-skills");
+        assert_eq!(marketplaces[0].plugins, vec!["local-rust@local-skills"]);
     }
 
     #[test]

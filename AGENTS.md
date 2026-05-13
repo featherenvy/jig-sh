@@ -10,6 +10,7 @@ This repository uses the shared `jig.sh` workflow. Keep repo-local business rule
 - Read the nearest crate-level `AGENTS.md` before changing a crate.
 - Use `.agent/PLANS.md` when writing an ExecPlan for a complex feature or refactor.
 - Use `scripts/jig` for the typed repo contract and `scripts/jig mcp` for MCP clients.
+- On a fresh machine, run `scripts/jig agent doctor`; run `scripts/jig agent bootstrap` when Jig Codex skills are missing.
 - For substantial work, use `scripts/jig work start`, `scripts/jig work check`, `scripts/jig work gates`, and `scripts/jig work finish` to keep plans, receipts, and required gates connected.
 - Treat `.agent/state/*.jsonl` as append-only repo memory.
 

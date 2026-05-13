@@ -8,7 +8,7 @@
 
 Generated repositories may rely on the contract described here when they pin a `jig_version` in `.jig.yml` and keep `scripts/jig`, `.mcp.json`, and `.agent/jig-contract.json` in sync with that version.
 
-Structured work commands are runtime-owned conveniences. They are available through `scripts/jig work ...` and MCP tools named `jig.work_*`, but they are not part of contract version `1` and are not declared in `.agent/jig-contract.json`.
+Structured work commands and agent tooling checks are runtime-owned conveniences. They are available through commands such as `scripts/jig work ...` and `scripts/jig agent doctor`, and MCP tools named `jig.work_*` and `jig.agent_doctor`, but they are not part of contract version `1` and are not declared in `.agent/jig-contract.json`.
 
 The structured work namespace includes native check gates. Gates are configured in `.jig.yml`, evaluated from receipts, and enforced by `scripts/jig work finish`. They remain runtime-owned because they compose stable make-backed tools with append-only work state rather than adding new make-backed contract tools.
 

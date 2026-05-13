@@ -14,6 +14,7 @@ The core idea is to turn a repository into an operating environment for coding a
 - an MCP server exposing the same tools to MCP clients
 - append-only session, plan, receipt, and decision state under `.agent/`
 - required work gates evaluated from plan-linked receipts
+- native agent tooling checks for client-side Jig skills
 - policy scripts and CI workflows that keep the generated contract honest
 
 In short: `jig.sh` is a harness for making agentic software work repeatable, inspectable, and reviewable.
@@ -34,6 +35,7 @@ The runtime is implemented in `crates/jig`. Its main responsibilities are:
 - make-backed tool execution
 - MCP protocol handling over stdio
 - append-only runtime state for sessions, plans, receipts, and decisions
+- agent tooling doctor/bootstrap commands for Codex-side Jig skills
 - receipt metadata collection, including git changed paths and diff stats
 
 The stable generated contract is `.agent/jig-contract.json` with `contract_version: 1`. That contract is intentionally limited to make-backed tools such as `jig.fmt_check`, `jig.clippy`, `jig.test`, `jig.test_locked`, `jig.contract_check`, `jig.run_target`, and optional SQLx/schema/migration tools.

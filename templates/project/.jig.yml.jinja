@@ -56,3 +56,16 @@ frontend_apps:[% if frontend_apps | length == 0 %] [][% else %]
     coverage_threshold: <<[ app.coverage_threshold ]>>
 [% endfor %]
 [% endif %]
+agent_tooling:
+  codex:
+    marketplaces:[% if agent_tooling.codex.marketplaces | length == 0 %] [][% else %]
+[% for marketplace in agent_tooling.codex.marketplaces %]
+      - id: '<<[ marketplace.id | replace("'", "''") ]>>'
+        source: '<<[ marketplace.source | replace("'", "''") ]>>'
+        plugins:[% if marketplace.plugins | length == 0 %] [][% else %]
+[% for plugin in marketplace.plugins %]
+          - '<<[ plugin | replace("'", "''") ]>>'
+[% endfor %]
+[% endif %]
+[% endfor %]
+[% endif %]

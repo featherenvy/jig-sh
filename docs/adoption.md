@@ -8,9 +8,10 @@
 4. Confirm `.jig.yml` was generated with the intended profile. If the repo will be shared across machines, set `template_source_url` to a portable git source, then review the remaining paths and commands before committing.
 5. Review the root `AGENTS.md`. Existing repo guidance is preserved; Jig inserts or updates only the `<!-- BEGIN JIG MANAGED BLOCK -->` section.
 6. Add or adapt crate-level `AGENTS.md` files for each backend crate.
-7. Run the generated local checks and `make contract-check`.
-8. Wire any missing project-owned scripts such as `scripts/dump-schema.sh` if schema dumps are enabled.
-9. Commit the generated files and then switch CI to use the new workflows.
+7. Run `scripts/jig agent doctor`. If Jig Codex skills are missing and you want this client to use them, run `scripts/jig agent bootstrap`.
+8. Run the generated local checks and `make contract-check`.
+9. Wire any missing project-owned scripts such as `scripts/dump-schema.sh` if schema dumps are enabled.
+10. Commit the generated files and then switch CI to use the new workflows.
 
 Before publishing a generated repo contract or wiring long-lived MCP clients to it, review [Public Contract](./public-contract.md) for the stable make-backed CLI, MCP, and manifest guarantees.
 
@@ -72,3 +73,9 @@ make schema-check
 If web apps are configured, confirm each app has the expected package scripts before enabling the web workflow.
 
 If you want an MCP client to discover the repo automatically, point it at the generated `.mcp.json`, which launches `scripts/jig mcp`.
+
+On a fresh machine, `scripts/jig agent doctor` is the read-only agent tooling check. Its top-level `ok` result requires Codex marketplace support and registered marketplace sources; plugin enablement is reported as diagnostic detail. `scripts/jig agent bootstrap` is explicit because it runs `codex plugin marketplace add` and mutates user-level Codex config. For local dogfooding with an existing sibling skills checkout, use:
+
+```sh
+scripts/jig agent bootstrap --marketplace ../jig-skills
+```

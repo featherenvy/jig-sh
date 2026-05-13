@@ -5,6 +5,10 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
 use super::{AnswerOpts, FrontendApp};
+use crate::context::{
+    DEFAULT_CODEX_MARKETPLACE_ID, DEFAULT_CODEX_MARKETPLACE_SOURCE,
+    default_codex_marketplace_plugins,
+};
 
 #[derive(Clone, Debug, Serialize)]
 pub(super) struct RenderAnswers {
@@ -28,6 +32,7 @@ pub(super) struct RenderAnswers {
     rust_test_locked_command: String,
     web_package_manager: String,
     frontend_apps: Vec<FrontendApp>,
+    agent_tooling: AgentToolingAnswers,
 }
 
 impl RenderAnswers {
@@ -80,6 +85,35 @@ struct RawAnswers {
     rust_test_locked_command: Option<String>,
     web_package_manager: Option<String>,
     frontend_apps: Option<Vec<FrontendApp>>,
+    agent_tooling: Option<AgentToolingAnswers>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+struct AgentToolingAnswers {
+    #[serde(default)]
+    codex: CodexToolingAnswers,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct CodexToolingAnswers {
+    #[serde(default = "default_codex_marketplaces")]
+    marketplaces: Vec<CodexMarketplaceAnswers>,
+}
+
+impl Default for CodexToolingAnswers {
+    fn default() -> Self {
+        Self {
+            marketplaces: default_codex_marketplaces(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct CodexMarketplaceAnswers {
+    id: String,
+    source: String,
+    #[serde(default)]
+    plugins: Vec<String>,
 }
 
 impl RawAnswers {
@@ -201,8 +235,17 @@ impl RawAnswers {
                 .unwrap_or_else(|| "cargo test --workspace --locked".into()),
             web_package_manager,
             frontend_apps: self.frontend_apps.unwrap_or_default(),
+            agent_tooling: self.agent_tooling.unwrap_or_default(),
         })
     }
+}
+
+fn default_codex_marketplaces() -> Vec<CodexMarketplaceAnswers> {
+    vec![CodexMarketplaceAnswers {
+        id: DEFAULT_CODEX_MARKETPLACE_ID.into(),
+        source: DEFAULT_CODEX_MARKETPLACE_SOURCE.into(),
+        plugins: default_codex_marketplace_plugins(),
+    }]
 }
 
 fn merge_option<T>(target: &mut Option<T>, value: Option<T>) {

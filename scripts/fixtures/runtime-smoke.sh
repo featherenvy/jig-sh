@@ -67,6 +67,7 @@ assert ("jig.schema_check" in tool_names) == expect_sqlx, tool_names
 assert ("jig.schema_dump" in tool_names) == expect_schema_dump, tool_names
 assert ("jig.sqlx_check" in tool_names) == expect_sqlx, tool_names
 assert ("jig.migration_add" in tool_names) == expect_sqlx, tool_names
+assert "jig.agent_doctor" in tool_names, tool_names
 assert "jig.work_start" in tool_names, tool_names
 assert "jig.session_start" not in tool_names, tool_names
 

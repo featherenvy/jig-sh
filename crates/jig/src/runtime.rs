@@ -10,6 +10,7 @@ use crate::process::require_success;
 use crate::state::{ReceiptInput, now_ms, record_receipt};
 use crate::tool_defs::{self, JsonObject, MemoryTool, args, string_arg, tool};
 
+mod agent;
 mod requests;
 mod work;
 
@@ -61,6 +62,7 @@ pub(crate) fn dispatch(ctx: &RepoContext, command: CommandKind) -> Result<Value>
             json!({ args::NAME: opts.name }),
             opts.tool.plan_id,
         ),
+        CommandKind::Agent(command) => agent::dispatch(ctx, command),
         CommandKind::Work(command) => work::dispatch(ctx, command),
         CommandKind::Init(_) | CommandKind::Adopt(_) | CommandKind::Update(_) => unreachable!(),
         CommandKind::Mcp => unreachable!(),
@@ -77,6 +79,7 @@ pub(crate) fn call_tool(ctx: &RepoContext, name: &str, args: Value) -> Result<Va
     }
 
     match MemoryTool::from_name(name) {
+        Some(MemoryTool::AgentDoctor) => agent::doctor(ctx),
         Some(MemoryTool::Start) => work::start_from_args(ctx, args),
         Some(MemoryTool::Append) => work::append_from_args(ctx, args),
         Some(MemoryTool::Check) => work::check_from_args(ctx, args),

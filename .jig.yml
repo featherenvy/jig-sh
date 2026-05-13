@@ -28,3 +28,13 @@ rust_test_command: cargo test --workspace
 rust_test_locked_command: cargo test --workspace --locked
 web_package_manager: bun
 frontend_apps: []
+agent_tooling:
+  codex:
+    marketplaces:
+      - id: jig-skills
+        source: featherenvy/jig-skills
+        plugins:
+          - jig-rust@jig-skills
+          - jig-swift@jig-skills
+          - jig-typescript@jig-skills
+          - jig-exec-plans@jig-skills

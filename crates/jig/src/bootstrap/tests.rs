@@ -1,19 +1,8 @@
-use std::sync::{Mutex, OnceLock};
-
 use tempfile::{TempDir, tempdir};
 
+use crate::test_env::{EnvVarGuard, lock_env};
+
 use super::*;
-
-fn env_lock() -> &'static Mutex<()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-}
-
-fn lock_env() -> std::sync::MutexGuard<'static, ()> {
-    env_lock()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
 
 fn template_repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))

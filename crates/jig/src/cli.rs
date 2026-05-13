@@ -49,6 +49,8 @@ pub(crate) enum CommandKind {
     ContractCheck(ToolOpts),
     #[command(name = tool_defs::cli_command::RUN_TARGET)]
     RunTarget(RunTargetOpts),
+    #[command(name = tool_defs::cli_command::AGENT, subcommand)]
+    Agent(AgentCommand),
     #[command(name = tool_defs::cli_command::WORK, subcommand)]
     Work(WorkCommand),
     #[command(name = tool_defs::cli_command::MCP)]
@@ -73,6 +75,20 @@ pub(crate) enum WorkCommand {
     Status,
     #[command(name = tool_defs::cli_command::WORK_FINISH)]
     Finish(WorkFinishOpts),
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum AgentCommand {
+    #[command(name = tool_defs::cli_command::AGENT_DOCTOR)]
+    Doctor,
+    #[command(name = tool_defs::cli_command::AGENT_BOOTSTRAP)]
+    Bootstrap(AgentBootstrapOpts),
+}
+
+#[derive(Args, Debug)]
+pub(crate) struct AgentBootstrapOpts {
+    #[arg(long)]
+    pub(crate) marketplace: Option<String>,
 }
 
 #[derive(Args, Clone, Debug, Default)]
@@ -323,6 +339,35 @@ mod tests {
                 assert_eq!(opts.limit, 5);
             }
             other => panic!("expected work receipts command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_agent_doctor_command() {
+        let cli = Cli::try_parse_from(["jig", "agent", "doctor"]).unwrap();
+
+        match cli.command {
+            CommandKind::Agent(AgentCommand::Doctor) => {}
+            other => panic!("expected agent doctor command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_agent_bootstrap_marketplace() {
+        let cli = Cli::try_parse_from([
+            "jig",
+            "agent",
+            "bootstrap",
+            "--marketplace",
+            "../jig-skills",
+        ])
+        .unwrap();
+
+        match cli.command {
+            CommandKind::Agent(AgentCommand::Bootstrap(opts)) => {
+                assert_eq!(opts.marketplace.as_deref(), Some("../jig-skills"));
+            }
+            other => panic!("expected agent bootstrap command, got {other:?}"),
         }
     }
 
