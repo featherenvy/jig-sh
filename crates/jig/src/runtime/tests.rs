@@ -247,6 +247,49 @@ fn make_cli_dispatch_requires_manifest_tool_declaration() {
 }
 
 #[test]
+fn work_goal_opens_durable_plan_and_prompt() {
+    let temp = tempdir().unwrap();
+    write_fixture_repo(temp.path());
+    let ctx = RepoContext::load_from(temp.path()).unwrap();
+
+    let output = dispatch(
+        &ctx,
+        CommandKind::Work(crate::cli::WorkCommand::Goal(crate::cli::WorkGoalOpts {
+            objective: "Reduce API handler duplication".into(),
+            success: "duplication is reduced and the configured gate passes".into(),
+            validations: vec!["scripts/jig work check".into()],
+            constraints: vec!["Do not change public routes".into()],
+            checkpoints: vec!["Capture baseline gate status".into()],
+            title: Some("API goal".into()),
+            notes: Some("Prefer small commits.".into()),
+        })),
+    )
+    .unwrap();
+
+    let plan_id = output["plan"]["plan_id"].as_str().unwrap();
+    let body_path = output["plan"]["body_path"].as_str().unwrap();
+    let body = fs::read_to_string(temp.path().join(body_path)).unwrap();
+
+    assert_eq!(output["ok"], true, "{output:#}");
+    assert!(
+        output["goal_prompt"]
+            .as_str()
+            .unwrap()
+            .starts_with("/goal ")
+    );
+    assert!(output["goal_prompt"].as_str().unwrap().contains(plan_id));
+    assert!(body.contains("# Goal Harness"));
+    assert!(body.contains("Reduce API handler duplication"));
+    assert!(body.contains("- scripts/jig work check"));
+    assert!(body.contains("- [ ] Capture baseline gate status"));
+    assert!(body.contains("custom: check (jig.custom_check)"));
+    assert_eq!(
+        output["commands"]["gates"],
+        format!("scripts/jig work gates --plan-id {plan_id}")
+    );
+}
+
+#[test]
 fn agent_doctor_reports_configured_codex_marketplace() {
     let _guard = lock_env();
     let temp = tempdir().unwrap();

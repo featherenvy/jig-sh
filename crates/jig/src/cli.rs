@@ -59,6 +59,8 @@ pub(crate) enum CommandKind {
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum WorkCommand {
+    #[command(name = tool_defs::cli_command::WORK_GOAL)]
+    Goal(WorkGoalOpts),
     #[command(name = tool_defs::cli_command::WORK_START)]
     Start(WorkStartOpts),
     #[command(name = tool_defs::cli_command::WORK_APPEND)]
@@ -83,6 +85,24 @@ pub(crate) enum AgentCommand {
     Doctor,
     #[command(name = tool_defs::cli_command::AGENT_BOOTSTRAP)]
     Bootstrap(AgentBootstrapOpts),
+}
+
+#[derive(Args, Debug)]
+pub(crate) struct WorkGoalOpts {
+    #[arg(long)]
+    pub(crate) objective: String,
+    #[arg(long)]
+    pub(crate) success: String,
+    #[arg(long = "validation", required = true)]
+    pub(crate) validations: Vec<String>,
+    #[arg(long = "constraint")]
+    pub(crate) constraints: Vec<String>,
+    #[arg(long = "checkpoint")]
+    pub(crate) checkpoints: Vec<String>,
+    #[arg(long)]
+    pub(crate) title: Option<String>,
+    #[arg(long)]
+    pub(crate) notes: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -339,6 +359,45 @@ mod tests {
                 assert_eq!(opts.limit, 5);
             }
             other => panic!("expected work receipts command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_work_goal() {
+        let cli = Cli::try_parse_from([
+            "jig",
+            "work",
+            "goal",
+            "--objective",
+            "Migrate the API",
+            "--success",
+            "all handlers use the new type",
+            "--validation",
+            "make test",
+            "--validation",
+            "make clippy",
+            "--constraint",
+            "do not change public routes",
+            "--checkpoint",
+            "baseline current tests",
+            "--title",
+            "API migration",
+            "--notes",
+            "Keep changes small.",
+        ])
+        .unwrap();
+
+        match cli.command {
+            CommandKind::Work(WorkCommand::Goal(opts)) => {
+                assert_eq!(opts.objective, "Migrate the API");
+                assert_eq!(opts.success, "all handlers use the new type");
+                assert_eq!(opts.validations, vec!["make test", "make clippy"]);
+                assert_eq!(opts.constraints, vec!["do not change public routes"]);
+                assert_eq!(opts.checkpoints, vec!["baseline current tests"]);
+                assert_eq!(opts.title.as_deref(), Some("API migration"));
+                assert_eq!(opts.notes.as_deref(), Some("Keep changes small."));
+            }
+            other => panic!("expected work goal command, got {other:?}"),
         }
     }
 

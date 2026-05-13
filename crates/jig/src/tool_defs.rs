@@ -10,6 +10,7 @@ pub(crate) mod args {
     pub(crate) const FAILED_ONLY: &str = "failed_only";
     pub(crate) const LIMIT: &str = "limit";
     pub(crate) const NAME: &str = "name";
+    pub(crate) const NOTES: &str = "notes";
     pub(crate) const OPERATION: &str = "operation";
     pub(crate) const OUTCOME: &str = "outcome";
     pub(crate) const PLAN_ID: &str = "plan_id";
@@ -17,9 +18,14 @@ pub(crate) mod args {
     pub(crate) const RESOLUTION: &str = "resolution";
     pub(crate) const SELECTED_OPTION: &str = "selected_option";
     pub(crate) const SESSION_ID: &str = "session_id";
+    pub(crate) const SUCCESS: &str = "success";
     pub(crate) const TITLE: &str = "title";
     pub(crate) const TOOL_NAME: &str = "tool_name";
     pub(crate) const TOOLS: &str = "tools";
+    pub(crate) const CHECKPOINTS: &str = "checkpoints";
+    pub(crate) const CONSTRAINTS: &str = "constraints";
+    pub(crate) const OBJECTIVE: &str = "objective";
+    pub(crate) const VALIDATIONS: &str = "validations";
 }
 
 pub(crate) mod cli_command {
@@ -46,6 +52,7 @@ pub(crate) mod cli_command {
     pub(crate) const WORK_DECIDE: &str = "decide";
     pub(crate) const WORK_FINISH: &str = "finish";
     pub(crate) const WORK_GATES: &str = "gates";
+    pub(crate) const WORK_GOAL: &str = "goal";
     pub(crate) const WORK_RECEIPTS: &str = "receipts";
     pub(crate) const WORK_START: &str = "start";
     pub(crate) const WORK_STATUS: &str = "status";
@@ -78,6 +85,7 @@ pub(crate) mod tool {
     pub(crate) const WORK_DECIDE: &str = "jig.work_decide";
     pub(crate) const WORK_FINISH: &str = "jig.work_finish";
     pub(crate) const WORK_GATES: &str = "jig.work_gates";
+    pub(crate) const WORK_GOAL: &str = "jig.work_goal";
     pub(crate) const WORK_RECEIPTS: &str = "jig.work_receipts";
     pub(crate) const WORK_START: &str = "jig.work_start";
     pub(crate) const WORK_STATUS: &str = "jig.work_status";
@@ -88,6 +96,7 @@ pub(crate) type JsonObject = Map<String, Value>;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum MemoryTool {
     AgentDoctor,
+    Goal,
     Start,
     Append,
     Check,
@@ -99,8 +108,9 @@ pub(crate) enum MemoryTool {
 }
 
 impl MemoryTool {
-    const ALL: [Self; 9] = [
+    const ALL: [Self; 10] = [
         Self::AgentDoctor,
+        Self::Goal,
         Self::Start,
         Self::Append,
         Self::Check,
@@ -114,6 +124,7 @@ impl MemoryTool {
     pub(crate) fn from_name(name: &str) -> Option<Self> {
         match name {
             tool::AGENT_DOCTOR => Some(Self::AgentDoctor),
+            tool::WORK_GOAL => Some(Self::Goal),
             tool::WORK_START => Some(Self::Start),
             tool::WORK_APPEND => Some(Self::Append),
             tool::WORK_CHECK => Some(Self::Check),
@@ -129,6 +140,7 @@ impl MemoryTool {
     fn name(self) -> &'static str {
         match self {
             Self::AgentDoctor => tool::AGENT_DOCTOR,
+            Self::Goal => tool::WORK_GOAL,
             Self::Start => tool::WORK_START,
             Self::Append => tool::WORK_APPEND,
             Self::Check => tool::WORK_CHECK,
@@ -143,6 +155,9 @@ impl MemoryTool {
     fn description(self) -> &'static str {
         match self {
             Self::AgentDoctor => "Report local Codex agent tooling status for this repo.",
+            Self::Goal => {
+                "Create a goal-mode work harness with a durable plan and validation contract."
+            }
             Self::Start => "Start structured work by opening a session and plan.",
             Self::Append => "Append to a structured work plan.",
             Self::Check => "Run configured or selected work checks.",
@@ -157,6 +172,37 @@ impl MemoryTool {
     fn input_schema(self) -> Value {
         match self {
             Self::AgentDoctor | Self::Status => empty_input_schema(),
+            Self::Goal => object_schema(
+                &[
+                    (args::OBJECTIVE, string_schema()),
+                    (args::SUCCESS, string_schema()),
+                    (
+                        args::VALIDATIONS,
+                        json!({
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "minItems": 1
+                        }),
+                    ),
+                    (
+                        args::CONSTRAINTS,
+                        json!({
+                            "type": "array",
+                            "items": { "type": "string" }
+                        }),
+                    ),
+                    (
+                        args::CHECKPOINTS,
+                        json!({
+                            "type": "array",
+                            "items": { "type": "string" }
+                        }),
+                    ),
+                    (args::TITLE, string_schema()),
+                    (args::NOTES, string_schema()),
+                ],
+                &[args::OBJECTIVE, args::SUCCESS, args::VALIDATIONS],
+            ),
             Self::Gates => object_schema(&[(args::PLAN_ID, string_schema())], &[args::PLAN_ID]),
             Self::Start => object_schema(
                 &[

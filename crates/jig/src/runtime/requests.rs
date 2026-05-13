@@ -4,7 +4,8 @@ use serde::{Deserialize, Deserializer};
 use serde_json::Value;
 
 use crate::cli::{
-    WorkAppendOpts, WorkDecisionAddOpts, WorkFinishOpts, WorkReceiptsOpts, WorkStartOpts,
+    WorkAppendOpts, WorkDecisionAddOpts, WorkFinishOpts, WorkGoalOpts, WorkReceiptsOpts,
+    WorkStartOpts,
 };
 use crate::state::{
     DecisionAddRequest, PlanAppendRequest, PlanCloseRequest, PlanOpenRequest, ReceiptListFilter,
@@ -17,6 +18,20 @@ impl From<WorkStartOpts> for PlanOpenRequest {
             title: opts.title,
             body: opts.body,
             body_file: opts.body_file,
+        }
+    }
+}
+
+impl From<WorkGoalOpts> for WorkGoalRequest {
+    fn from(opts: WorkGoalOpts) -> Self {
+        Self {
+            objective: opts.objective,
+            success: opts.success,
+            validations: opts.validations,
+            constraints: opts.constraints,
+            checkpoints: opts.checkpoints,
+            title: opts.title,
+            notes: opts.notes,
         }
     }
 }
@@ -76,6 +91,20 @@ pub(super) fn session_end_request_for_finish(outcome: Option<String>) -> Session
         session_id: None,
         outcome,
     }
+}
+
+#[derive(Deserialize)]
+pub(super) struct WorkGoalRequest {
+    pub(super) objective: String,
+    pub(super) success: String,
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub(super) validations: Vec<String>,
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub(super) constraints: Vec<String>,
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub(super) checkpoints: Vec<String>,
+    pub(super) title: Option<String>,
+    pub(super) notes: Option<String>,
 }
 
 #[derive(Deserialize)]

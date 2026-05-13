@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 use crate::cli::{WorkCheckOpts, WorkCommand, WorkFinishOpts, WorkGatesOpts};
 use crate::context::{RepoContext, WorkGateConfig};
 use crate::state::{
-    ReceiptInput, current_session, current_worktree_fingerprint, decisions_add,
+    PlanOpenRequest, ReceiptInput, current_session, current_worktree_fingerprint, decisions_add,
     ensure_plan_is_open, latest_plan_tool_receipt, latest_plan_work_check_receipt_for_tool, now_ms,
     plans_append, plans_close, plans_open, receipts_list, record_receipt, session_end,
     session_start, state_summary,
@@ -15,6 +15,7 @@ use super::{execute_manifest_make_tool_without_worktree_fingerprint, requests};
 
 pub(super) fn dispatch(ctx: &RepoContext, command: WorkCommand) -> Result<Value> {
     match command {
+        WorkCommand::Goal(opts) => goal(ctx, opts.into()),
         WorkCommand::Start(opts) => start(ctx, opts.into()),
         WorkCommand::Append(opts) => plans_append(ctx, opts.into()),
         WorkCommand::Check(opts) => check(ctx, opts),
@@ -24,6 +25,47 @@ pub(super) fn dispatch(ctx: &RepoContext, command: WorkCommand) -> Result<Value>
         WorkCommand::Status => state_summary(ctx),
         WorkCommand::Finish(opts) => finish(ctx, opts),
     }
+}
+
+pub(super) fn goal(ctx: &RepoContext, request: requests::WorkGoalRequest) -> Result<Value> {
+    if request.validations.is_empty() {
+        bail!("At least one --validation is required for a goal harness.");
+    }
+
+    let title = request
+        .title
+        .clone()
+        .unwrap_or_else(|| goal_title(&request.objective));
+    let body = goal_body(ctx, &request);
+    let output = start(
+        ctx,
+        PlanOpenRequest {
+            title,
+            body: Some(body),
+            body_file: None,
+        },
+    )?;
+
+    let plan_id = output["plan"]["plan_id"]
+        .as_str()
+        .ok_or_else(|| anyhow!("Goal harness failed to create a plan id"))?;
+    let body_path = output["plan"]["body_path"]
+        .as_str()
+        .ok_or_else(|| anyhow!("Goal harness failed to create a plan body path"))?;
+    let goal_prompt = goal_prompt(plan_id, body_path, &request);
+
+    Ok(json!({
+        "ok": true,
+        "session": output["session"],
+        "plan": output["plan"],
+        "goal_prompt": goal_prompt,
+        "commands": {
+            "status": "scripts/jig work status",
+            "check": format!("scripts/jig work check --plan-id {plan_id}"),
+            "gates": format!("scripts/jig work gates --plan-id {plan_id}"),
+            "finish": format!("scripts/jig work finish --plan-id {plan_id}")
+        }
+    }))
 }
 
 pub(super) fn start(ctx: &RepoContext, plan: crate::state::PlanOpenRequest) -> Result<Value> {
@@ -70,6 +112,10 @@ pub(super) fn finish(ctx: &RepoContext, opts: WorkFinishOpts) -> Result<Value> {
 
 pub(super) fn start_from_args(ctx: &RepoContext, args: Value) -> Result<Value> {
     start(ctx, requests::request_from_args(args)?)
+}
+
+pub(super) fn goal_from_args(ctx: &RepoContext, args: Value) -> Result<Value> {
+    goal(ctx, requests::request_from_args(args)?)
 }
 
 pub(super) fn append_from_args(ctx: &RepoContext, args: Value) -> Result<Value> {
@@ -123,6 +169,128 @@ fn selected_tools(ctx: &RepoContext, explicit_tools: &[String]) -> Result<Vec<St
     }
 
     Ok(tools)
+}
+
+fn goal_title(objective: &str) -> String {
+    const MAX_TITLE_CHARS: usize = 80;
+    let objective = objective.trim();
+    if objective.chars().count() <= MAX_TITLE_CHARS {
+        return objective.to_string();
+    }
+
+    let mut title = objective.chars().take(MAX_TITLE_CHARS).collect::<String>();
+    title.push_str("...");
+    title
+}
+
+fn goal_body(ctx: &RepoContext, request: &requests::WorkGoalRequest) -> String {
+    let checkpoints = if request.checkpoints.is_empty() {
+        vec![
+            "Read the relevant AGENTS.md files and repo guidance.".to_string(),
+            "Establish the baseline validation result before risky edits.".to_string(),
+            "Make scoped changes and record each meaningful attempt.".to_string(),
+            "Run the validation loop and inspect gate status.".to_string(),
+            "Finish only after the stopping condition is met.".to_string(),
+        ]
+    } else {
+        request.checkpoints.clone()
+    };
+
+    let configured_gates = ctx
+        .work_gates()
+        .into_iter()
+        .map(|gate| match gate.tool {
+            Some(tool) => format!("{}: {} ({})", gate.id, gate.kind, tool),
+            None => format!("{}: {}", gate.id, gate.kind),
+        })
+        .collect::<Vec<_>>();
+
+    format!(
+        r#"# Goal Harness
+
+## Objective
+
+{objective}
+
+## Verifiable Stopping Condition
+
+{success}
+
+## Validation Loop
+
+{validations}
+
+## Constraints
+
+{constraints}
+
+## Checkpoints
+
+{checkpoints}
+
+## Configured Jig Gates
+
+{configured_gates}
+
+## Progress Log
+
+- Goal harness created. Keep this section short and append dated checkpoints, failed attempts, and validation evidence.
+
+## Notes
+
+{notes}
+"#,
+        objective = request.objective.trim(),
+        success = request.success.trim(),
+        validations = markdown_bullets(&request.validations, "No validation command specified."),
+        constraints =
+            markdown_bullets(&request.constraints, "No additional constraints specified."),
+        checkpoints = markdown_checkboxes(&checkpoints),
+        configured_gates = markdown_bullets(&configured_gates, "No work gates configured."),
+        notes = request
+            .notes
+            .as_deref()
+            .map(str::trim)
+            .filter(|notes| !notes.is_empty())
+            .unwrap_or("No extra notes.")
+    )
+}
+
+fn goal_prompt(plan_id: &str, body_path: &str, request: &requests::WorkGoalRequest) -> String {
+    format!(
+        "/goal Complete the objective in {body_path} without stopping until this verifiable stopping condition is met: {success}. Use {body_path} as the durable progress log, keep changes scoped to the stated constraints, run the validation loop recorded there, inspect gates with `scripts/jig work gates --plan-id {plan_id}`, and stop if blocked by missing product guidance, unsafe permissions, or a validation result that cannot be improved without changing the goal.",
+        success = request.success.trim(),
+    )
+}
+
+fn markdown_bullets(items: &[String], empty: &str) -> String {
+    let items = clean_items(items);
+    if items.is_empty() {
+        return format!("- {empty}");
+    }
+
+    items
+        .into_iter()
+        .map(|item| format!("- {item}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn markdown_checkboxes(items: &[String]) -> String {
+    clean_items(items)
+        .into_iter()
+        .map(|item| format!("- [ ] {item}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn clean_items(items: &[String]) -> Vec<String> {
+    items
+        .iter()
+        .map(|item| item.trim())
+        .filter(|item| !item.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 fn check_tools(ctx: &RepoContext, plan_id: &str, tools: Vec<String>) -> Result<Value> {

@@ -80,6 +80,7 @@ pub(crate) fn call_tool(ctx: &RepoContext, name: &str, args: Value) -> Result<Va
 
     match MemoryTool::from_name(name) {
         Some(MemoryTool::AgentDoctor) => agent::doctor(ctx),
+        Some(MemoryTool::Goal) => work::goal_from_args(ctx, args),
         Some(MemoryTool::Start) => work::start_from_args(ctx, args),
         Some(MemoryTool::Append) => work::append_from_args(ctx, args),
         Some(MemoryTool::Check) => work::check_from_args(ctx, args),
