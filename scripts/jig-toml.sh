@@ -4,8 +4,8 @@ set -euo pipefail
 usage() {
   cat >&2 <<'EOF'
 Usage:
-  scripts/jig-yml.sh get <answers-file> <key>
-  scripts/jig-yml.sh set <answers-file> <key> <value>
+  scripts/jig-toml.sh get <answers-file> <key>
+  scripts/jig-toml.sh set <answers-file> <key> <value>
 EOF
   exit 2
 }
@@ -26,25 +26,15 @@ case "$command" in
 import pathlib
 import re
 import sys
+import tomllib
 
 answers_path = pathlib.Path(sys.argv[1])
 key = sys.argv[2]
-pattern = re.compile(rf"^{re.escape(key)}:\s*(.*)$")
-
-for line in answers_path.read_text().splitlines():
-    match = pattern.match(line)
-    if not match:
-        continue
-    raw = match.group(1).strip()
-    if raw in {"''", '""'}:
-        print("")
-    elif len(raw) >= 2 and raw[0] == "'" and raw[-1] == "'":
-        print(raw[1:-1].replace("''", "'"))
-    elif len(raw) >= 2 and raw[0] == '"' and raw[-1] == '"':
-        print(raw[1:-1])
-    else:
-        print(raw)
-    break
+data = tomllib.loads(answers_path.read_text())
+value = data.get(key, "")
+if value is None:
+    value = ""
+print(value)
 PY
     ;;
   set)
@@ -53,20 +43,23 @@ PY
     fi
     python3 - "$1" "$2" "$3" <<'PY'
 import pathlib
+import re
 import sys
 
 answers_path = pathlib.Path(sys.argv[1])
 key = sys.argv[2]
 value = sys.argv[3]
 lines = answers_path.read_text().splitlines()
-escaped = value.replace("'", "''")
+escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+replacement = f'{key} = "{escaped}"'
+pattern = re.compile(rf"^{re.escape(key)}\s*=")
 
 for index, line in enumerate(lines):
-    if line.startswith(f"{key}: "):
-        lines[index] = f"{key}: '{escaped}'"
+    if pattern.match(line):
+        lines[index] = replacement
         break
 else:
-    lines.append(f"{key}: '{escaped}'")
+    lines.append(replacement)
 
 answers_path.write_text("\n".join(lines) + "\n")
 PY

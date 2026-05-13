@@ -21,7 +21,7 @@ validate_backend_fixture() {
   write_backend_stub_repo "$repo_dir"
   (
     cd "$repo_dir"
-    [[ -f .jig.yml ]]
+    [[ -f .jig.toml ]]
     git init -b main >/dev/null
     git config user.name "Fixture"
     git config user.email "fixture@example.com"
@@ -38,8 +38,8 @@ validate_backend_fixture() {
     coverage_dir="$(mktemp -d)"
     COVERAGE_DIR="$coverage_dir" COVERAGE_THRESHOLD=0 node scripts/enforce-coverage.js >/dev/null
     rm -rf "$coverage_dir"
-    perl -0pi -e "s/default_branch: 'main'/default_branch: 'dev'/" .jig.yml
-    git add .jig.yml
+    perl -0pi -e 's/default_branch = "main"/default_branch = "dev"/' .jig.toml
+    git add .jig.toml
     git commit -m "change answers" >/dev/null
     scripts/jig update --recopy --force >/dev/null
     grep -q '^DEFAULT_BRANCH ?= dev$' Makefile
@@ -57,7 +57,7 @@ validate_full_stack_fixture() {
   write_full_stack_stub_repo "$repo_dir"
   (
     cd "$repo_dir"
-    [[ -f .jig.yml ]]
+    [[ -f .jig.toml ]]
     git init -b main >/dev/null
     git config user.name "Fixture"
     git config user.email "fixture@example.com"
@@ -86,7 +86,7 @@ validate_tooling_only_fixture() {
   write_tooling_only_stub_repo "$repo_dir"
   (
     cd "$repo_dir"
-    [[ -f .jig.yml ]]
+    [[ -f .jig.toml ]]
     git init -b main >/dev/null
     git config user.name "Fixture"
     git config user.email "fixture@example.com"
@@ -118,8 +118,8 @@ validate_tooling_only_fixture() {
     ! rg -q '"jig\\.migration_add"' .agent/jig-contract.json
     ! rg -q 'sqlx-unchecked-queries:' .github/workflows/repo-policy.yml
     ! rg -q 'migration-immutability:' .github/workflows/repo-policy.yml
-    perl -0pi -e "s/default_branch: 'main'/default_branch: 'dev'/" .jig.yml
-    git add .jig.yml
+    perl -0pi -e 's/default_branch = "main"/default_branch = "dev"/' .jig.toml
+    git add .jig.toml
     git commit -m "change answers" >/dev/null
     scripts/jig update --recopy --force >/dev/null
     grep -q '^DEFAULT_BRANCH ?= dev$' Makefile
@@ -142,9 +142,9 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   template_snapshot="$TMP_DIR/template-snapshot"
 
   create_template_snapshot_repo "$template_snapshot"
-  render_fixture_from_template "$template_snapshot" "$ROOT_DIR/tests/fixtures/backend-only.yaml" "$backend_dir"
-  render_fixture_from_template "$template_snapshot" "$ROOT_DIR/tests/fixtures/full-stack.yaml" "$full_stack_dir"
-  render_fixture_from_template "$template_snapshot" "$ROOT_DIR/tests/fixtures/tooling-only.yaml" "$tooling_only_dir"
+  render_fixture_from_template "$template_snapshot" "$ROOT_DIR/tests/fixtures/backend-only.toml" "$backend_dir"
+  render_fixture_from_template "$template_snapshot" "$ROOT_DIR/tests/fixtures/full-stack.toml" "$full_stack_dir"
+  render_fixture_from_template "$template_snapshot" "$ROOT_DIR/tests/fixtures/tooling-only.toml" "$tooling_only_dir"
 
   validate_backend_fixture "$backend_dir"
   validate_full_stack_fixture "$full_stack_dir"

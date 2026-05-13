@@ -26,7 +26,7 @@ This repository uses the shared `jig.sh` workflow. Keep repo-local business rule
 
 ## Frontend Defaults
 
-No web apps are configured in `.jig.yml`.
+No web apps are configured in `.jig.toml`.
 
 ## Preferred Commands
 

@@ -2,7 +2,7 @@
 
 FIXTURE_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 ROOT_DIR="${ROOT_DIR:-$(cd "$FIXTURE_SCRIPT_DIR/../.." && pwd -P)}"
-JIG_YML="${JIG_YML:-$ROOT_DIR/scripts/jig-yml.sh}"
+JIG_TOML="${JIG_TOML:-$ROOT_DIR/scripts/jig-toml.sh}"
 
 json_get() {
   local expression="$1"
@@ -30,11 +30,11 @@ else:
 }
 
 answers_get() {
-  "$JIG_YML" get "$1" "$2"
+  "$JIG_TOML" get "$1" "$2"
 }
 
 answers_set() {
-  "$JIG_YML" set "$1" "$2" "$3"
+  "$JIG_TOML" set "$1" "$2" "$3"
 }
 
 render_fixture() {

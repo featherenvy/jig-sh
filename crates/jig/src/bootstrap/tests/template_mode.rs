@@ -24,9 +24,9 @@ fn adopt_local_git_template_defaults_to_committed_mode() {
     })
     .unwrap();
 
-    let answers = fs::read_to_string(repo.join(".jig.yml")).unwrap();
-    assert!(answers.contains("_template_mode: 'committed'"));
-    assert!(answers.contains("_template_local_path:"));
+    let answers = fs::read_to_string(repo.join(".jig.toml")).unwrap();
+    assert!(answers.contains("_template_mode = \"committed\""));
+    assert!(answers.contains("_template_local_path = "));
     assert!(
         answers.contains(
             &absolute_path(template.path())
@@ -76,13 +76,13 @@ fn update_rejects_legacy_working_tree_template_state() {
     write_test_crate_guide(&repo);
 
     adopt_repo_for_test(&repo, template.path(), TemplateMode::Committed);
-    let answers_path = repo.join(".jig.yml");
-    let mut answers = read_answers_yaml(&answers_path).unwrap();
+    let answers_path = repo.join(".jig.toml");
+    let mut answers = read_answers_toml(&answers_path).unwrap();
     answers.insert(
-        YamlValue::String(TEMPLATE_MODE_KEY.into()),
-        YamlValue::String("working-tree".into()),
+        TEMPLATE_MODE_KEY.into(),
+        TomlValue::String("working-tree".into()),
     );
-    write_answers_yaml(&answers_path, &answers).unwrap();
+    write_answers_toml(&answers_path, &answers).unwrap();
 
     let error = run_update(UpdateOpts {
         path: repo,
@@ -316,7 +316,7 @@ fn update_committed_mode_with_vcs_ref_only_updates_metadata() {
     assert!(root_guide.contains("Newer Marker"));
     assert!(!root_guide.contains("Older Marker"));
 
-    let answers_path = repo.join(".jig.yml");
+    let answers_path = repo.join(".jig.toml");
     assert_eq!(
         read_optional_answer_string(&answers_path, "_commit")
             .unwrap()

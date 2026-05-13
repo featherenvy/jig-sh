@@ -6,11 +6,11 @@
 - make-backed MCP tools from `scripts/jig mcp`
 - `.agent/jig-contract.json`
 
-Generated repositories may rely on the contract described here when they pin a `jig_version` in `.jig.yml` and keep `scripts/jig`, `.mcp.json`, and `.agent/jig-contract.json` in sync with that version.
+Generated repositories may rely on the contract described here when they pin a `jig_version` in `.jig.toml` and keep `scripts/jig`, `.mcp.json`, and `.agent/jig-contract.json` in sync with that version.
 
 Structured work commands and agent tooling checks are runtime-owned conveniences. They are available through commands such as `scripts/jig work ...` and `scripts/jig agent doctor`, and MCP tools named `jig.work_*` and `jig.agent_doctor`, but they are not part of contract version `1` and are not declared in `.agent/jig-contract.json`.
 
-The structured work namespace includes native check gates. Gates are configured in `.jig.yml`, evaluated from receipts, and enforced by `scripts/jig work finish`. They remain runtime-owned because they compose stable make-backed tools with append-only work state rather than adding new make-backed contract tools.
+The structured work namespace includes native check gates. Gates are configured in `.jig.toml`, evaluated from receipts, and enforced by `scripts/jig work finish`. They remain runtime-owned because they compose stable make-backed tools with append-only work state rather than adding new make-backed contract tools.
 
 ## Contract Version
 
@@ -115,7 +115,7 @@ Structured work commands use the `jig.work_*` CLI and MCP namespace, but state-o
 
 ## Work Gates
 
-`work.gates` in `.jig.yml` declares required evidence before structured work can finish. `kind: check` gates reference make-backed tools from `.agent/jig-contract.json`; `scripts/jig work check --plan-id ...` runs them and records normal receipts. `scripts/jig work gates --plan-id ...` reports gate status from the latest fresh receipt for each gate tool on that plan.
+`work.gates` in `.jig.toml` declares required evidence before structured work can finish. `kind: check` gates reference make-backed tools from `.agent/jig-contract.json`; `scripts/jig work check --plan-id ...` runs them and records normal receipts. `scripts/jig work gates --plan-id ...` reports gate status from the latest fresh receipt for each gate tool on that plan.
 
 `scripts/jig work finish --plan-id ...` fails when any required gate is missing, failed, stale, unknown, or unsupported. Older `work.checks` entries are still accepted for compatibility and backfill missing required check gates during migration. If the same tool is declared in `work.gates`, that explicit gate entry is authoritative.
 
@@ -139,7 +139,7 @@ Use this sequence for public contract changes:
 
 Generated repos can rely on:
 
-- `scripts/jig` enforcing the exact `jig_version` from `.jig.yml`
+- `scripts/jig` enforcing the exact `jig_version` from `.jig.toml`
 - `make contract-check` detecting missing generated runtime wiring
 - stable make target names listed in `required_make_targets`
 - make-backed tool availability being discoverable from `.agent/jig-contract.json` and MCP

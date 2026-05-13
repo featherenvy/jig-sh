@@ -2,11 +2,11 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
-ANSWERS_FILE="$ROOT_DIR/.jig.yml"
-JIG_YML="$ROOT_DIR/scripts/jig-yml.sh"
+ANSWERS_FILE="$ROOT_DIR/.jig.toml"
+JIG_TOML="$ROOT_DIR/scripts/jig-toml.sh"
 
 read_field() {
-  "$JIG_YML" get "$ANSWERS_FILE" "$1"
+  "$JIG_TOML" get "$ANSWERS_FILE" "$1"
 }
 
 JIG_VERSION="$(read_field jig_version)"

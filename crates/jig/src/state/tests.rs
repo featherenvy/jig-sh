@@ -12,12 +12,12 @@ use crate::tool_defs::tool;
 fn write_fixture_repo(root: &Path) {
     fs::create_dir_all(root.join(".agent")).unwrap();
     fs::write(
-        root.join(".jig.yml"),
-        r#"_src_path: '/tmp/template'
-_commit: 'abc123'
-repo_name: 'demo'
-default_branch: 'main'
-jig_version: '0.1.0'
+        root.join(".jig.toml"),
+        r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.1.0"
 "#,
     )
     .unwrap();

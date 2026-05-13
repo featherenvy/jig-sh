@@ -6,7 +6,9 @@ use anyhow::{Context, Result, bail};
 use clap::{Args, ValueEnum};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use serde_yaml::{Mapping, Value as YamlValue};
+use toml::Table;
+#[cfg(test)]
+use toml::Value as TomlValue;
 
 use answers::RenderAnswers;
 #[cfg(test)]
@@ -15,7 +17,7 @@ use git::init_git_repo;
 #[cfg(test)]
 use git::{git, git_stdout};
 #[cfg(test)]
-use initial_copy::seed_answers_yaml;
+use initial_copy::seed_answers_toml;
 use initial_copy::{BootstrapCopyRequest, render_and_copy_bootstrap_template};
 #[cfg(test)]
 use preview_seed::seed_preview_workspace;
@@ -40,11 +42,11 @@ mod staged_render;
 mod sync;
 mod template_source;
 
-const ANSWERS_FILE: &str = ".jig.yml";
+const ANSWERS_FILE: &str = ".jig.toml";
 const GIT_BIN_ENV: &str = "JIG_GIT_BIN";
 // Legacy conflict helpers keep these in sync with template task side effects.
 #[cfg(test)]
-const ALWAYS_TASK_MUTATED_PATHS: &[&str] = &[".jig.yml", "agent-map.md"];
+const ALWAYS_TASK_MUTATED_PATHS: &[&str] = &[".jig.toml", "agent-map.md"];
 const TEMPLATE_MODE_KEY: &str = "_template_mode";
 const TEMPLATE_LOCAL_PATH_KEY: &str = "_template_local_path";
 
@@ -264,35 +266,31 @@ pub fn run_update(opts: UpdateOpts) -> Result<Value> {
 
 #[cfg(test)]
 fn read_optional_answer_bool(answers_path: &Path, key: &str) -> Result<Option<bool>> {
-    let answers = read_answers_yaml(answers_path)?;
-    Ok(answers.get(key).and_then(YamlValue::as_bool))
+    let answers = read_answers_toml(answers_path)?;
+    Ok(answers.get(key).and_then(TomlValue::as_bool))
 }
 
 #[cfg(test)]
 fn read_optional_answer_string(answers_path: &Path, key: &str) -> Result<Option<String>> {
-    let answers = read_answers_yaml(answers_path)?;
+    let answers = read_answers_toml(answers_path)?;
     Ok(answers
         .get(key)
-        .and_then(YamlValue::as_str)
+        .and_then(TomlValue::as_str)
         .map(str::to_string)
         .filter(|value| !value.is_empty()))
 }
 
-fn read_answers_yaml(path: &Path) -> Result<Mapping> {
+fn read_answers_toml(path: &Path) -> Result<Table> {
     let text =
         fs::read_to_string(path).with_context(|| format!("Failed to read {}", path.display()))?;
-    let yaml: YamlValue = serde_yaml::from_str(&text)
-        .with_context(|| format!("Failed to parse {}", path.display()))?;
-    yaml.as_mapping()
-        .cloned()
-        .ok_or_else(|| anyhow::anyhow!("Expected mapping in {}", path.display()))
+    toml::from_str(&text).with_context(|| format!("Failed to parse {}", path.display()))
 }
 
 #[cfg(test)]
-fn write_answers_yaml(path: &Path, mapping: &Mapping) -> Result<()> {
-    let yaml = serde_yaml::to_string(&YamlValue::Mapping(mapping.clone()))
+fn write_answers_toml(path: &Path, mapping: &Table) -> Result<()> {
+    let toml = toml::to_string(mapping)
         .with_context(|| format!("Failed to serialize {}", path.display()))?;
-    fs::write(path, yaml).with_context(|| format!("Failed to write {}", path.display()))
+    fs::write(path, toml).with_context(|| format!("Failed to write {}", path.display()))
 }
 
 fn parse_frontend_app(value: &str) -> Result<FrontendApp, String> {

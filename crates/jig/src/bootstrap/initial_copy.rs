@@ -2,7 +2,7 @@ use std::path::Path;
 
 use anyhow::Result;
 #[cfg(test)]
-use serde_yaml::{Mapping, Value as YamlValue};
+use toml::{Table, Value as TomlValue};
 
 use super::AnswerOpts;
 use super::answers::RenderAnswers;
@@ -48,11 +48,11 @@ pub(super) fn render_and_copy_bootstrap_template(
 }
 
 #[cfg(test)]
-pub(super) fn seed_answers_yaml(
+pub(super) fn seed_answers_toml(
     opts: &AnswerOpts,
     private_answers: &PrivateAnswerOverrides,
-) -> YamlValue {
-    let mut mapping = Mapping::new();
+) -> TomlValue {
+    let mut mapping = Table::new();
     insert_string(&mut mapping, "repo_name", opts.repo_name.as_deref());
     insert_string(
         &mut mapping,
@@ -140,44 +140,50 @@ pub(super) fn seed_answers_yaml(
 
     if !opts.rust_crate_roots.is_empty() {
         mapping.insert(
-            YamlValue::String("rust_crate_roots".into()),
-            YamlValue::Sequence(
+            "rust_crate_roots".into(),
+            TomlValue::Array(
                 opts.rust_crate_roots
                     .iter()
                     .cloned()
-                    .map(YamlValue::String)
+                    .map(TomlValue::String)
                     .collect(),
             ),
         );
     }
     if !opts.frontend_apps.is_empty() {
         mapping.insert(
-            YamlValue::String("frontend_apps".into()),
-            YamlValue::Sequence(
+            "frontend_apps".into(),
+            TomlValue::Array(
                 opts.frontend_apps
                     .iter()
-                    .map(|app| serde_yaml::to_value(app).unwrap_or(YamlValue::Null))
+                    .map(|app| {
+                        let mut app_table = Table::new();
+                        app_table.insert("name".into(), TomlValue::String(app.name.clone()));
+                        app_table.insert("dir".into(), TomlValue::String(app.dir.clone()));
+                        app_table.insert(
+                            "coverage_threshold".into(),
+                            TomlValue::Integer(app.coverage_threshold.into()),
+                        );
+                        TomlValue::Table(app_table)
+                    })
                     .collect(),
             ),
         );
     }
 
-    YamlValue::Mapping(mapping)
+    TomlValue::Table(mapping)
 }
 
 #[cfg(test)]
-fn insert_string(mapping: &mut Mapping, key: &str, value: Option<&str>) {
+fn insert_string(mapping: &mut Table, key: &str, value: Option<&str>) {
     if let Some(value) = value {
-        mapping.insert(
-            YamlValue::String(key.to_string()),
-            YamlValue::String(value.to_string()),
-        );
+        mapping.insert(key.to_string(), TomlValue::String(value.to_string()));
     }
 }
 
 #[cfg(test)]
-fn insert_bool(mapping: &mut Mapping, key: &str, value: Option<bool>) {
+fn insert_bool(mapping: &mut Table, key: &str, value: Option<bool>) {
     if let Some(value) = value {
-        mapping.insert(YamlValue::String(key.to_string()), YamlValue::Bool(value));
+        mapping.insert(key.to_string(), TomlValue::Boolean(value));
     }
 }

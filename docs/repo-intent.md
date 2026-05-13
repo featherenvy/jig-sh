@@ -25,7 +25,7 @@ The README says this repo is a "Reusable harness for making Rust application rep
 
 The harness was extracted from the durable parts of an existing application workflow. The extracted pieces are generic agent guidance, a stable `make` contract, repo policy scripts, GitHub Actions workflows, a template sync flow, and the Rust `jig` runtime.
 
-Generated or adopted repos receive assets such as `.jig.yml`, `.mcp.json`, `AGENTS.md`, `agent-map.md`, `.agent/PLANS.md`, `.agent/jig-contract.json`, `Makefile`, scripts, and workflows.
+Generated or adopted repos receive assets such as `.jig.toml`, `.mcp.json`, `AGENTS.md`, `agent-map.md`, `.agent/PLANS.md`, `.agent/jig-contract.json`, `Makefile`, scripts, and workflows.
 
 Generated repos keep `make` as the execution backend. `scripts/jig` is a typed launcher/runtime over the make-backed contract, and `scripts/jig mcp` exposes the contract to MCP clients.
 
@@ -72,9 +72,9 @@ A shorter product phrasing is:
 
 ## Architecture In One Pass
 
-`templates/project/` is the source for generated repository assets. It renders `.jig.yml`, `AGENTS.md`, `.agent/jig-contract.json`, the `Makefile`, scripts, workflows, and agent support files.
+`templates/project/` is the source for generated repository assets. It renders `.jig.toml`, `AGENTS.md`, `.agent/jig-contract.json`, the `Makefile`, scripts, workflows, and agent support files.
 
-`.jig.yml` is both public configuration and the renderer answer file. It records repo settings such as `repo_name`, `default_branch`, `jig_version`, crate roots, SQLx settings, web app settings, and template source metadata.
+`.jig.toml` is both public configuration and the renderer answer file. It records repo settings such as `repo_name`, `default_branch`, `jig_version`, crate roots, SQLx settings, web app settings, and template source metadata.
 
 `crates/jig/src/bootstrap.rs` and its submodules implement template application:
 

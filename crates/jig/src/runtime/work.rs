@@ -119,7 +119,7 @@ fn selected_tools(ctx: &RepoContext, explicit_tools: &[String]) -> Result<Vec<St
     };
 
     if tools.is_empty() {
-        bail!("No work check gates configured. Add work.gates to .jig.yml or pass --tool.");
+        bail!("No work check gates configured. Add work.gates to .jig.toml or pass --tool.");
     }
 
     Ok(tools)

@@ -15,7 +15,7 @@ fn parses_frontend_app_flag() {
 
 #[test]
 fn seed_answers_only_serializes_provided_values() {
-    let yaml = seed_answers_yaml(
+    let toml = seed_answers_toml(
         &AnswerOpts {
             repo_name: Some("demo".into()),
             sqlx_enabled: Some(false),
@@ -30,30 +30,28 @@ fn seed_answers_only_serializes_provided_values() {
         &PrivateAnswerOverrides::default(),
     );
 
-    let mapping = yaml.as_mapping().unwrap();
+    let mapping = toml.as_table().unwrap();
     assert_eq!(
-        mapping.get(YamlValue::String("repo_name".into())).unwrap(),
-        &YamlValue::String("demo".into())
+        mapping.get("repo_name").unwrap(),
+        &TomlValue::String("demo".into())
     );
     assert_eq!(
-        mapping
-            .get(YamlValue::String("sqlx_enabled".into()))
-            .unwrap(),
-        &YamlValue::Bool(false)
+        mapping.get("sqlx_enabled").unwrap(),
+        &TomlValue::Boolean(false)
     );
-    assert!(mapping.contains_key(YamlValue::String("rust_crate_roots".into())));
-    assert!(!mapping.contains_key(YamlValue::String("default_branch".into())));
+    assert!(mapping.contains_key("rust_crate_roots"));
+    assert!(!mapping.contains_key("default_branch"));
 }
 
 fn write_answers_fixture(dir: &Path, sqlx_enabled: Option<bool>) {
-    let mut body = String::from("default_branch: main\n");
+    let mut body = String::from("default_branch = \"main\"\n");
     if let Some(sqlx_enabled) = sqlx_enabled {
         body.push_str(&format!(
-            "sqlx_enabled: {}\n",
+            "sqlx_enabled = {}\n",
             if sqlx_enabled { "true" } else { "false" }
         ));
     }
-    fs::write(dir.join(".jig.yml"), body).unwrap();
+    fs::write(dir.join(".jig.toml"), body).unwrap();
 }
 
 #[test]
@@ -68,7 +66,7 @@ fn rendered_conflicts_detects_generated_paths() {
 
     let conflicts = rendered_conflicts(
         rendered.path(),
-        &rendered.path().join(".jig.yml"),
+        &rendered.path().join(".jig.toml"),
         destination.path(),
     )
     .unwrap();
@@ -85,7 +83,7 @@ fn rendered_conflicts_marks_task_mutated_outputs() {
 
     let conflicts = rendered_conflicts(
         rendered.path(),
-        &rendered.path().join(".jig.yml"),
+        &rendered.path().join(".jig.toml"),
         destination.path(),
     )
     .unwrap();
@@ -112,7 +110,7 @@ fn rendered_conflicts_marks_sqlx_pruned_task_outputs() {
 
     let conflicts = rendered_conflicts(
         rendered.path(),
-        &rendered.path().join(".jig.yml"),
+        &rendered.path().join(".jig.toml"),
         destination.path(),
     )
     .unwrap();
@@ -131,7 +129,7 @@ fn rendered_conflicts_ignores_identical_files() {
 
     let conflicts = rendered_conflicts(
         rendered.path(),
-        &rendered.path().join(".jig.yml"),
+        &rendered.path().join(".jig.toml"),
         destination.path(),
     )
     .unwrap();
@@ -163,7 +161,7 @@ fn rendered_conflicts_detects_executable_bit_changes() {
 
     let conflicts = rendered_conflicts(
         rendered.path(),
-        &rendered.path().join(".jig.yml"),
+        &rendered.path().join(".jig.toml"),
         destination.path(),
     )
     .unwrap();
@@ -184,7 +182,7 @@ fn rendered_conflicts_detects_file_replacing_symlink() {
 
     let conflicts = rendered_conflicts(
         rendered.path(),
-        &rendered.path().join(".jig.yml"),
+        &rendered.path().join(".jig.toml"),
         destination.path(),
     )
     .unwrap();
@@ -202,7 +200,7 @@ fn rendered_conflicts_detects_blocking_ancestor_file() {
 
     let conflicts = rendered_conflicts(
         rendered.path(),
-        &rendered.path().join(".jig.yml"),
+        &rendered.path().join(".jig.toml"),
         destination.path(),
     )
     .unwrap();
@@ -273,23 +271,23 @@ fn run_init_uses_native_renderer_and_git() {
     let log = fs::read_to_string(&log_path).unwrap();
     assert!(log.contains("git init -b main"));
     assert!(destination.exists());
-    assert!(destination.join(".jig.yml").exists());
+    assert!(destination.join(".jig.toml").exists());
     assert!(destination.join("scripts/jig").exists());
 }
 
 #[test]
-fn run_init_renders_empty_agent_tooling_lists_as_yaml_sequences() {
+fn run_init_renders_empty_agent_tooling_lists_as_toml_arrays() {
     let _guard = lock_env();
     let temp = tempdir().unwrap();
     let template = materialize_template_worktree();
-    let answers_file = temp.path().join("answers.yml");
+    let answers_file = temp.path().join("answers.toml");
     fs::write(
         &answers_file,
-        r#"repo_name: demo
-sqlx_enabled: false
-agent_tooling:
-  codex:
-    marketplaces: []
+        r#"repo_name = "demo"
+sqlx_enabled = false
+
+[agent_tooling.codex]
+marketplaces = []
 "#,
     )
     .unwrap();
@@ -310,28 +308,27 @@ agent_tooling:
     })
     .unwrap();
 
-    let rendered = fs::read_to_string(destination.join(".jig.yml")).unwrap();
-    assert!(rendered.contains("marketplaces: []"));
+    let rendered = fs::read_to_string(destination.join(".jig.toml")).unwrap();
+    assert!(rendered.contains("marketplaces = []"));
     let ctx = crate::context::RepoContext::load_from(&destination).unwrap();
     assert!(ctx.codex_marketplaces().is_empty());
 }
 
 #[test]
-fn run_init_renders_empty_agent_tooling_plugin_lists_as_yaml_sequences() {
+fn run_init_renders_empty_agent_tooling_plugin_lists_as_toml_arrays() {
     let _guard = lock_env();
     let temp = tempdir().unwrap();
     let template = materialize_template_worktree();
-    let answers_file = temp.path().join("answers.yml");
+    let answers_file = temp.path().join("answers.toml");
     fs::write(
         &answers_file,
-        r#"repo_name: demo
-sqlx_enabled: false
-agent_tooling:
-  codex:
-    marketplaces:
-      - id: local-skills
-        source: ../jig-skills
-        plugins: []
+        r#"repo_name = "demo"
+sqlx_enabled = false
+
+[[agent_tooling.codex.marketplaces]]
+id = "local-skills"
+source = "../jig-skills"
+plugins = []
 "#,
     )
     .unwrap();
@@ -352,8 +349,8 @@ agent_tooling:
     })
     .unwrap();
 
-    let rendered = fs::read_to_string(destination.join(".jig.yml")).unwrap();
-    assert!(rendered.contains("plugins: []"));
+    let rendered = fs::read_to_string(destination.join(".jig.toml")).unwrap();
+    assert!(rendered.contains("plugins = []"));
     let ctx = crate::context::RepoContext::load_from(&destination).unwrap();
     assert_eq!(ctx.codex_marketplaces().len(), 1);
     assert!(ctx.codex_marketplaces()[0].plugins.is_empty());
@@ -493,8 +490,8 @@ fn adopt_with_real_template_runs_destination_tasks() {
             .join("scripts/check-migration-immutability.sh")
             .exists()
     );
-    let answers = fs::read_to_string(repo.join(".jig.yml")).unwrap();
-    assert!(answers.contains("sqlx_enabled: false"));
+    let answers = fs::read_to_string(repo.join(".jig.toml")).unwrap();
+    assert!(answers.contains("sqlx_enabled = false"));
 }
 
 #[test]
@@ -687,8 +684,8 @@ fn adopt_with_real_template_keeps_sqlx_files_when_enabled() {
         repo.join("scripts/generate-sqlx-unchecked-queries-todo.sh")
             .exists()
     );
-    let answers = fs::read_to_string(repo.join(".jig.yml")).unwrap();
-    assert!(answers.contains("sqlx_enabled: true"));
+    let answers = fs::read_to_string(repo.join(".jig.toml")).unwrap();
+    assert!(answers.contains("sqlx_enabled = true"));
 }
 
 #[test]

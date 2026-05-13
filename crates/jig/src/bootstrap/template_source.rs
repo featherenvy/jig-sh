@@ -3,15 +3,15 @@ use std::process::Command;
 use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
-use serde_yaml::{Mapping, Value as YamlValue};
 use tempfile::TempDir;
+use toml::{Table, Value as TomlValue};
 
 use crate::process::{require_success, run_checked_output};
 
 use super::git::{ensure_clean_git_work_tree, git_stdout, is_git_work_tree};
 use super::{
     ANSWERS_FILE, GIT_BIN_ENV, TEMPLATE_LOCAL_PATH_KEY, TEMPLATE_MODE_KEY, TemplateMode,
-    UpdateOpts, absolute_path, external_program, read_answers_yaml,
+    UpdateOpts, absolute_path, external_program, read_answers_toml,
 };
 
 const COMMIT_KEY: &str = "_commit";
@@ -334,7 +334,7 @@ fn git_checkout(repo: &Path, vcs_ref: &str) -> Result<()> {
 }
 
 pub(super) fn read_stored_template_state(answers_path: &Path) -> Result<StoredTemplateState> {
-    let answers = read_answers_yaml(answers_path)?;
+    let answers = read_answers_toml(answers_path)?;
     let template_mode = optional_answer_string(&answers, TEMPLATE_MODE_KEY)
         .map(|value| parse_template_mode_answer(&value))
         .transpose()?;
@@ -387,10 +387,10 @@ fn ensure_update_template_identity(
     )
 }
 
-fn optional_answer_string(answers: &Mapping, key: &str) -> Option<String> {
+fn optional_answer_string(answers: &Table, key: &str) -> Option<String> {
     answers
-        .get(YamlValue::String(key.to_string()))
-        .and_then(YamlValue::as_str)
+        .get(key)
+        .and_then(TomlValue::as_str)
         .map(str::to_string)
         .filter(|value| !value.is_empty())
 }

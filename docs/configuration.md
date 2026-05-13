@@ -1,10 +1,10 @@
-# `.jig.yml` Configuration
+# `.jig.toml` Configuration
 
 This file is the supported configuration surface for downstream repos and must be committed alongside the generated template output.
 
-`.jig.yml` is also the native renderer answers file.
+`.jig.toml` is also the native renderer answers file.
 
-After changing values in `.jig.yml`, re-render with:
+After changing values in `.jig.toml`, re-render with:
 
 ```sh
 jig update --recopy
@@ -62,26 +62,25 @@ When `sqlx_enabled` is `true`, these additional keys are required:
 
 The default rendered config declares the Jig Codex skills marketplace:
 
-```yaml
-agent_tooling:
-  codex:
-    marketplaces:
-      - id: jig-skills
-        source: featherenvy/jig-skills
-        plugins:
-          - jig-rust@jig-skills
-          - jig-swift@jig-skills
-          - jig-typescript@jig-skills
-          - jig-exec-plans@jig-skills
+```toml
+[[agent_tooling.codex.marketplaces]]
+id = "jig-skills"
+source = "featherenvy/jig-skills"
+plugins = [
+  "jig-rust@jig-skills",
+  "jig-swift@jig-skills",
+  "jig-typescript@jig-skills",
+  "jig-exec-plans@jig-skills",
+]
 ```
 
 Jig Codex skills are optional Codex plugin bundles used by agents working in generated Jig repos; the default marketplace source is `featherenvy/jig-skills`.
 
 Use `scripts/jig agent doctor` to report whether the local Codex installation can use the configured marketplace and to show diagnostic plugin enablement flags. The top-level `ok` result requires Codex marketplace support and registered marketplace sources; plugin enablement is reported separately because the supported Codex bootstrap path is marketplace registration. Use `scripts/jig agent bootstrap` to run `codex plugin marketplace add` when exactly one marketplace is configured. If multiple marketplaces are configured, `agent bootstrap` requires `--marketplace <source>` so a repo cannot install several user-level Codex marketplaces by default. `agent bootstrap` mutates user-level Codex config, so it is intentionally separate from the project-owned `bootstrap_command`.
 
-Omitting `agent_tooling`, `agent_tooling.codex`, or `agent_tooling.codex.marketplaces` uses the default Jig skills marketplace. Set `marketplaces: []` to opt out explicitly. In `agent doctor` output, `codex.available` is `true` or `false` when Codex is required, and `null` when the Codex probe is skipped because `marketplaces: []`.
+Omitting `agent_tooling`, `agent_tooling.codex`, or `agent_tooling.codex.marketplaces` uses the default Jig skills marketplace. Set `marketplaces = []` to opt out explicitly. In `agent doctor` output, `codex.available` is `true` or `false` when Codex is required, and `null` when the Codex probe is skipped because `marketplaces = []`.
 
-For local development against a sibling checkout, either pass `--marketplace` or set `JIG_SKILLS_MARKETPLACE`. Explicit `--marketplace` wins over `JIG_SKILLS_MARKETPLACE`, and the env var wins over `.jig.yml`; both overrides affect only `agent bootstrap`. Local path sources must be absolute or start with `./` or `../`; they are resolved from the repo root before Codex is invoked, and missing local paths fail before mutating Codex config. Bare `owner/repo` values are treated as marketplace shorthands, not local paths.
+For local development against a sibling checkout, either pass `--marketplace` or set `JIG_SKILLS_MARKETPLACE`. Explicit `--marketplace` wins over `JIG_SKILLS_MARKETPLACE`, and the env var wins over `.jig.toml`; both overrides affect only `agent bootstrap`. Local path sources must be absolute or start with `./` or `../`; they are resolved from the repo root before Codex is invoked, and missing local paths fail before mutating Codex config. Bare `owner/repo` values are treated as marketplace shorthands, not local paths.
 
 ```sh
 scripts/jig agent bootstrap --marketplace ../jig-skills
@@ -92,15 +91,16 @@ JIG_SKILLS_MARKETPLACE=../jig-skills scripts/jig agent bootstrap
 
 The `work` block declares agent workflow defaults without adding repo-local launcher scripts:
 
-```yaml
-work:
-  gates:
-    - id: contract
-      kind: check
-      tool: jig.contract_check
-    - id: tests
-      kind: check
-      tool: jig.test
+```toml
+[[work.gates]]
+id = "contract"
+kind = "check"
+tool = "jig.contract_check"
+
+[[work.gates]]
+id = "tests"
+kind = "check"
+tool = "jig.test"
 ```
 
 `kind: check` gates must reference make-backed jig tool names declared in `.agent/jig-contract.json`. `scripts/jig work check --plan-id ...` runs configured check gates in order unless one or more `--tool` values are passed explicitly.
@@ -117,13 +117,12 @@ Generated SQLx-enabled repos also include check gates for `jig.sqlx_check` and `
 
 Review procedures are intentionally separate from native check gates:
 
-```yaml
-work:
-  gates:
-    - id: rust-error-handling
-      kind: codex_review
-      skill: jig-rust:rust-error-handling-review
-      required: false
+```toml
+[[work.gates]]
+id = "rust-error-handling"
+kind = "codex_review"
+skill = "jig-rust:rust-error-handling-review"
+required = false
 ```
 
 Codex-backed review gates are not implemented yet. They require a structured `codex exec --output-schema ...` receipt path before they can be required. Until then, non-`check` gates are reported as `unsupported` and block finish only when marked `required: true`.
@@ -134,14 +133,16 @@ Codex-backed review gates are not implemented yet. They require a structured `co
 
 Each entry in `frontend_apps` must be an object:
 
-```yaml
-frontend_apps:
-  - name: frontend
-    dir: frontend
-    coverage_threshold: 40
-  - name: admin-panel
-    dir: admin-panel
-    coverage_threshold: 0
+```toml
+[[frontend_apps]]
+name = "frontend"
+dir = "frontend"
+coverage_threshold = 40
+
+[[frontend_apps]]
+name = "admin-panel"
+dir = "admin-panel"
+coverage_threshold = 0
 ```
 
 Each configured app directory is expected to support:
@@ -194,7 +195,7 @@ Generated repos also get these runtime-owned files:
 - `scripts/jig`
 - `scripts/install-jig.sh`
 
-The generated `scripts/jig` launcher enforces the exact `jig_version` pinned in `.jig.yml`. On first use it installs that version into a repo-local cache and then exposes the make-backed contract as:
+The generated `scripts/jig` launcher enforces the exact `jig_version` pinned in `.jig.toml`. On first use it installs that version into a repo-local cache and then exposes the make-backed contract as:
 
 - CLI commands such as `scripts/jig fmt-check`
 - MCP tools such as `jig.fmt_check`
@@ -214,7 +215,7 @@ It also provides runtime-owned append-only memory under `.agent/state/*.jsonl` t
 
 `work finish` closes the plan with `--resolution`. If an active session is also open, it closes that session with `--outcome`; when `--outcome` is omitted, the session outcome falls back to `--resolution`.
 
-For local runtime development, set `JIG_DEV_BIN` to an already-built `jig` binary. The installer uses that explicit binary before any cached exact-version binary, while still verifying that its reported version matches `.jig.yml`.
+For local runtime development, set `JIG_DEV_BIN` to an already-built `jig` binary. The installer uses that explicit binary before any cached exact-version binary, while still verifying that its reported version matches `.jig.toml`.
 
 ## SQLx Metadata Directory
 
@@ -226,8 +227,8 @@ This section applies only when `sqlx_enabled` is `true`.
 
 For portable shared repos, set:
 
-```yaml
-template_source_url: git@github.com:your-org/jig-sh.git
+```toml
+template_source_url = "git@github.com:your-org/jig-sh.git"
 ```
 
 When `template_source_url` is set, the renderer writes it into `_src_path` for portable update and install behavior. If it is blank, local template renders keep the local source path.

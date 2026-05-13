@@ -159,17 +159,14 @@ impl NormalizedRemoteCommittedFixture {
         git(&repo, ["add", "."]).unwrap();
         git(&repo, ["commit", "-m", "adopt"]).unwrap();
 
-        let answers_path = repo.join(".jig.yml");
-        let mut answers = read_answers_yaml(&answers_path).unwrap();
-        answers.insert(
-            YamlValue::String("_src_path".into()),
-            YamlValue::String(remote_url.clone()),
-        );
+        let answers_path = repo.join(".jig.toml");
+        let mut answers = read_answers_toml(&answers_path).unwrap();
+        answers.insert("_src_path".into(), TomlValue::String(remote_url.clone()));
         if legacy_committed_state {
-            answers.remove(YamlValue::String(TEMPLATE_LOCAL_PATH_KEY.into()));
+            answers.remove(TEMPLATE_LOCAL_PATH_KEY);
         }
-        write_answers_yaml(&answers_path, &answers).unwrap();
-        git(&repo, ["add", ".jig.yml"]).unwrap();
+        write_answers_toml(&answers_path, &answers).unwrap();
+        git(&repo, ["add", ".jig.toml"]).unwrap();
         git(&repo, ["commit", "-m", "normalize source"]).unwrap();
 
         Self {

@@ -16,7 +16,7 @@ Jig turns a repo into an operating environment for coding agents. It makes agent
 
 The template renders these repo-owned assets into a consumer repository:
 
-- `.jig.yml`
+- `.jig.toml`
 - `.mcp.json`
 - `AGENTS.md`
 - `agent-map.md`
@@ -101,7 +101,7 @@ cargo build -p jig-sh --bin jig
 JIG_DEV_BIN=target/debug/jig scripts/jig work status
 ```
 
-If you edit `.jig.yml` and want a full re-render from the stored answers:
+If you edit `.jig.toml` and want a full re-render from the stored answers:
 
 ```sh
 cd /path/to/target-repo
@@ -110,12 +110,12 @@ jig update --recopy
 
 If the rendered output should replace existing template-managed files, pass `--force`.
 
-The generated repo uses `.jig.yml` as both:
+The generated repo uses `.jig.toml` as both:
 
 - the public repo-facing config
 - the native renderer answers file used by `jig update` and `jig update --recopy`
 
-Set `template_source_url` in `.jig.yml` if you want portable recopy/update behavior across machines. When set, the renderer writes it into `_src_path`; otherwise local template renders keep the local source path.
+Set `template_source_url` in `.jig.toml` if you want portable recopy/update behavior across machines. When set, the renderer writes it into `_src_path`; otherwise local template renders keep the local source path.
 
 `jig update --recopy` re-renders from the stored `_commit`. Plain `jig update` advances to the current resolved template source.
 

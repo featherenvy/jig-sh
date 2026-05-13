@@ -13,17 +13,17 @@ mod mcp;
 fn write_fixture_repo(root: &Path) {
     fs::create_dir_all(root.join(".agent")).unwrap();
     fs::write(
-        root.join(".jig.yml"),
-        r#"_src_path: '/tmp/template'
-_commit: 'abc123'
-repo_name: 'demo'
-default_branch: 'main'
-jig_version: '0.1.0'
-work:
-  gates:
-    - id: custom
-      kind: check
-      tool: jig.custom_check
+        root.join(".jig.toml"),
+        r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.1.0"
+
+[[work.gates]]
+id = "custom"
+kind = "check"
+tool = "jig.custom_check"
 "#,
     )
     .unwrap();
@@ -57,20 +57,22 @@ work:
 fn write_mutating_check_fixture_repo(root: &Path) {
     fs::create_dir_all(root.join(".agent")).unwrap();
     fs::write(
-        root.join(".jig.yml"),
-        r#"_src_path: '/tmp/template'
-_commit: 'abc123'
-repo_name: 'demo'
-default_branch: 'main'
-jig_version: '0.1.0'
-work:
-  gates:
-    - id: first
-      kind: check
-      tool: jig.first_check
-    - id: mutating
-      kind: check
-      tool: jig.mutating_check
+        root.join(".jig.toml"),
+        r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.1.0"
+
+[[work.gates]]
+id = "first"
+kind = "check"
+tool = "jig.first_check"
+
+[[work.gates]]
+id = "mutating"
+kind = "check"
+tool = "jig.mutating_check"
 "#,
     )
     .unwrap();
@@ -110,17 +112,17 @@ work:
 fn write_failing_check_fixture_repo(root: &Path) {
     fs::create_dir_all(root.join(".agent")).unwrap();
     fs::write(
-        root.join(".jig.yml"),
-        r#"_src_path: '/tmp/template'
-_commit: 'abc123'
-repo_name: 'demo'
-default_branch: 'main'
-jig_version: '0.1.0'
-work:
-  gates:
-    - id: custom
-      kind: check
-      tool: jig.custom_check
+        root.join(".jig.toml"),
+        r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.1.0"
+
+[[work.gates]]
+id = "custom"
+kind = "check"
+tool = "jig.custom_check"
 "#,
     )
     .unwrap();
@@ -411,22 +413,21 @@ fn agent_doctor_matches_relative_config_to_absolute_codex_source() {
     fs::create_dir_all(&skills_root).unwrap();
     write_fixture_repo(&repo_root);
     fs::write(
-        repo_root.join(".jig.yml"),
-        r#"_src_path: '/tmp/template'
-_commit: 'abc123'
-repo_name: 'demo'
-default_branch: 'main'
-jig_version: '0.1.0'
-agent_tooling:
-  codex:
-    marketplaces:
-      - id: local-skills
-        source: ../jig-skills
-work:
-  gates:
-    - id: custom
-      kind: check
-      tool: jig.custom_check
+        repo_root.join(".jig.toml"),
+        r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.1.0"
+
+[[agent_tooling.codex.marketplaces]]
+id = "local-skills"
+source = "../jig-skills"
+
+[[work.gates]]
+id = "custom"
+kind = "check"
+tool = "jig.custom_check"
 "#,
     )
     .unwrap();
@@ -465,20 +466,20 @@ fn agent_doctor_accepts_empty_marketplace_config_without_codex() {
     let temp = tempdir().unwrap();
     write_fixture_repo(temp.path());
     fs::write(
-        temp.path().join(".jig.yml"),
-        r#"_src_path: '/tmp/template'
-_commit: 'abc123'
-repo_name: 'demo'
-default_branch: 'main'
-jig_version: '0.1.0'
-agent_tooling:
-  codex:
-    marketplaces: []
-work:
-  gates:
-    - id: custom
-      kind: check
-      tool: jig.custom_check
+        temp.path().join(".jig.toml"),
+        r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.1.0"
+
+[agent_tooling.codex]
+marketplaces = []
+
+[[work.gates]]
+id = "custom"
+kind = "check"
+tool = "jig.custom_check"
 "#,
     )
     .unwrap();
@@ -589,24 +590,22 @@ fn agent_bootstrap_uses_single_configured_marketplace_source() {
     let skills_root = temp.path().join("jig-skills");
     fs::create_dir_all(&skills_root).unwrap();
     fs::write(
-        temp.path().join(".jig.yml"),
-        r#"_src_path: '/tmp/template'
-_commit: 'abc123'
-repo_name: 'demo'
-default_branch: 'main'
-jig_version: '0.1.0'
-agent_tooling:
-  codex:
-    marketplaces:
-      - id: local-skills
-        source: ./jig-skills
-        plugins:
-          - local-rust@local-skills
-work:
-  gates:
-    - id: custom
-      kind: check
-      tool: jig.custom_check
+        temp.path().join(".jig.toml"),
+        r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.1.0"
+
+[[agent_tooling.codex.marketplaces]]
+id = "local-skills"
+source = "./jig-skills"
+plugins = ["local-rust@local-skills"]
+
+[[work.gates]]
+id = "custom"
+kind = "check"
+tool = "jig.custom_check"
 "#,
     )
     .unwrap();
@@ -710,24 +709,25 @@ fn agent_bootstrap_rejects_ambiguous_configured_marketplaces() {
     let temp = tempdir().unwrap();
     write_fixture_repo(temp.path());
     fs::write(
-        temp.path().join(".jig.yml"),
-        r#"_src_path: '/tmp/template'
-_commit: 'abc123'
-repo_name: 'demo'
-default_branch: 'main'
-jig_version: '0.1.0'
-agent_tooling:
-  codex:
-    marketplaces:
-      - id: first-skills
-        source: ../first-skills
-      - id: second-skills
-        source: ../second-skills
-work:
-  gates:
-    - id: custom
-      kind: check
-      tool: jig.custom_check
+        temp.path().join(".jig.toml"),
+        r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.1.0"
+
+[[agent_tooling.codex.marketplaces]]
+id = "first-skills"
+source = "../first-skills"
+
+[[agent_tooling.codex.marketplaces]]
+id = "second-skills"
+source = "../second-skills"
+
+[[work.gates]]
+id = "custom"
+kind = "check"
+tool = "jig.custom_check"
 "#,
     )
     .unwrap();

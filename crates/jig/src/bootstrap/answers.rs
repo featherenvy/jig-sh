@@ -120,7 +120,7 @@ impl RawAnswers {
     fn from_file(path: &Path) -> Result<Self> {
         let text = fs::read_to_string(path)
             .with_context(|| format!("Failed to read {}", path.display()))?;
-        serde_yaml::from_str(&text).with_context(|| format!("Failed to parse {}", path.display()))
+        toml::from_str(&text).with_context(|| format!("Failed to parse {}", path.display()))
     }
 
     fn merge_opts(&mut self, opts: &AnswerOpts) {
@@ -218,9 +218,9 @@ impl RawAnswers {
                 .migration_add_command
                 .or_else(|| Some("scripts/add-migration.sh".into())),
             bootstrap_command: self.bootstrap_command.unwrap_or_else(|| "make deps".into()),
-            dev_command: self
-                .dev_command
-                .unwrap_or_else(|| r#"echo "Define dev_command in .jig.yml" >&2 && exit 1"#.into()),
+            dev_command: self.dev_command.unwrap_or_else(|| {
+                r#"echo "Define dev_command in .jig.toml" >&2 && exit 1"#.into()
+            }),
             rust_fmt_check_command: self
                 .rust_fmt_check_command
                 .unwrap_or_else(|| "cargo fmt --all -- --check".into()),

@@ -60,27 +60,23 @@ fn update_committed_mode_rewrites_normalized_remote_source_to_local_checkout() {
     let root_guide = fs::read_to_string(fixture.repo.join("AGENTS.md")).unwrap();
     assert!(root_guide.contains("Local Checkout Marker"));
 
-    let answers = read_answers_yaml(&fixture.answers_path).unwrap();
+    let answers = read_answers_toml(&fixture.answers_path).unwrap();
     let expected_local_path = absolute_path(fixture.template.path())
         .unwrap()
         .display()
         .to_string();
     assert_eq!(
-        answers
-            .get(YamlValue::String("_src_path".into()))
-            .and_then(YamlValue::as_str),
+        answers.get("_src_path").and_then(TomlValue::as_str),
         Some(expected_local_path.as_str())
     );
     assert_eq!(
-        answers
-            .get(YamlValue::String(TEMPLATE_MODE_KEY.into()))
-            .and_then(YamlValue::as_str),
+        answers.get(TEMPLATE_MODE_KEY).and_then(TomlValue::as_str),
         Some(TemplateMode::Committed.as_str())
     );
     assert_eq!(
         answers
-            .get(YamlValue::String(TEMPLATE_LOCAL_PATH_KEY.into()))
-            .and_then(YamlValue::as_str),
+            .get(TEMPLATE_LOCAL_PATH_KEY)
+            .and_then(TomlValue::as_str),
         Some(expected_local_path.as_str())
     );
 }
@@ -110,27 +106,23 @@ fn update_committed_mode_uses_unpushed_local_checkout_for_normalized_remote_sour
     let root_guide = fs::read_to_string(fixture.repo.join("AGENTS.md")).unwrap();
     assert!(root_guide.contains("Unpushed Local Checkout Marker"));
 
-    let answers = read_answers_yaml(&fixture.answers_path).unwrap();
+    let answers = read_answers_toml(&fixture.answers_path).unwrap();
     let expected_local_path = absolute_path(fixture.template.path())
         .unwrap()
         .display()
         .to_string();
     assert_eq!(
-        answers
-            .get(YamlValue::String("_src_path".into()))
-            .and_then(YamlValue::as_str),
+        answers.get("_src_path").and_then(TomlValue::as_str),
         Some(expected_local_path.as_str())
     );
     assert_eq!(
-        answers
-            .get(YamlValue::String("_commit".into()))
-            .and_then(YamlValue::as_str),
+        answers.get("_commit").and_then(TomlValue::as_str),
         Some(local_commit.as_str())
     );
     assert_eq!(
         answers
-            .get(YamlValue::String(TEMPLATE_LOCAL_PATH_KEY.into()))
-            .and_then(YamlValue::as_str),
+            .get(TEMPLATE_LOCAL_PATH_KEY)
+            .and_then(TomlValue::as_str),
         Some(expected_local_path.as_str())
     );
 }
@@ -209,29 +201,23 @@ fn update_committed_mode_with_vcs_ref_accepts_legacy_normalized_remote_source() 
     assert!(root_guide.contains("Older Marker"));
     assert!(!root_guide.contains("Newer Marker"));
 
-    let answers = read_answers_yaml(&fixture.answers_path).unwrap();
+    let answers = read_answers_toml(&fixture.answers_path).unwrap();
     assert_eq!(
-        answers
-            .get(YamlValue::String("_src_path".into()))
-            .and_then(YamlValue::as_str),
+        answers.get("_src_path").and_then(TomlValue::as_str),
         Some(fixture.remote_url.as_str())
     );
     assert_eq!(
         answers
-            .get(YamlValue::String(TEMPLATE_LOCAL_PATH_KEY.into()))
-            .and_then(YamlValue::as_str),
+            .get(TEMPLATE_LOCAL_PATH_KEY)
+            .and_then(TomlValue::as_str),
         Some("")
     );
     assert_eq!(
-        answers
-            .get(YamlValue::String(TEMPLATE_MODE_KEY.into()))
-            .and_then(YamlValue::as_str),
+        answers.get(TEMPLATE_MODE_KEY).and_then(TomlValue::as_str),
         Some(TemplateMode::Committed.as_str())
     );
     assert_eq!(
-        answers
-            .get(YamlValue::String("_commit".into()))
-            .and_then(YamlValue::as_str),
+        answers.get("_commit").and_then(TomlValue::as_str),
         Some(old_ref.as_str())
     );
 }
@@ -286,29 +272,23 @@ fn update_committed_mode_accepts_explicit_normalized_remote_template_source() {
         .unwrap()
         .display()
         .to_string();
-    let answers = read_answers_yaml(&fixture.answers_path).unwrap();
+    let answers = read_answers_toml(&fixture.answers_path).unwrap();
     assert_eq!(
-        answers
-            .get(YamlValue::String("_src_path".into()))
-            .and_then(YamlValue::as_str),
+        answers.get("_src_path").and_then(TomlValue::as_str),
         Some(fixture.remote_url.as_str())
     );
     assert_eq!(
-        answers
-            .get(YamlValue::String("_commit".into()))
-            .and_then(YamlValue::as_str),
+        answers.get("_commit").and_then(TomlValue::as_str),
         Some(new_commit.as_str())
     );
     assert_eq!(
-        answers
-            .get(YamlValue::String(TEMPLATE_MODE_KEY.into()))
-            .and_then(YamlValue::as_str),
+        answers.get(TEMPLATE_MODE_KEY).and_then(TomlValue::as_str),
         Some(TemplateMode::Committed.as_str())
     );
     assert_eq!(
         answers
-            .get(YamlValue::String(TEMPLATE_LOCAL_PATH_KEY.into()))
-            .and_then(YamlValue::as_str),
+            .get(TEMPLATE_LOCAL_PATH_KEY)
+            .and_then(TomlValue::as_str),
         Some(expected_local_path.as_str())
     );
 }

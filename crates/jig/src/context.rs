@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 const CURRENT_SESSION_FILE: &str = "jig-current-session.txt";
 pub(crate) const DEFAULT_CODEX_MARKETPLACE_ID: &str = "jig-skills";
 // jig.sh generated repos default to the shared Jig skills marketplace; forks can
-// override or opt out through agent_tooling.codex.marketplaces in .jig.yml.
+// override or opt out through agent_tooling.codex.marketplaces in .jig.toml.
 pub(crate) const DEFAULT_CODEX_MARKETPLACE_SOURCE: &str = "featherenvy/jig-skills";
 pub(crate) const DEFAULT_CODEX_MARKETPLACE_PLUGINS: &[&str] = &[
     "jig-rust@jig-skills",
@@ -124,10 +124,10 @@ pub(crate) struct RepoContext {
 impl RepoContext {
     pub(crate) fn load() -> Result<Self> {
         let root = find_repo_root()?;
-        let config_path = root.join(".jig.yml");
+        let config_path = root.join(".jig.toml");
         let config_text = fs::read_to_string(&config_path)
             .with_context(|| format!("Failed to read {}", config_path.display()))?;
-        let config: RepoConfig = serde_yaml::from_str(&config_text)
+        let config: RepoConfig = toml::from_str(&config_text)
             .with_context(|| format!("Failed to parse {}", config_path.display()))?;
         validate_work_config(&config)?;
 
@@ -151,7 +151,7 @@ impl RepoContext {
         }
         if config.jig_version != manifest.jig_version {
             bail!(
-                "jig version mismatch between .jig.yml ({}) and manifest ({})",
+                "jig version mismatch between .jig.toml ({}) and manifest ({})",
                 config.jig_version,
                 manifest.jig_version
             );
@@ -314,11 +314,11 @@ fn find_repo_root() -> Result<PathBuf> {
 pub(crate) fn find_repo_root_from(start: &Path) -> Result<PathBuf> {
     let mut current = start.to_path_buf();
     loop {
-        if current.join(".jig.yml").exists() {
+        if current.join(".jig.toml").exists() {
             return Ok(current);
         }
         if !current.pop() {
-            bail!("Could not find repo root containing .jig.yml");
+            bail!("Could not find repo root containing .jig.toml");
         }
     }
 }
@@ -349,8 +349,8 @@ fn resolve_current_session_path(root: &Path) -> Result<PathBuf> {
 #[cfg(test)]
 impl RepoContext {
     pub(crate) fn load_from(root: &Path) -> Result<Self> {
-        let config_text = fs::read_to_string(root.join(".jig.yml"))?;
-        let config: RepoConfig = serde_yaml::from_str(&config_text)?;
+        let config_text = fs::read_to_string(root.join(".jig.toml"))?;
+        let config: RepoConfig = toml::from_str(&config_text)?;
         validate_work_config(&config)?;
         let manifest_text = fs::read_to_string(root.join(".agent/jig-contract.json"))?;
         let manifest: ContractManifest = serde_json::from_str(&manifest_text)?;
@@ -373,7 +373,7 @@ mod tests {
     fn runtime_commands_still_require_adopted_repo_context() {
         let temp = tempdir().unwrap();
         let error = find_repo_root_from(temp.path()).unwrap_err().to_string();
-        assert!(error.contains("Could not find repo root containing .jig.yml"));
+        assert!(error.contains("Could not find repo root containing .jig.toml"));
     }
 
     #[test]
@@ -381,15 +381,15 @@ mod tests {
         let temp = tempdir().unwrap();
         fs::create_dir_all(temp.path().join(".agent")).unwrap();
         fs::write(
-            temp.path().join(".jig.yml"),
-            r#"_src_path: '/tmp/template'
-_commit: 'abc123'
-repo_name: 'demo'
-default_branch: 'main'
-jig_version: '0.1.0'
-work:
-  checks:
-    - jig.contract_check
+            temp.path().join(".jig.toml"),
+            r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.1.0"
+
+[work]
+checks = ["jig.contract_check"]
 "#,
         )
         .unwrap();
@@ -428,12 +428,12 @@ work:
         let temp = tempdir().unwrap();
         fs::create_dir_all(temp.path().join(".agent")).unwrap();
         fs::write(
-            temp.path().join(".jig.yml"),
-            r#"_src_path: '/tmp/template'
-_commit: 'abc123'
-repo_name: 'demo'
-default_branch: 'main'
-jig_version: '0.1.0'
+            temp.path().join(".jig.toml"),
+            r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.1.0"
 "#,
         )
         .unwrap();
@@ -472,19 +472,17 @@ jig_version: '0.1.0'
         let temp = tempdir().unwrap();
         fs::create_dir_all(temp.path().join(".agent")).unwrap();
         fs::write(
-            temp.path().join(".jig.yml"),
-            r#"_src_path: '/tmp/template'
-_commit: 'abc123'
-repo_name: 'demo'
-default_branch: 'main'
-jig_version: '0.1.0'
-agent_tooling:
-  codex:
-    marketplaces:
-      - id: local-skills
-        source: ../jig-skills
-        plugins:
-          - local-rust@local-skills
+            temp.path().join(".jig.toml"),
+            r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.1.0"
+
+[[agent_tooling.codex.marketplaces]]
+id = "local-skills"
+source = "../jig-skills"
+plugins = ["local-rust@local-skills"]
 "#,
         )
         .unwrap();
@@ -515,21 +513,21 @@ agent_tooling:
         let temp = tempdir().unwrap();
         fs::create_dir_all(temp.path().join(".agent")).unwrap();
         fs::write(
-            temp.path().join(".jig.yml"),
-            r#"_src_path: '/tmp/template'
-_commit: 'abc123'
-repo_name: 'demo'
-default_branch: 'main'
-jig_version: '0.1.0'
-work:
-  checks:
-    - jig.contract_check
-    - jig.test
-  gates:
-    - id: contract
-      kind: check
-      tool: jig.contract_check
-      required: false
+            temp.path().join(".jig.toml"),
+            r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.1.0"
+
+[work]
+checks = ["jig.contract_check", "jig.test"]
+
+[[work.gates]]
+id = "contract"
+kind = "check"
+tool = "jig.contract_check"
+required = false
 "#,
         )
         .unwrap();
@@ -576,16 +574,16 @@ work:
         let temp = tempdir().unwrap();
         fs::create_dir_all(temp.path().join(".agent")).unwrap();
         fs::write(
-            temp.path().join(".jig.yml"),
-            r#"_src_path: '/tmp/template'
-_commit: 'abc123'
-repo_name: 'demo'
-default_branch: 'main'
-jig_version: '0.1.0'
-work:
-  refinements:
-    - id: rust-simplify
-      skill: jig-rust:rust-simplify
+            temp.path().join(".jig.toml"),
+            r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.1.0"
+
+[[work.refinements]]
+id = "rust-simplify"
+skill = "jig-rust:rust-simplify"
 "#,
         )
         .unwrap();

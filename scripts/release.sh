@@ -148,13 +148,13 @@ PY
 
   local answer_files
   local fixture_files
-  mapfile -t answer_files < <(git ls-files -- '.jig.yml' '**/.jig.yml')
+  mapfile -t answer_files < <(git ls-files -- '.jig.toml' '**/.jig.toml')
   if [[ "${#answer_files[@]}" -eq 0 ]]; then
     echo "No tracked jig answer files found." >&2
     exit 1
   fi
 
-  mapfile -t fixture_files < <(git ls-files -- 'tests/fixtures/*.yaml')
+  mapfile -t fixture_files < <(git ls-files -- 'tests/fixtures/*.toml')
   if [[ "${#fixture_files[@]}" -eq 0 ]]; then
     echo "No tracked fixture answer files found." >&2
     exit 1
@@ -170,7 +170,7 @@ PY
     fi
 
     local file_version
-    file_version="$("$ROOT_DIR/scripts/jig-yml.sh" get "$ROOT_DIR/$version_file" jig_version)"
+    file_version="$("$ROOT_DIR/scripts/jig-toml.sh" get "$ROOT_DIR/$version_file" jig_version)"
     if [[ -z "$file_version" ]]; then
       echo "$version_file is missing jig_version." >&2
       exit 1

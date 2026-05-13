@@ -27,7 +27,7 @@
 ## Invariants
 
 - Keep transport layers thin; shared behavior should live in runtime, state, or bootstrap helpers.
-- Preserve generated-repo compatibility for `.jig.yml`, `.agent/jig-contract.json`, and `.agent/state/*.jsonl`.
+- Preserve generated-repo compatibility for `.jig.toml`, `.agent/jig-contract.json`, and `.agent/state/*.jsonl`.
 - Treat `.agent/state/*.jsonl` as append-only unless a migration path is explicit.
 - Keep make-backed tools aligned with the generated contract manifest and template outputs.
 - Do not make template update flows switch source identity implicitly.

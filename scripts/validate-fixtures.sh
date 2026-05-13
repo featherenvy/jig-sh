@@ -21,9 +21,9 @@ TOOLING_ONLY_DIR="$TMP_DIR/tooling-only"
 TEMPLATE_SNAPSHOT="$TMP_DIR/template-snapshot"
 
 create_template_snapshot_repo "$TEMPLATE_SNAPSHOT"
-render_fixture_from_template "$TEMPLATE_SNAPSHOT" "$ROOT_DIR/tests/fixtures/backend-only.yaml" "$BACKEND_DIR"
-render_fixture_from_template "$TEMPLATE_SNAPSHOT" "$ROOT_DIR/tests/fixtures/full-stack.yaml" "$FULL_STACK_DIR"
-render_fixture_from_template "$TEMPLATE_SNAPSHOT" "$ROOT_DIR/tests/fixtures/tooling-only.yaml" "$TOOLING_ONLY_DIR"
+render_fixture_from_template "$TEMPLATE_SNAPSHOT" "$ROOT_DIR/tests/fixtures/backend-only.toml" "$BACKEND_DIR"
+render_fixture_from_template "$TEMPLATE_SNAPSHOT" "$ROOT_DIR/tests/fixtures/full-stack.toml" "$FULL_STACK_DIR"
+render_fixture_from_template "$TEMPLATE_SNAPSHOT" "$ROOT_DIR/tests/fixtures/tooling-only.toml" "$TOOLING_ONLY_DIR"
 
 validate_backend_fixture "$BACKEND_DIR"
 validate_full_stack_fixture "$FULL_STACK_DIR"
