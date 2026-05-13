@@ -28,19 +28,13 @@ pub(super) fn dispatch(ctx: &RepoContext, command: WorkCommand) -> Result<Value>
 }
 
 pub(super) fn goal(ctx: &RepoContext, request: requests::WorkGoalRequest) -> Result<Value> {
-    if request.validations.is_empty() {
-        bail!("At least one --validation is required for a goal harness.");
-    }
+    let goal = GoalHarness::from_request(request)?;
 
-    let title = request
-        .title
-        .clone()
-        .unwrap_or_else(|| goal_title(&request.objective));
-    let body = goal_body(ctx, &request);
+    let body = goal_body(ctx, &goal);
     let output = start(
         ctx,
         PlanOpenRequest {
-            title,
+            title: goal.title.clone(),
             body: Some(body),
             body_file: None,
         },
@@ -52,7 +46,7 @@ pub(super) fn goal(ctx: &RepoContext, request: requests::WorkGoalRequest) -> Res
     let body_path = output["plan"]["body_path"]
         .as_str()
         .ok_or_else(|| anyhow!("Goal harness failed to create a plan body path"))?;
-    let goal_prompt = goal_prompt(plan_id, body_path, &request);
+    let goal_prompt = goal_prompt(plan_id, body_path, &goal);
 
     Ok(json!({
         "ok": true,
@@ -171,31 +165,75 @@ fn selected_tools(ctx: &RepoContext, explicit_tools: &[String]) -> Result<Vec<St
     Ok(tools)
 }
 
+struct GoalHarness {
+    objective: String,
+    success: String,
+    validations: Vec<String>,
+    constraints: Vec<String>,
+    checkpoints: Vec<String>,
+    title: String,
+    notes: Option<String>,
+}
+
+impl GoalHarness {
+    fn from_request(request: requests::WorkGoalRequest) -> Result<Self> {
+        let objective = trimmed_required_text("--objective", &request.objective)?;
+        let success = trimmed_required_text("--success", &request.success)?;
+        let validations = clean_provided_items("--validation", &request.validations)?;
+        if validations.is_empty() {
+            bail!("At least one non-empty --validation is required for a goal harness.");
+        }
+        let constraints = clean_provided_items("--constraint", &request.constraints)?;
+
+        let checkpoints = if request.checkpoints.is_empty() {
+            default_checkpoints()
+        } else {
+            clean_provided_items("--checkpoint", &request.checkpoints)?
+        };
+        let title = request
+            .title
+            .as_deref()
+            .map(str::trim)
+            .filter(|title| !title.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| goal_title(&single_line_text(&objective)));
+        let notes = request
+            .notes
+            .as_deref()
+            .map(str::trim)
+            .filter(|notes| !notes.is_empty())
+            .map(str::to_string);
+
+        Ok(Self {
+            objective,
+            success,
+            validations,
+            constraints,
+            checkpoints,
+            title,
+            notes,
+        })
+    }
+}
+
 fn goal_title(objective: &str) -> String {
     const MAX_TITLE_CHARS: usize = 80;
+    const ELLIPSIS: &str = "...";
     let objective = objective.trim();
     if objective.chars().count() <= MAX_TITLE_CHARS {
         return objective.to_string();
     }
 
-    let mut title = objective.chars().take(MAX_TITLE_CHARS).collect::<String>();
-    title.push_str("...");
+    let ellipsis_chars = ELLIPSIS.chars().count();
+    let mut title = objective
+        .chars()
+        .take(MAX_TITLE_CHARS - ellipsis_chars)
+        .collect::<String>();
+    title.push_str(ELLIPSIS);
     title
 }
 
-fn goal_body(ctx: &RepoContext, request: &requests::WorkGoalRequest) -> String {
-    let checkpoints = if request.checkpoints.is_empty() {
-        vec![
-            "Read the relevant AGENTS.md files and repo guidance.".to_string(),
-            "Establish the baseline validation result before risky edits.".to_string(),
-            "Make scoped changes and record each meaningful attempt.".to_string(),
-            "Run the validation loop and inspect gate status.".to_string(),
-            "Finish only after the stopping condition is met.".to_string(),
-        ]
-    } else {
-        request.checkpoints.clone()
-    };
-
+fn goal_body(ctx: &RepoContext, goal: &GoalHarness) -> String {
     let configured_gates = ctx
         .work_gates()
         .into_iter()
@@ -240,45 +278,71 @@ fn goal_body(ctx: &RepoContext, request: &requests::WorkGoalRequest) -> String {
 
 {notes}
 "#,
-        objective = request.objective.trim(),
-        success = request.success.trim(),
-        validations = markdown_bullets(&request.validations, "No validation command specified."),
-        constraints =
-            markdown_bullets(&request.constraints, "No additional constraints specified."),
-        checkpoints = markdown_checkboxes(&checkpoints),
+        objective = goal.objective.as_str(),
+        success = goal.success.as_str(),
+        validations = markdown_bullets(&goal.validations, "No validation command specified."),
+        constraints = markdown_bullets(&goal.constraints, "No additional constraints specified."),
+        checkpoints = markdown_checkboxes(&goal.checkpoints),
         configured_gates = markdown_bullets(&configured_gates, "No work gates configured."),
-        notes = request
-            .notes
-            .as_deref()
-            .map(str::trim)
-            .filter(|notes| !notes.is_empty())
-            .unwrap_or("No extra notes.")
+        notes = goal.notes.as_deref().unwrap_or("No extra notes.")
     )
 }
 
-fn goal_prompt(plan_id: &str, body_path: &str, request: &requests::WorkGoalRequest) -> String {
+fn goal_prompt(plan_id: &str, body_path: &str, goal: &GoalHarness) -> String {
     format!(
         "/goal Complete the objective in {body_path} without stopping until this verifiable stopping condition is met: {success}. Use {body_path} as the durable progress log, keep changes scoped to the stated constraints, run the validation loop recorded there, inspect gates with `scripts/jig work gates --plan-id {plan_id}`, and stop if blocked by missing product guidance, unsafe permissions, or a validation result that cannot be improved without changing the goal.",
-        success = request.success.trim(),
+        success = single_line_text(&goal.success),
     )
+}
+
+fn trimmed_required_text(flag: &str, value: &str) -> Result<String> {
+    let text = value.trim();
+    if text.is_empty() {
+        bail!("{flag} cannot be empty.");
+    }
+    Ok(text.to_string())
+}
+
+fn single_line_text(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn clean_provided_items(flag: &str, items: &[String]) -> Result<Vec<String>> {
+    let cleaned = clean_items(items);
+    if cleaned.len() != items.len() {
+        bail!("{flag} values cannot be empty.");
+    }
+    Ok(cleaned)
+}
+
+fn default_checkpoints() -> Vec<String> {
+    [
+        "Read the relevant AGENTS.md files and repo guidance.",
+        "Establish the baseline validation result before risky edits.",
+        "Make scoped changes and record each meaningful attempt.",
+        "Run the validation loop and inspect gate status.",
+        "Finish only after the stopping condition is met.",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect()
 }
 
 fn markdown_bullets(items: &[String], empty: &str) -> String {
-    let items = clean_items(items);
     if items.is_empty() {
         return format!("- {empty}");
     }
 
     items
-        .into_iter()
+        .iter()
         .map(|item| format!("- {item}"))
         .collect::<Vec<_>>()
         .join("\n")
 }
 
 fn markdown_checkboxes(items: &[String]) -> String {
-    clean_items(items)
-        .into_iter()
+    items
+        .iter()
         .map(|item| format!("- [ ] {item}"))
         .collect::<Vec<_>>()
         .join("\n")

@@ -290,6 +290,213 @@ fn work_goal_opens_durable_plan_and_prompt() {
 }
 
 #[test]
+fn work_goal_rejects_blank_required_fields() {
+    let temp = tempdir().unwrap();
+    write_fixture_repo(temp.path());
+    let ctx = RepoContext::load_from(temp.path()).unwrap();
+
+    let blank_validation = dispatch(
+        &ctx,
+        CommandKind::Work(crate::cli::WorkCommand::Goal(crate::cli::WorkGoalOpts {
+            objective: "Reduce API handler duplication".into(),
+            success: "duplication is reduced".into(),
+            validations: vec!["   ".into()],
+            constraints: Vec::new(),
+            checkpoints: Vec::new(),
+            title: None,
+            notes: None,
+        })),
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(blank_validation.contains("--validation values cannot be empty"));
+
+    let blank_objective = dispatch(
+        &ctx,
+        CommandKind::Work(crate::cli::WorkCommand::Goal(crate::cli::WorkGoalOpts {
+            objective: " \n\t ".into(),
+            success: "duplication is reduced".into(),
+            validations: vec!["scripts/jig work check".into()],
+            constraints: Vec::new(),
+            checkpoints: Vec::new(),
+            title: None,
+            notes: None,
+        })),
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(blank_objective.contains("--objective cannot be empty"));
+
+    let blank_success = dispatch(
+        &ctx,
+        CommandKind::Work(crate::cli::WorkCommand::Goal(crate::cli::WorkGoalOpts {
+            objective: "Reduce API handler duplication".into(),
+            success: " \n\t ".into(),
+            validations: vec!["scripts/jig work check".into()],
+            constraints: Vec::new(),
+            checkpoints: Vec::new(),
+            title: None,
+            notes: None,
+        })),
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(blank_success.contains("--success cannot be empty"));
+}
+
+#[test]
+fn work_goal_normalizes_prompt_and_defaults_missing_checkpoints() {
+    let temp = tempdir().unwrap();
+    write_fixture_repo(temp.path());
+    let ctx = RepoContext::load_from(temp.path()).unwrap();
+
+    let output = dispatch(
+        &ctx,
+        CommandKind::Work(crate::cli::WorkCommand::Goal(crate::cli::WorkGoalOpts {
+            objective: "Reduce API handler duplication".into(),
+            success: "duplication is reduced\nand the configured gate passes".into(),
+            validations: vec!["scripts/jig work check".into()],
+            constraints: Vec::new(),
+            checkpoints: Vec::new(),
+            title: None,
+            notes: None,
+        })),
+    )
+    .unwrap();
+
+    let body_path = output["plan"]["body_path"].as_str().unwrap();
+    let body = fs::read_to_string(temp.path().join(body_path)).unwrap();
+    let prompt = output["goal_prompt"].as_str().unwrap();
+
+    assert!(prompt.contains("duplication is reduced and the configured gate passes"));
+    assert!(!prompt.contains("reduced\nand"));
+    assert!(body.contains("duplication is reduced\nand the configured gate passes"));
+    assert!(body.contains("- [ ] Read the relevant AGENTS.md files and repo guidance."));
+}
+
+#[test]
+fn work_goal_rejects_blank_checkpoints_when_provided() {
+    let temp = tempdir().unwrap();
+    write_fixture_repo(temp.path());
+    let ctx = RepoContext::load_from(temp.path()).unwrap();
+
+    let error = dispatch(
+        &ctx,
+        CommandKind::Work(crate::cli::WorkCommand::Goal(crate::cli::WorkGoalOpts {
+            objective: "Reduce API handler duplication".into(),
+            success: "duplication is reduced".into(),
+            validations: vec!["scripts/jig work check".into()],
+            constraints: Vec::new(),
+            checkpoints: vec!["   ".into()],
+            title: None,
+            notes: None,
+        })),
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("--checkpoint values cannot be empty"));
+}
+
+#[test]
+fn work_goal_rejects_blank_constraints_when_provided() {
+    let temp = tempdir().unwrap();
+    write_fixture_repo(temp.path());
+    let ctx = RepoContext::load_from(temp.path()).unwrap();
+
+    let error = dispatch(
+        &ctx,
+        CommandKind::Work(crate::cli::WorkCommand::Goal(crate::cli::WorkGoalOpts {
+            objective: "Reduce API handler duplication".into(),
+            success: "duplication is reduced".into(),
+            validations: vec!["scripts/jig work check".into()],
+            constraints: vec!["   ".into()],
+            checkpoints: Vec::new(),
+            title: None,
+            notes: None,
+        })),
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("--constraint values cannot be empty"));
+}
+
+#[test]
+fn work_goal_truncates_generated_title_to_eighty_chars() {
+    let temp = tempdir().unwrap();
+    write_fixture_repo(temp.path());
+    let ctx = RepoContext::load_from(temp.path()).unwrap();
+    let objective =
+        "Reduce API handler duplication while preserving every public route and fixture behavior";
+
+    let output = dispatch(
+        &ctx,
+        CommandKind::Work(crate::cli::WorkCommand::Goal(crate::cli::WorkGoalOpts {
+            objective: objective.into(),
+            success: "duplication is reduced".into(),
+            validations: vec!["scripts/jig work check".into()],
+            constraints: Vec::new(),
+            checkpoints: Vec::new(),
+            title: None,
+            notes: None,
+        })),
+    )
+    .unwrap();
+
+    let plan_id = output["plan"]["plan_id"].as_str().unwrap();
+    let plans = fs::read_to_string(temp.path().join(".agent/state/plans.jsonl")).unwrap();
+    let plan_line = plans
+        .lines()
+        .find(|line| line.contains(plan_id))
+        .expect("goal plan event should be recorded");
+    let title = serde_json::from_str::<Value>(plan_line).unwrap()["title"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    assert_eq!(title.chars().count(), 80);
+    assert!(title.ends_with("..."));
+}
+
+#[test]
+fn work_goal_defaults_blank_title_to_generated_title() {
+    let temp = tempdir().unwrap();
+    write_fixture_repo(temp.path());
+    let ctx = RepoContext::load_from(temp.path()).unwrap();
+
+    let output = dispatch(
+        &ctx,
+        CommandKind::Work(crate::cli::WorkCommand::Goal(crate::cli::WorkGoalOpts {
+            objective: "Reduce API handler duplication".into(),
+            success: "duplication is reduced".into(),
+            validations: vec!["scripts/jig work check".into()],
+            constraints: Vec::new(),
+            checkpoints: Vec::new(),
+            title: Some("   ".into()),
+            notes: None,
+        })),
+    )
+    .unwrap();
+
+    let plan_id = output["plan"]["plan_id"].as_str().unwrap();
+    let plans = fs::read_to_string(temp.path().join(".agent/state/plans.jsonl")).unwrap();
+    let plan_line = plans
+        .lines()
+        .find(|line| line.contains(plan_id))
+        .expect("goal plan event should be recorded");
+    let title = serde_json::from_str::<Value>(plan_line).unwrap()["title"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    assert_eq!(title, "Reduce API handler duplication");
+}
+
+#[test]
 fn agent_doctor_reports_configured_codex_marketplace() {
     let _guard = lock_env();
     let temp = tempdir().unwrap();
