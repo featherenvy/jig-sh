@@ -37,6 +37,23 @@ fn mcp_exposes_read_only_agent_doctor_tool() {
 }
 
 #[test]
+fn mcp_does_not_expose_dev_or_proxy_commands() {
+    let temp = tempdir().unwrap();
+    write_fixture_repo(temp.path());
+    let ctx = RepoContext::load_from(temp.path()).unwrap();
+
+    for name in [
+        "jig.dev",
+        "jig.proxy",
+        "jig.proxy_start",
+        "jig.proxy_cert_trust",
+    ] {
+        let error = call_tool(&ctx, name, json!({})).unwrap_err().to_string();
+        assert!(error.contains("Unsupported tool"));
+    }
+}
+
+#[test]
 fn mcp_work_tools_deserialize_typed_arguments() {
     let temp = tempdir().unwrap();
     write_fixture_repo(temp.path());

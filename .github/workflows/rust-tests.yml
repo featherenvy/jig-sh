@@ -3,9 +3,7 @@ name: Rust Tests
 on:
   pull_request:
     paths:
-
       - "crates/**"
-
       - "Cargo.toml"
       - "Cargo.lock"
       - "rust-toolchain.toml"
@@ -16,11 +14,9 @@ on:
       - ".github/workflows/rust-tests.yml"
   push:
     branches:
-      - main
+      - master
     paths:
-
       - "crates/**"
-
       - "Cargo.toml"
       - "Cargo.lock"
       - "rust-toolchain.toml"
@@ -45,11 +41,12 @@ jobs:
   fmt:
     name: make fmt-check
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1
         with:
           cache: false
           rustflags: ""
@@ -60,34 +57,293 @@ jobs:
   clippy:
     name: make clippy
     runs-on: ubuntu-latest
-
+    timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1
         with:
           cache: false
           rustflags: ""
           components: clippy
       - name: Cache Rust artifacts
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+        with:
+          shared-key: rust-${{ runner.os }}-${{ github.job }}
       - name: Run clippy
         run: make clippy
 
   test:
     name: make test-rust-locked
     runs-on: ubuntu-latest
-
+    timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1
         with:
           cache: false
           rustflags: ""
       - name: Cache Rust artifacts
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+        with:
+          shared-key: rust-${{ runner.os }}-${{ github.job }}
       - name: Run locked Rust tests
         run: make test-rust-locked
+
+  msrv:
+    name: cargo check --workspace (MSRV 1.85)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1
+        with:
+          toolchain: "1.85"
+          cache: false
+          rustflags: ""
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+        with:
+          shared-key: rust-${{ runner.os }}-${{ github.job }}
+      - name: Run MSRV check
+        run: cargo check --workspace --locked
+
+  no-default-features:
+    name: cargo test -p jig-sh --no-default-features
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1
+        with:
+          cache: false
+          rustflags: ""
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+        with:
+          shared-key: rust-${{ runner.os }}-${{ github.job }}
+      - name: Run no-default-features tests
+        run: cargo test -p jig-sh --no-default-features --locked
+
+  no-default-features-build:
+    name: cargo build -p jig-sh --no-default-features
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1
+        with:
+          cache: false
+          rustflags: ""
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+        with:
+          shared-key: rust-${{ runner.os }}-${{ github.job }}
+      - name: Run no-default-features build
+        run: cargo build -p jig-sh --no-default-features --locked
+
+  no-default-features-clippy:
+    name: cargo clippy -p jig-sh --no-default-features
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1
+        with:
+          cache: false
+          rustflags: ""
+          components: clippy
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+        with:
+          shared-key: rust-${{ runner.os }}-${{ github.job }}
+      - name: Run no-default-features clippy
+        run: cargo clippy -p jig-sh --no-default-features --locked -- -D warnings
+
+  no-default-features-macos:
+    name: cargo test -p jig-sh --no-default-features (macOS)
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1
+        with:
+          cache: false
+          rustflags: ""
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+        with:
+          shared-key: rust-${{ runner.os }}-${{ github.job }}
+      - name: Run no-default-features tests
+        run: cargo test -p jig-sh --no-default-features --locked
+
+  no-default-features-windows:
+    name: cargo test -p jig-sh --no-default-features (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1
+        with:
+          cache: false
+          rustflags: ""
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+        with:
+          shared-key: rust-${{ runner.os }}-${{ github.job }}
+      - name: Run no-default-features tests
+        run: cargo test -p jig-sh --no-default-features --locked
+
+  no-default-features-clippy-macos:
+    name: cargo clippy -p jig-sh --no-default-features (macOS)
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1
+        with:
+          cache: false
+          rustflags: ""
+          components: clippy
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+        with:
+          shared-key: rust-${{ runner.os }}-${{ github.job }}
+      - name: Run no-default-features clippy
+        run: cargo clippy -p jig-sh --no-default-features --locked -- -D warnings
+
+  dev-proxy-macos:
+    name: cargo test -p jig-dev-proxy (macOS)
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1
+        with:
+          cache: false
+          rustflags: ""
+          components: clippy
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+        with:
+          shared-key: rust-${{ runner.os }}-${{ github.job }}
+      - name: Run dev proxy tests
+        run: cargo test -p jig-dev-proxy --locked
+        # Dev-proxy tests exercise process-global signal hooks and fixed OS trust/process boundaries.
+        env:
+          RUST_TEST_THREADS: "1"
+      - name: Run dev proxy clippy
+        run: cargo clippy -p jig-dev-proxy --all-targets --locked -- -D warnings
+
+  dev-proxy-linux:
+    name: cargo test -p jig-dev-proxy (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1
+        with:
+          cache: false
+          rustflags: ""
+          components: clippy
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+        with:
+          shared-key: rust-${{ runner.os }}-${{ github.job }}
+      - name: Run dev proxy tests
+        run: cargo test -p jig-dev-proxy --locked
+        # Dev-proxy tests exercise process-global signal hooks and fixed OS trust/process boundaries.
+        env:
+          RUST_TEST_THREADS: "1"
+      - name: Run dev proxy clippy
+        run: cargo clippy -p jig-dev-proxy --all-targets --locked -- -D warnings
+
+  dev-proxy-windows:
+    name: cargo test -p jig-dev-proxy (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1
+        with:
+          cache: false
+          rustflags: ""
+          components: clippy
+      # NASM is a Windows CI build dependency for aws-lc-sys only. Pin the
+      # upstream installer checksums published by the Chocolatey nasm 3.1.0
+      # package; it is not bundled into Jig release artifacts.
+      - name: Install NASM for aws-lc-sys
+        run: >-
+          choco install nasm --version=3.1.0
+          --checksum 2E3041DD2ABE36CB7E9938057C3CF090DD2EAC42D3280957359F87C4D83B9ED0
+          --checksumtype sha256
+          --checksum64 7881E9FEBC8B6558581041019B7890F109BEF0694D93ED82C9589794C7B5A600
+          --checksumtype64 sha256
+          -y
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+        with:
+          shared-key: rust-${{ runner.os }}-${{ github.job }}
+      - name: Run dev proxy tests
+        run: cargo test -p jig-dev-proxy --locked
+        # Dev-proxy tests exercise process-global signal hooks and fixed OS trust/process boundaries.
+        env:
+          RUST_TEST_THREADS: "1"
+      - name: Run dev proxy clippy
+        run: cargo clippy -p jig-dev-proxy --all-targets --locked -- -D warnings
+
+  jig-sh-windows:
+    name: cargo build -p jig-sh (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1
+        with:
+          cache: false
+          rustflags: ""
+      # NASM is a Windows CI build dependency for aws-lc-sys only. Pin the
+      # upstream installer checksums published by the Chocolatey nasm 3.1.0
+      # package; it is not bundled into Jig release artifacts.
+      - name: Install NASM for aws-lc-sys
+        run: >-
+          choco install nasm --version=3.1.0
+          --checksum 2E3041DD2ABE36CB7E9938057C3CF090DD2EAC42D3280957359F87C4D83B9ED0
+          --checksumtype sha256
+          --checksum64 7881E9FEBC8B6558581041019B7890F109BEF0694D93ED82C9589794C7B5A600
+          --checksumtype64 sha256
+          -y
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+        with:
+          shared-key: rust-${{ runner.os }}-${{ github.job }}
+      # The jig-sh unit suite still uses Unix shell-script fixtures for
+      # bootstrap/runtime tests. Keep Windows coverage at compile level until
+      # those fixtures have native .cmd or Rust test-double equivalents.
+      - name: Run jig-sh build
+        run: cargo build -p jig-sh --locked

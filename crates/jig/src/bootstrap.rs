@@ -97,39 +97,78 @@ pub struct AnswerOpts {
 }
 
 #[derive(Args, Clone, Debug)]
+#[command(after_help = "\
+Templates:
+  Jig currently ships one repository harness template, stored in the jig-sh source tree
+  under templates/project. Pass the root of a local jig-sh checkout when dogfooding
+  head, or pass the jig-sh git URL when adopting from a remote source.
+
+Examples:
+  jig init /path/to/new-repo --template /path/to/jig-sh --repo-name new-repo --sqlx-enabled false
+  jig init /path/to/new-repo --template https://github.com/bpcakes/jig-sh.git --repo-name new-repo --sqlx-enabled false")]
 pub struct InitOpts {
+    #[arg(help = "Destination directory to create or populate")]
     pub path: PathBuf,
-    #[arg(long)]
+    #[arg(
+        long,
+        value_name = "PATH_OR_GIT_URL",
+        help = "Root of the jig-sh template source to render",
+        long_help = "Root of the jig-sh template source to render. For local head development, pass the path to your jig-sh checkout, for example /Users/you/src/jig-sh. For remote adoption, pass a git URL such as https://github.com/bpcakes/jig-sh.git. The source must contain templates/project."
+    )]
     pub template: String,
-    #[arg(long, value_enum)]
+    #[arg(
+        long,
+        value_enum,
+        help = "How to read a local git template checkout",
+        long_help = "How to read a local git template checkout. The default for local git paths is committed, which renders from clean HEAD and refuses dirty template changes."
+    )]
     pub template_mode: Option<TemplateMode>,
-    #[arg(long)]
+    #[arg(long, help = "Git revision to render from the template source")]
     pub vcs_ref: Option<String>,
-    #[arg(long)]
+    #[arg(long, help = "Allow init to write into a non-empty destination")]
     pub force: bool,
-    #[arg(long)]
+    #[arg(long, help = "Use default answers for omitted configuration prompts")]
     pub defaults: bool,
-    #[arg(long)]
+    #[arg(long, help = "Fail instead of prompting for missing answers")]
     pub no_input: bool,
     #[command(flatten)]
     pub answers: AnswerOpts,
 }
 
 #[derive(Args, Clone, Debug)]
+#[command(after_help = "\
+Templates:
+  Jig currently ships one repository harness template, stored in the jig-sh source tree
+  under templates/project. Pass the root of a local jig-sh checkout when dogfooding
+  head, or pass the jig-sh git URL when adopting from a remote source.
+
+Examples:
+  jig adopt . --template /path/to/jig-sh --repo-name my-repo --sqlx-enabled false
+  jig adopt . --template https://github.com/bpcakes/jig-sh.git --repo-name my-repo --sqlx-enabled false")]
 pub struct AdoptOpts {
-    #[arg(default_value = ".")]
+    #[arg(default_value = ".", help = "Existing repository directory to adopt")]
     pub path: PathBuf,
-    #[arg(long)]
+    #[arg(
+        long,
+        value_name = "PATH_OR_GIT_URL",
+        help = "Root of the jig-sh template source to render",
+        long_help = "Root of the jig-sh template source to render. For local head development, pass the path to your jig-sh checkout, for example /Users/you/src/jig-sh. For remote adoption, pass a git URL such as https://github.com/bpcakes/jig-sh.git. The source must contain templates/project."
+    )]
     pub template: String,
-    #[arg(long, value_enum)]
+    #[arg(
+        long,
+        value_enum,
+        help = "How to read a local git template checkout",
+        long_help = "How to read a local git template checkout. The default for local git paths is committed, which renders from clean HEAD and refuses dirty template changes."
+    )]
     pub template_mode: Option<TemplateMode>,
-    #[arg(long)]
+    #[arg(long, help = "Git revision to render from the template source")]
     pub vcs_ref: Option<String>,
-    #[arg(long)]
+    #[arg(long, help = "Overwrite conflicting template-managed paths")]
     pub force: bool,
-    #[arg(long)]
+    #[arg(long, help = "Use default answers for omitted configuration prompts")]
     pub defaults: bool,
-    #[arg(long)]
+    #[arg(long, help = "Fail instead of prompting for missing answers")]
     pub no_input: bool,
     #[command(flatten)]
     pub answers: AnswerOpts,

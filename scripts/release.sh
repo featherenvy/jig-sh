@@ -3,6 +3,9 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 PACKAGE_NAME="jig-sh"
+# Publish the split support crate first; jig-sh depends on this exact version
+# from crates.io once package verification leaves path dependencies behind.
+PUBLISH_PACKAGE_NAMES=("jig-dev-proxy" "$PACKAGE_NAME")
 BIN_NAME="jig"
 RELEASE_FIXTURE_FILES=(
   tests/fixtures/backend-only.toml
@@ -29,7 +32,7 @@ Commands:
   notes     Generate or replace the CHANGELOG.md section for VERSION.
   stage     Stage files updated by release-prepare.
   tag       Run release validation, then create annotated tag vVERSION.
-  publish   Run release validation, ensure vVERSION is on origin at HEAD, then cargo publish.
+  publish   Run release validation, cargo publish all crates, then push vVERSION to origin.
   github    Create the GitHub Release for vVERSION from CHANGELOG.md.
   next-version
             Print the next semantic version using the requested bump. Defaults to patch.
@@ -54,6 +57,7 @@ run() {
 }
 
 manifest_version() {
+  local package_name="${1:-$PACKAGE_NAME}"
   cargo metadata --locked --format-version 1 --no-deps |
     python3 -c '
 import json
@@ -67,7 +71,7 @@ for package in metadata["packages"]:
         break
 else:
     raise SystemExit(f"Package {package_name!r} not found in Cargo metadata.")
-' "$PACKAGE_NAME"
+' "$package_name"
 }
 
 normalize_version() {
@@ -144,11 +148,14 @@ require_version_consistency() {
   local contract_version
   local launcher_version
 
-  cargo_version="$(manifest_version)"
-  if [[ "$cargo_version" != "$version" ]]; then
-    echo "Cargo package version is $cargo_version, expected $version." >&2
-    exit 1
-  fi
+  local package_name
+  for package_name in "${PUBLISH_PACKAGE_NAMES[@]}"; do
+    cargo_version="$(manifest_version "$package_name")"
+    if [[ "$cargo_version" != "$version" ]]; then
+      echo "Cargo package $package_name version is $cargo_version, expected $version." >&2
+      exit 1
+    fi
+  done
 
   make_version="$(sed -n 's/^JIG_VERSION[[:space:]]*[:?]\{0,1\}=[[:space:]]*//p' "$ROOT_DIR/Makefile" | sed 's/[[:space:]]*#.*$//; s/[[:space:]]*$//')"
   if [[ -z "$make_version" ]]; then
@@ -340,15 +347,13 @@ replace_exactly_once(
     rf'\g<1>"{version}"',
     "workspace package version",
 )
-# jig-sh is currently the only package entry whose own version changes during
-# release prep. If the workspace later adds packages that depend on this version,
-# replace this targeted edit with a cargo update based lock refresh.
-replace_exactly_once(
-    root / "Cargo.lock",
-    r'(?ms)(\[\[package\]\]\nname = "jig-sh"\nversion = )"[^"]*"',
-    rf'\g<1>"{version}"',
-    "Cargo.lock jig-sh package version",
-)
+for package in ("jig-dev-proxy", "jig-sh"):
+    replace_exactly_once(
+        root / "Cargo.lock",
+        rf'(?ms)(\[\[package\]\]\nname = "{re.escape(package)}"\nversion = )"[^"]*"',
+        rf'\g<1>"{version}"',
+        f"Cargo.lock {package} package version",
+    )
 replace_exactly_once(
     root / "Makefile",
     r'(?m)^JIG_VERSION\s*\?=\s*[^\n]+$',
@@ -489,8 +494,64 @@ cargo_dirty_flags() {
   fi
 }
 
+crate_version_status() {
+  local package_name="$1"
+  local version="$2"
+  local status
+  status="$(curl --max-time 20 -sS -o /dev/null -w '%{http_code}' "https://crates.io/api/v1/crates/$package_name/$version" || true)"
+  printf '%s\n' "${status:-000}"
+}
+
+wait_for_crate_version() {
+  local package_name="$1"
+  local version="$2"
+  local attempt
+  local status
+
+  for attempt in {1..60}; do
+    status="$(crate_version_status "$package_name" "$version")"
+    if [[ "$status" == "200" ]]; then
+      return 0
+    fi
+    if [[ "$status" != "404" && "$status" != "000" ]]; then
+      echo "crates.io version probe for $package_name v$version returned HTTP $status." >&2
+    fi
+    sleep 10
+  done
+
+  echo "Timed out waiting for $package_name v$version to appear on crates.io." >&2
+  exit 1
+}
+
+publish_package_if_missing() {
+  local package_name="$1"
+  local version="$2"
+  local status
+
+  status="$(crate_version_status "$package_name" "$version")"
+  case "$status" in
+    200)
+      echo "$package_name v$version is already published; skipping cargo publish."
+      ;;
+    404)
+      if [[ "$package_name" == "$PACKAGE_NAME" ]]; then
+        wait_for_crate_version "jig-dev-proxy" "$version"
+        echo "If publishing $PACKAGE_NAME fails after jig-dev-proxy v$version is published, bump the patch version and rerun the release." >&2
+      fi
+      run cargo publish -p "$package_name" --locked
+      wait_for_crate_version "$package_name" "$version"
+      ;;
+    *)
+      echo "Could not determine whether $package_name v$version is already published; crates.io returned HTTP $status." >&2
+      exit 1
+      ;;
+  esac
+}
+
 release_check() {
   local version="$1"
+  local package_name
+  local dependency_status
   cargo_dirty_flags
 
   require_clean_tree
@@ -500,9 +561,30 @@ release_check() {
 
   run make ci
   run bash scripts/validate-fixtures.sh
-  run cargo publish -p "$PACKAGE_NAME" --locked --dry-run "${cargo_dirty_flag[@]}"
+  for package_name in "${PUBLISH_PACKAGE_NAMES[@]}"; do
+    if [[ "$package_name" == "$PACKAGE_NAME" ]]; then
+      dependency_status="$(crate_version_status "jig-dev-proxy" "$version")"
+      case "$dependency_status" in
+        200)
+          ;;
+        404)
+          echo "jig-dev-proxy v$version is not on crates.io yet; dry-running $PACKAGE_NAME with a local registry patch before any real crate publish."
+          # This fallback is only for the first publish of a split crate version.
+          # Once jig-dev-proxy v$version is visible in the registry, the normal
+          # dry-run path above exercises crates.io dependency resolution.
+          run cargo publish -p "$package_name" --locked --dry-run "${cargo_dirty_flag[@]}" --config "patch.crates-io.jig-dev-proxy.path=\"$ROOT_DIR/crates/jig-dev-proxy\""
+          continue
+          ;;
+        *)
+          echo "Could not determine whether jig-dev-proxy v$version is already published; crates.io returned HTTP $dependency_status." >&2
+          exit 1
+          ;;
+      esac
+    fi
+    run cargo publish -p "$package_name" --locked --dry-run "${cargo_dirty_flag[@]}"
+  done
 
-  echo "Release check passed for $PACKAGE_NAME v$version."
+  echo "Release check passed for workspace crates v$version."
 }
 
 release_tag() {
@@ -522,7 +604,7 @@ release_tag() {
   release_check "$version"
 
   run git tag -a "$tag" -m "$PACKAGE_NAME $tag"
-  echo "Created tag $tag. release-publish will push it to origin before publishing."
+  echo "Created tag $tag. release-publish will push it to origin after all crates publish successfully."
 }
 
 remote_tag_commit() {
@@ -583,8 +665,11 @@ release_publish() {
   fi
 
   release_check "$version"
+  local package_name
+  for package_name in "${PUBLISH_PACKAGE_NAMES[@]}"; do
+    publish_package_if_missing "$package_name" "$version"
+  done
   ensure_remote_tag_at_head "$tag" "$head_commit"
-  run cargo publish -p "$PACKAGE_NAME" --locked
 }
 
 if [[ $# -lt 1 ]]; then

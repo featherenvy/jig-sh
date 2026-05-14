@@ -56,12 +56,14 @@ pub(crate) fn dispatch(ctx: &RepoContext, command: CommandKind) -> Result<Value>
         CommandKind::ContractCheck(opts) => {
             execute_manifest_make_tool(ctx, tool::CONTRACT_CHECK, json!({}), opts.plan_id)
         }
+        CommandKind::Dev(opts) => crate::dev_proxy::commands::dev(ctx, opts),
         CommandKind::RunTarget(opts) => execute_manifest_make_tool(
             ctx,
             tool::RUN_TARGET,
             json!({ args::NAME: opts.name }),
             opts.tool.plan_id,
         ),
+        CommandKind::Proxy(command) => crate::dev_proxy::commands::proxy(ctx, command),
         CommandKind::Agent(command) => agent::dispatch(ctx, command),
         CommandKind::Work(command) => work::dispatch(ctx, command),
         CommandKind::Init(_) | CommandKind::Adopt(_) | CommandKind::Update(_) => unreachable!(),
@@ -72,12 +74,16 @@ pub(crate) fn dispatch(ctx: &RepoContext, command: CommandKind) -> Result<Value>
 pub(crate) fn call_tool(ctx: &RepoContext, name: &str, args: Value) -> Result<Value> {
     let args_obj = args.as_object().cloned().unwrap_or_default();
 
-    if let Some(tool) = ctx.tool_spec(name)
-        && tool_defs::is_make_tool(tool)
-    {
-        return call_manifest_make_tool(ctx, tool, &args_obj);
+    match ctx.tool_spec(name) {
+        Some(tool) if tool_defs::is_make_tool(tool) => {
+            return call_manifest_make_tool(ctx, tool, &args_obj);
+        }
+        _ => {}
     }
 
+    // MCP dispatch is intentionally allowlisted here. CLI-only dev/proxy
+    // commands can start processes, install services, or mutate trust stores
+    // and must not become agent-callable by adding names to tool_defs.
     match MemoryTool::from_name(name) {
         Some(MemoryTool::AgentDoctor) => agent::doctor(ctx),
         Some(MemoryTool::Goal) => work::goal_from_args(ctx, args),

@@ -1,7 +1,9 @@
 use std::io::Write;
 use std::path::PathBuf;
+use std::process;
 
-use anyhow::Result;
+use anyhow::{Result, bail};
+use clap::error::{ContextKind, ContextValue, ErrorKind};
 use clap::{Args, Parser, Subcommand};
 
 #[cfg(test)]
@@ -20,6 +22,18 @@ struct Cli {
     #[command(subcommand)]
     command: CommandKind,
 }
+
+const TEMPLATE_ERROR_HINT: &str = "\
+Templates:
+  Jig currently ships one repository harness template: the jig-sh repo's
+  templates/project directory.
+
+Use one of:
+  jig adopt . --template /path/to/jig-sh --repo-name my-repo --sqlx-enabled false
+  jig init /path/to/new-repo --template /path/to/jig-sh --repo-name new-repo --sqlx-enabled false
+  jig adopt . --template https://github.com/bpcakes/jig-sh.git --repo-name my-repo --sqlx-enabled false
+
+For local head development, use the path to your local jig-sh checkout.";
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum CommandKind {
@@ -47,8 +61,12 @@ pub(crate) enum CommandKind {
     MigrationAdd(MigrationAddOpts),
     #[command(name = tool_defs::cli_command::CONTRACT_CHECK)]
     ContractCheck(ToolOpts),
+    #[command(name = tool_defs::cli_command::DEV)]
+    Dev(DevOpts),
     #[command(name = tool_defs::cli_command::RUN_TARGET)]
     RunTarget(RunTargetOpts),
+    #[command(name = tool_defs::cli_command::PROXY, subcommand)]
+    Proxy(ProxyCommand),
     #[command(name = tool_defs::cli_command::AGENT, subcommand)]
     Agent(AgentCommand),
     #[command(name = tool_defs::cli_command::WORK, subcommand)]
@@ -87,6 +105,48 @@ pub(crate) enum AgentCommand {
     Bootstrap(AgentBootstrapOpts),
 }
 
+#[derive(Debug, Subcommand)]
+pub(crate) enum ProxyCommand {
+    #[command(name = tool_defs::cli_command::PROXY_START)]
+    Start(ProxyStartOpts),
+    #[command(name = tool_defs::cli_command::PROXY_STOP)]
+    Stop(ProxyStopOpts),
+    #[command(name = tool_defs::cli_command::PROXY_LIST)]
+    List(ProxyListOpts),
+    #[command(name = tool_defs::cli_command::PROXY_PRUNE)]
+    Prune(ProxyPruneOpts),
+    #[command(name = tool_defs::cli_command::PROXY_RUN)]
+    Run(ProxyRunOpts),
+    #[command(name = tool_defs::cli_command::PROXY_ALIAS)]
+    Alias(ProxyAliasOpts),
+    #[command(name = tool_defs::cli_command::PROXY_CERT, subcommand)]
+    Cert(ProxyCertCommand),
+    #[command(name = tool_defs::cli_command::PROXY_SERVICE, subcommand)]
+    Service(ProxyServiceCommand),
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum ProxyCertCommand {
+    #[command(name = tool_defs::cli_command::PROXY_CERT_GENERATE)]
+    Generate(ProxyCertGenerateOpts),
+    #[command(name = tool_defs::cli_command::PROXY_CERT_STATUS)]
+    Status(ProxyCertRuntimeOpts),
+    #[command(name = tool_defs::cli_command::PROXY_CERT_TRUST)]
+    Trust(ProxyCertTrustOpts),
+    #[command(name = tool_defs::cli_command::PROXY_CERT_UNTRUST)]
+    Untrust(ProxyCertUntrustOpts),
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum ProxyServiceCommand {
+    #[command(name = tool_defs::cli_command::PROXY_SERVICE_INSTALL)]
+    Install(ProxyServiceInstallOpts),
+    #[command(name = tool_defs::cli_command::PROXY_SERVICE_UNINSTALL)]
+    Uninstall(ProxyServiceRuntimeOpts),
+    #[command(name = tool_defs::cli_command::PROXY_SERVICE_STATUS)]
+    Status(ProxyServiceRuntimeOpts),
+}
+
 #[derive(Args, Debug)]
 pub(crate) struct WorkGoalOpts {
     #[arg(long)]
@@ -109,6 +169,213 @@ pub(crate) struct WorkGoalOpts {
 pub(crate) struct AgentBootstrapOpts {
     #[arg(long)]
     pub(crate) marketplace: Option<String>,
+}
+
+#[derive(Args, Clone, Debug, Default)]
+pub(crate) struct ProxyRuntimeOpts {
+    #[arg(
+        long,
+        help = "Proxy state directory; defaults to JIG_PROXY_STATE_DIR or ~/.jig/proxy"
+    )]
+    pub(crate) state_dir: Option<PathBuf>,
+    #[arg(
+        long,
+        help = "HTTP listener port for the local proxy",
+        value_parser = clap::value_parser!(u16).range(1..)
+    )]
+    pub(crate) http_port: Option<u16>,
+    #[arg(
+        long,
+        help = "HTTPS listener port for the local proxy",
+        value_parser = clap::value_parser!(u16).range(1..)
+    )]
+    pub(crate) https_port: Option<u16>,
+    #[arg(
+        long,
+        conflicts_with = "no_https",
+        help = "Start or require the HTTPS listener"
+    )]
+    pub(crate) https: bool,
+    #[arg(
+        long,
+        conflicts_with = "https",
+        help = "Disable HTTPS even when [dev].https is true"
+    )]
+    pub(crate) no_https: bool,
+    // Expert diagnostic toggle kept for service parity while HTTP/2 support is
+    // still settling; normal users should rely on the [dev] config default.
+    #[arg(
+        long,
+        hide = true,
+        conflicts_with = "no_http2",
+        help = "Enable HTTP/2 ALPN on the HTTPS listener"
+    )]
+    pub(crate) http2: bool,
+    // Expert diagnostic toggle kept for service parity while HTTP/2 support is
+    // still settling; normal users should rely on the [dev] config default.
+    #[arg(
+        long,
+        hide = true,
+        conflicts_with = "http2",
+        help = "Disable HTTP/2 ALPN on the HTTPS listener"
+    )]
+    pub(crate) no_http2: bool,
+    #[arg(
+        long,
+        conflicts_with = "no_lan",
+        help = "Bind the proxy on 0.0.0.0; LAN clients can reach Jig-supervised loopback apps"
+    )]
+    pub(crate) lan: bool,
+    #[arg(
+        long,
+        conflicts_with = "lan",
+        help = "Disable LAN binding even when [dev].lan is true"
+    )]
+    pub(crate) no_lan: bool,
+    #[arg(long, help = "Private/local TLD for generated route hostnames")]
+    pub(crate) tld: Option<String>,
+}
+
+#[derive(Args, Debug)]
+pub(crate) struct DevOpts {
+    #[arg(long = "app")]
+    pub(crate) apps: Vec<String>,
+    #[arg(long)]
+    pub(crate) discover_workspace: bool,
+    #[arg(long)]
+    pub(crate) no_proxy: bool,
+    #[command(flatten)]
+    pub(crate) proxy: ProxyRuntimeOpts,
+}
+
+#[derive(Args, Debug)]
+pub(crate) struct ProxyStartOpts {
+    #[arg(long)]
+    pub(crate) foreground: bool,
+    #[command(flatten)]
+    pub(crate) proxy: ProxyRuntimeOpts,
+}
+
+#[derive(Args, Debug, Default)]
+pub(crate) struct ProxyStopOpts {
+    #[command(flatten)]
+    pub(crate) proxy: ProxyRuntimeOpts,
+}
+
+#[derive(Args, Debug, Default)]
+pub(crate) struct ProxyListOpts {
+    #[arg(long)]
+    pub(crate) raw: bool,
+    #[command(flatten)]
+    pub(crate) proxy: ProxyRuntimeOpts,
+}
+
+#[derive(Args, Debug, Default)]
+pub(crate) struct ProxyPruneOpts {
+    #[command(flatten)]
+    pub(crate) proxy: ProxyRuntimeOpts,
+}
+
+#[derive(Args, Debug)]
+#[command(
+    after_help = "Pass the app command after --, for example: jig proxy run web -- vite --open. Ad-hoc proxy runs bind the app to 127.0.0.1; use [[dev.apps]].host for configured loopback IP targets."
+)]
+pub(crate) struct ProxyRunOpts {
+    pub(crate) name: String,
+    #[arg(long)]
+    pub(crate) kind: Option<String>,
+    #[arg(long)]
+    pub(crate) dir: Option<PathBuf>,
+    #[arg(long, value_parser = clap::value_parser!(u16).range(1..))]
+    pub(crate) port: Option<u16>,
+    #[arg(long)]
+    pub(crate) no_proxy: bool,
+    #[command(flatten)]
+    pub(crate) proxy: ProxyRuntimeOpts,
+    #[arg(
+        last = true,
+        allow_hyphen_values = true,
+        required = true,
+        help = "Command to run after --, for example: vite --open"
+    )]
+    pub(crate) command: Vec<String>,
+}
+
+#[derive(Args, Debug)]
+pub(crate) struct ProxyAliasOpts {
+    pub(crate) name: String,
+    #[arg(long, help = "Backend TCP port to route to", value_parser = clap::value_parser!(u16).range(1..))]
+    pub(crate) port: u16,
+    #[arg(
+        long,
+        default_value = "127.0.0.1",
+        value_parser = parse_ip_literal_string,
+        help = "Backend host as an IP literal"
+    )]
+    pub(crate) host: String,
+    #[arg(
+        long,
+        help = "Acknowledge that this local alias can proxy browser requests to a non-loopback target IP"
+    )]
+    pub(crate) accept_non_loopback_target: bool,
+    #[command(flatten)]
+    pub(crate) proxy: ProxyRuntimeOpts,
+}
+
+#[derive(Args, Debug, Default)]
+pub(crate) struct ProxyCertGenerateOpts {
+    #[arg(long)]
+    pub(crate) force: bool,
+    #[command(flatten)]
+    pub(crate) proxy: ProxyRuntimeOpts,
+}
+
+#[derive(Args, Debug, Default)]
+pub(crate) struct ProxyCertRuntimeOpts {
+    #[command(flatten)]
+    pub(crate) proxy: ProxyRuntimeOpts,
+}
+
+#[derive(Args, Debug, Default)]
+pub(crate) struct ProxyCertTrustOpts {
+    #[arg(
+        long,
+        required = true,
+        help = "Acknowledge that the Jig local CA is a non-name-constrained root that can sign certificates for any hostname on this machine, and that Linux trust helpers are resolved from fixed system tool directories"
+    )]
+    pub(crate) accept_trust_scope: bool,
+    #[command(flatten)]
+    pub(crate) proxy: ProxyRuntimeOpts,
+}
+
+#[derive(Args, Debug, Default)]
+pub(crate) struct ProxyCertUntrustOpts {
+    #[arg(
+        long,
+        required = true,
+        help = "Acknowledge that Jig will mutate the platform trust store to remove matching Jig local CA certificates"
+    )]
+    pub(crate) accept_trust_scope: bool,
+    #[command(flatten)]
+    pub(crate) proxy: ProxyRuntimeOpts,
+}
+
+#[derive(Args, Debug, Default)]
+pub(crate) struct ProxyServiceInstallOpts {
+    #[arg(
+        long,
+        required = true,
+        help = "Acknowledge that Jig will write and load a per-user launchd/systemd service for the local development proxy"
+    )]
+    pub(crate) accept_service_scope: bool,
+    #[command(flatten)]
+    pub(crate) proxy: ProxyRuntimeOpts,
+}
+
+#[derive(Args, Debug, Default)]
+pub(crate) struct ProxyServiceRuntimeOpts {
+    #[command(flatten)]
+    pub(crate) proxy: ProxyRuntimeOpts,
 }
 
 #[derive(Args, Clone, Debug, Default)]
@@ -217,7 +484,7 @@ pub(crate) struct WorkDecisionAddOpts {
 }
 
 pub(crate) fn run() -> Result<()> {
-    let cli = Cli::parse();
+    let cli = parse_cli();
     match cli.command {
         CommandKind::Init(opts) => print_json(&bootstrap::run_init(opts)?),
         CommandKind::Adopt(opts) => print_json(&bootstrap::run_adopt(opts)?),
@@ -226,12 +493,138 @@ pub(crate) fn run() -> Result<()> {
             let ctx = RepoContext::load()?;
             mcp::serve(&ctx)
         }
+        #[cfg(not(feature = "dev-proxy"))]
+        CommandKind::Dev(opts) => {
+            let output = crate::dev_proxy::commands::dev_without_context(opts)?;
+            print_json(&output)?;
+            require_json_ok(true, &output)
+        }
+        #[cfg(feature = "dev-proxy")]
+        CommandKind::Dev(opts) => {
+            let Some(ctx) = RepoContext::load_optional()? else {
+                bail!(
+                    "`scripts/jig dev` requires an adopted Jig repo with `.jig.toml` dev app configuration. Run it from a Jig repo, or use `scripts/jig proxy run <name> -- <command>` for an ad-hoc command."
+                );
+            };
+            let output = runtime::dispatch(&ctx, CommandKind::Dev(opts))?;
+            print_json(&output)?;
+            require_json_ok(true, &output)
+        }
+        #[cfg(not(feature = "dev-proxy"))]
+        CommandKind::Proxy(command) => {
+            let output = crate::dev_proxy::commands::proxy_without_context(command)?;
+            print_json(&output)?;
+            require_json_ok(true, &output)
+        }
+        #[cfg(feature = "dev-proxy")]
+        CommandKind::Proxy(command)
+            if crate::dev_proxy::commands::can_run_without_context(&command) =>
+        {
+            let output = if let Some(ctx) = RepoContext::load_optional()? {
+                runtime::dispatch(&ctx, CommandKind::Proxy(command))?
+            } else {
+                crate::dev_proxy::commands::proxy_without_context(command)?
+            };
+            print_json(&output)?;
+            require_json_ok(true, &output)
+        }
         other => {
+            let require_ok = command_reports_failure_with_ok(&other);
             let ctx = RepoContext::load()?;
             let output = runtime::dispatch(&ctx, other)?;
-            print_json(&output)
+            print_json(&output)?;
+            require_json_ok(require_ok, &output)
         }
     }
+}
+
+fn command_reports_failure_with_ok(command: &CommandKind) -> bool {
+    // Proxy commands expose host-cleanup/status operations that can complete
+    // with `ok: false` in their JSON payload. Multi-app `jig dev` also uses
+    // `ok: false` when the first child exits unsuccessfully. Agent doctor is a
+    // readiness report and returns `ok: false` when required local tooling is
+    // missing or unregistered.
+    matches!(
+        command,
+        CommandKind::Dev(_) | CommandKind::Proxy(_) | CommandKind::Agent(AgentCommand::Doctor)
+    )
+}
+
+fn require_json_ok(required: bool, output: &serde_json::Value) -> Result<()> {
+    if required && output.get("ok").and_then(serde_json::Value::as_bool) == Some(false) {
+        return Err(JsonOkFalse.into());
+    }
+    Ok(())
+}
+
+#[derive(Debug)]
+struct JsonOkFalse;
+
+impl std::fmt::Display for JsonOkFalse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Command reported ok=false")
+    }
+}
+
+impl std::error::Error for JsonOkFalse {}
+
+pub(crate) fn is_structured_json_failure(error: &anyhow::Error) -> bool {
+    error.is::<JsonOkFalse>()
+}
+
+fn parse_cli() -> Cli {
+    match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(error) => exit_with_cli_error(error),
+    }
+}
+
+fn parse_ip_literal_string(value: &str) -> std::result::Result<String, String> {
+    value
+        .parse::<std::net::IpAddr>()
+        .map(|_| value.to_string())
+        .map_err(|_| format!("'{value}' must be an IP literal"))
+}
+
+fn exit_with_cli_error(error: clap::Error) -> ! {
+    if should_add_template_hint(&error) {
+        let message = error.to_string();
+        let _ = writeln!(std::io::stderr(), "{message}\n{TEMPLATE_ERROR_HINT}");
+        process::exit(error.exit_code());
+    }
+
+    error.exit();
+}
+
+fn should_add_template_hint(error: &clap::Error) -> bool {
+    if !matches!(
+        error.kind(),
+        ErrorKind::MissingRequiredArgument | ErrorKind::InvalidValue | ErrorKind::TooFewValues
+    ) {
+        return false;
+    }
+    error
+        .context()
+        .any(|(kind, value)| kind == ContextKind::InvalidArg && context_mentions_template(value))
+}
+
+fn context_mentions_template(value: &ContextValue) -> bool {
+    match value {
+        ContextValue::String(value) => is_template_arg(value),
+        ContextValue::Strings(values) => values.iter().any(|value| is_template_arg(value)),
+        ContextValue::StyledStr(value) => is_template_arg(&value.to_string()),
+        ContextValue::StyledStrs(values) => values
+            .iter()
+            .any(|value| is_template_arg(&value.to_string())),
+        _ => false,
+    }
+}
+
+fn is_template_arg(value: &str) -> bool {
+    value
+        .split_whitespace()
+        .next()
+        .is_some_and(|arg| arg == "--template")
 }
 
 fn print_json(value: &serde_json::Value) -> Result<()> {
@@ -245,6 +638,28 @@ fn print_json(value: &serde_json::Value) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn template_errors_get_hint() {
+        let missing_template =
+            Cli::try_parse_from(["jig", "adopt", ".", "--repo-name", "demo"]).unwrap_err();
+        assert_eq!(
+            missing_template.kind(),
+            clap::error::ErrorKind::MissingRequiredArgument
+        );
+        assert!(should_add_template_hint(&missing_template));
+
+        let missing_template_value =
+            Cli::try_parse_from(["jig", "adopt", ".", "--template"]).unwrap_err();
+        assert_eq!(
+            missing_template_value.kind(),
+            clap::error::ErrorKind::InvalidValue
+        );
+        assert!(should_add_template_hint(&missing_template_value));
+
+        let unrelated = Cli::try_parse_from(["jig", "proxy", "run", "web", "vite"]).unwrap_err();
+        assert!(!should_add_template_hint(&unrelated));
+    }
 
     #[test]
     fn parses_init_command_with_repeatable_flags() {
@@ -427,6 +842,289 @@ mod tests {
                 assert_eq!(opts.marketplace.as_deref(), Some("../jig-skills"));
             }
             other => panic!("expected agent bootstrap command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_proxy_run_command() {
+        let cli = Cli::try_parse_from([
+            "jig",
+            "proxy",
+            "run",
+            "web",
+            "--kind",
+            "vite",
+            "--http-port",
+            "1555",
+            "--",
+            "vite",
+            "--open",
+        ])
+        .unwrap();
+
+        match cli.command {
+            CommandKind::Proxy(ProxyCommand::Run(opts)) => {
+                assert_eq!(opts.name, "web");
+                assert_eq!(opts.kind.as_deref(), Some("vite"));
+                assert_eq!(opts.proxy.http_port, Some(1555));
+                assert!(!opts.no_proxy);
+                assert_eq!(opts.command, vec!["vite", "--open"]);
+            }
+            other => panic!("expected proxy run command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn proxy_run_requires_separator_before_command() {
+        let error = Cli::try_parse_from(["jig", "proxy", "run", "web", "vite"]).unwrap_err();
+
+        assert_eq!(error.kind(), clap::error::ErrorKind::UnknownArgument);
+    }
+
+    #[test]
+    fn parses_proxy_run_no_proxy() {
+        let cli = Cli::try_parse_from([
+            "jig",
+            "proxy",
+            "run",
+            "web",
+            "--no-proxy",
+            "--",
+            "cargo",
+            "run",
+        ])
+        .unwrap();
+
+        match cli.command {
+            CommandKind::Proxy(ProxyCommand::Run(opts)) => {
+                assert!(opts.no_proxy);
+                assert_eq!(opts.command, vec!["cargo", "run"]);
+            }
+            other => panic!("expected proxy run command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_proxy_state_dir() {
+        let cli =
+            Cli::try_parse_from(["jig", "proxy", "list", "--state-dir", "/tmp/jig-proxy-test"])
+                .unwrap();
+
+        match cli.command {
+            CommandKind::Proxy(ProxyCommand::List(opts)) => {
+                assert_eq!(
+                    opts.proxy.state_dir,
+                    Some(PathBuf::from("/tmp/jig-proxy-test"))
+                );
+            }
+            other => panic!("expected proxy list command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_proxy_alias_port_flag() {
+        let cli = Cli::try_parse_from(["jig", "proxy", "alias", "api", "--port", "8080"]).unwrap();
+
+        match cli.command {
+            CommandKind::Proxy(ProxyCommand::Alias(opts)) => {
+                assert_eq!(opts.name, "api");
+                assert_eq!(opts.port, 8080);
+            }
+            other => panic!("expected proxy alias command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn proxy_alias_host_rejects_non_ip_literals_at_parse_time() {
+        let error = Cli::try_parse_from([
+            "jig",
+            "proxy",
+            "alias",
+            "api",
+            "--port",
+            "8080",
+            "--host",
+            "localhost",
+        ])
+        .unwrap_err();
+
+        assert_eq!(error.kind(), clap::error::ErrorKind::ValueValidation);
+    }
+
+    #[test]
+    fn proxy_ports_reject_zero_at_parse_time() {
+        let alias_error =
+            Cli::try_parse_from(["jig", "proxy", "alias", "api", "--port", "0"]).unwrap_err();
+        assert_eq!(alias_error.kind(), clap::error::ErrorKind::ValueValidation);
+
+        let run_error =
+            Cli::try_parse_from(["jig", "proxy", "run", "web", "--port", "0", "--", "vite"])
+                .unwrap_err();
+        assert_eq!(run_error.kind(), clap::error::ErrorKind::ValueValidation);
+    }
+
+    #[test]
+    fn proxy_cert_trust_requires_scope_acknowledgement_at_parse_time() {
+        for command in ["trust", "untrust"] {
+            let error = Cli::try_parse_from(["jig", "proxy", "cert", command]).unwrap_err();
+
+            assert_eq!(
+                error.kind(),
+                clap::error::ErrorKind::MissingRequiredArgument
+            );
+        }
+    }
+
+    #[test]
+    fn proxy_service_install_requires_scope_acknowledgement_at_parse_time() {
+        let error = Cli::try_parse_from(["jig", "proxy", "service", "install"]).unwrap_err();
+
+        assert_eq!(
+            error.kind(),
+            clap::error::ErrorKind::MissingRequiredArgument
+        );
+    }
+
+    #[test]
+    fn proxy_json_ok_false_is_cli_failure() {
+        let error = require_json_ok(true, &serde_json::json!({ "ok": false }))
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("ok=false"));
+        require_json_ok(false, &serde_json::json!({ "ok": false })).unwrap();
+        assert!(command_reports_failure_with_ok(&CommandKind::Dev(
+            DevOpts {
+                apps: Vec::new(),
+                discover_workspace: false,
+                no_proxy: false,
+                proxy: ProxyRuntimeOpts::default(),
+            }
+        )));
+        assert!(command_reports_failure_with_ok(&CommandKind::Agent(
+            AgentCommand::Doctor
+        )));
+    }
+
+    #[test]
+    fn parses_proxy_runtime_flags_on_prune_cert_and_service_commands() {
+        let prune =
+            Cli::try_parse_from(["jig", "proxy", "prune", "--state-dir", "/tmp/proxy"]).unwrap();
+        match prune.command {
+            CommandKind::Proxy(ProxyCommand::Prune(opts)) => {
+                assert_eq!(opts.proxy.state_dir, Some(PathBuf::from("/tmp/proxy")));
+            }
+            other => panic!("expected proxy prune command, got {other:?}"),
+        }
+
+        let cert =
+            Cli::try_parse_from(["jig", "proxy", "cert", "status", "--tld", "test"]).unwrap();
+        match cert.command {
+            CommandKind::Proxy(ProxyCommand::Cert(ProxyCertCommand::Status(opts))) => {
+                assert_eq!(opts.proxy.tld.as_deref(), Some("test"));
+            }
+            other => panic!("expected proxy cert status command, got {other:?}"),
+        }
+
+        let cert_trust = Cli::try_parse_from([
+            "jig",
+            "proxy",
+            "cert",
+            "trust",
+            "--accept-trust-scope",
+            "--state-dir",
+            "/tmp/proxy",
+        ])
+        .unwrap();
+        match cert_trust.command {
+            CommandKind::Proxy(ProxyCommand::Cert(ProxyCertCommand::Trust(opts))) => {
+                assert!(opts.accept_trust_scope);
+                assert_eq!(opts.proxy.state_dir, Some(PathBuf::from("/tmp/proxy")));
+            }
+            other => panic!("expected proxy cert trust command, got {other:?}"),
+        }
+
+        let cert_untrust = Cli::try_parse_from([
+            "jig",
+            "proxy",
+            "cert",
+            "untrust",
+            "--accept-trust-scope",
+            "--state-dir",
+            "/tmp/proxy",
+        ])
+        .unwrap();
+        match cert_untrust.command {
+            CommandKind::Proxy(ProxyCommand::Cert(ProxyCertCommand::Untrust(opts))) => {
+                assert!(opts.accept_trust_scope);
+                assert_eq!(opts.proxy.state_dir, Some(PathBuf::from("/tmp/proxy")));
+            }
+            other => panic!("expected proxy cert untrust command, got {other:?}"),
+        }
+
+        let service = Cli::try_parse_from([
+            "jig",
+            "proxy",
+            "service",
+            "status",
+            "--state-dir",
+            "/tmp/proxy",
+        ])
+        .unwrap();
+        match service.command {
+            CommandKind::Proxy(ProxyCommand::Service(ProxyServiceCommand::Status(opts))) => {
+                assert_eq!(opts.proxy.state_dir, Some(PathBuf::from("/tmp/proxy")));
+            }
+            other => panic!("expected proxy service status command, got {other:?}"),
+        }
+
+        let service_install = Cli::try_parse_from([
+            "jig",
+            "proxy",
+            "service",
+            "install",
+            "--accept-service-scope",
+            "--state-dir",
+            "/tmp/proxy",
+        ])
+        .unwrap();
+        match service_install.command {
+            CommandKind::Proxy(ProxyCommand::Service(ProxyServiceCommand::Install(opts))) => {
+                assert!(opts.accept_service_scope);
+                assert_eq!(opts.proxy.state_dir, Some(PathBuf::from("/tmp/proxy")));
+            }
+            other => panic!("expected proxy service install command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_dev_command_with_selected_apps() {
+        let cli = Cli::try_parse_from([
+            "jig", "dev", "--app", "web", "--app", "api", "--https", "--lan",
+        ])
+        .unwrap();
+
+        match cli.command {
+            CommandKind::Dev(opts) => {
+                assert_eq!(opts.apps, vec!["web", "api"]);
+                assert!(opts.proxy.https);
+                assert!(opts.proxy.lan);
+            }
+            other => panic!("expected dev command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_hidden_proxy_no_http2_runtime_flag() {
+        let cli =
+            Cli::try_parse_from(["jig", "proxy", "start", "--foreground", "--no-http2"]).unwrap();
+
+        match cli.command {
+            CommandKind::Proxy(ProxyCommand::Start(opts)) => {
+                assert!(opts.foreground);
+                assert!(opts.proxy.no_http2);
+            }
+            other => panic!("expected proxy start command, got {other:?}"),
         }
     }
 

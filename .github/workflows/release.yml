@@ -29,7 +29,6 @@ on:
 
 permissions:
   contents: write
-  id-token: write
 
 concurrency:
   group: release
@@ -39,8 +38,14 @@ jobs:
   release:
     name: Publish release
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     if: ${{ github.event.inputs.backfill_v0_1_0 != 'true' }}
+    # This environment must stay protected with required reviewers because it
+    # grants the OIDC token used for crates.io Trusted Publishing.
     environment: crates-io
+    permissions:
+      contents: write
+      id-token: write
     steps:
       - name: Require default branch
         env:
@@ -52,13 +57,13 @@ jobs:
           fi
 
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           fetch-depth: 0
           fetch-tags: true
 
       - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1
         with:
           cache: false
           # Keep cargo publish verification on Cargo's default rustc warning
@@ -67,7 +72,7 @@ jobs:
           components: rustfmt,clippy
 
       - name: Cache Rust artifacts
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
 
       - name: Configure release git identity
         run: |
@@ -101,8 +106,8 @@ jobs:
           fi
           tag_exists=false
           if git rev-parse --verify --quiet "refs/tags/v$version" >/dev/null; then
-            # Explicit-version runs may resume after a prior attempt pushed the tag
-            # but failed during crates.io publish or GitHub Release creation.
+            # Explicit-version runs may resume after a prior or manual attempt
+            # pushed the tag but failed before the GitHub Release was created.
             if [[ -z "$RELEASE_VERSION_INPUT" ]]; then
               echo "Tag v$version already exists; choose an explicit version to resume it." >&2
               exit 1
@@ -190,7 +195,7 @@ jobs:
       - name: Authenticate to crates.io
         if: ${{ github.event.inputs.dry_run != 'true' }}
         id: crates
-        uses: rust-lang/crates-io-auth-action@v1
+        uses: rust-lang/crates-io-auth-action@bbd81622f20ce9e2dd9622e3218b975523e45bbe # v1.0.4
 
       - name: Publish crate
         if: ${{ github.event.inputs.dry_run != 'true' }}
@@ -199,32 +204,41 @@ jobs:
           TAG_EXISTS: ${{ steps.version.outputs.tag_exists }}
           CARGO_REGISTRY_TOKEN: ${{ steps.crates.outputs.token }}
         run: |
-          # scripts/release.sh publish pushes the tag immediately before cargo publish.
-          # If a later step fails, rerun this workflow with the explicit version.
-          status=""
+          # scripts/release.sh publish pushes the tag only after all crates publish.
+          # If a publish step fails, rerun this workflow with the explicit version.
+          missing_crates=()
           if [[ "$TAG_EXISTS" == "true" ]]; then
-            for attempt in 1 2; do
-              status="$(curl -sS -o /tmp/jig-sh-crate-version.json -w '%{http_code}' "https://crates.io/api/v1/crates/jig-sh/$VERSION" || true)"
-              if [[ "$status" == "200" || "$status" == "404" || "$attempt" == "2" ]]; then
-                break
-              fi
-              echo "crates.io version probe returned HTTP $status; retrying once." >&2
-              sleep 5
+            for crate in jig-dev-proxy jig-sh; do
+              status=""
+              for attempt in 1 2; do
+                status="$(curl --max-time 20 -sS -o "/tmp/${crate}-crate-version.json" -w '%{http_code}' "https://crates.io/api/v1/crates/$crate/$VERSION" || true)"
+                if [[ "$status" == "200" || "$status" == "404" || "$attempt" == "2" ]]; then
+                  break
+                fi
+                echo "crates.io version probe for $crate returned HTTP $status; retrying once." >&2
+                sleep 5
+              done
+              case "$status" in
+                200)
+                  echo "$crate v$VERSION is already published."
+                  ;;
+                404)
+                  missing_crates+=("$crate")
+                  ;;
+                *)
+                  echo "Could not determine whether $crate v$VERSION is already published; crates.io returned HTTP $status." >&2
+                  exit 1
+                  ;;
+              esac
             done
-            case "$status" in
-              200)
-                echo "jig-sh v$VERSION is already published; continuing to GitHub Release creation."
-                exit 0
-                ;;
-              404)
-                ;;
-              *)
-                echo "Could not determine whether jig-sh v$VERSION is already published; crates.io returned HTTP $status." >&2
-                exit 1
-                ;;
-            esac
+            if [[ "${#missing_crates[@]}" -eq 0 ]]; then
+              echo "All crates for v$VERSION are already published; continuing to GitHub Release creation."
+              exit 0
+            else
+              echo "Missing crates for v$VERSION: ${missing_crates[*]}. Resuming publish."
+            fi
           fi
-          if [[ "$TAG_EXISTS" != "true" || "$status" == "404" ]]; then
+          if [[ "$TAG_EXISTS" != "true" || "${#missing_crates[@]}" -gt 0 ]]; then
             scripts/release.sh publish "$VERSION"
           fi
 
@@ -238,6 +252,7 @@ jobs:
   backfill-v0-1-0:
     name: Backfill v0.1.0 GitHub Release
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     if: ${{ github.event.inputs.backfill_v0_1_0 == 'true' }}
     steps:
       - name: Require default branch
@@ -250,7 +265,7 @@ jobs:
           fi
 
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           fetch-depth: 0
           fetch-tags: true

@@ -12,6 +12,20 @@ Structured work commands and agent tooling checks are runtime-owned conveniences
 
 The structured work namespace includes native check gates. Gates are configured in `.jig.toml`, evaluated from receipts, and enforced by `scripts/jig work finish`. They remain runtime-owned because they compose stable make-backed tools with append-only work state rather than adding new make-backed contract tools.
 
+Local development proxy commands are also runtime-owned. `scripts/jig dev` and `scripts/jig proxy ...` manage machine-local processes, ports, routes, certificates, and optional user services. They are configured from `.jig.toml` but are intentionally absent from `.agent/jig-contract.json` because they do not represent make-backed repository checks.
+
+Runtime-owned local development commands include `dev`, `proxy start`, `proxy stop`, `proxy list`, `proxy prune`, `proxy run`, `proxy alias`, `proxy cert generate`, `proxy cert status`, `proxy cert trust --accept-trust-scope`, `proxy cert untrust --accept-trust-scope`, `proxy service install --accept-service-scope`, `proxy service status`, and `proxy service uninstall`. Builds made with `--no-default-features` keep the contract, MCP, and work-receipt runtime but return clear errors for `dev` and `proxy`; use that build mode for MCP/contract-only consumers that do not need the TLS/HTTP dev-proxy stack.
+
+LAN mode exposes the Jig proxy listener to the local network, not child app listeners directly. Process routes may be reached from other devices only through the proxy, with the original routed hostname in DNS, a hosts file, or the HTTP `Host` header. Alias routes stay loopback-client-only so LAN clients cannot use Jig as an open forward proxy.
+
+The `tool_defs::cli_command` names for these runtime-owned commands are parser labels only. They do not add make-backed tools to `.agent/jig-contract.json` and do not expose MCP tools for proxy process or service management.
+
+Because the local development proxy is runtime-owned, its JSON response fields, machine-local state layout under `JIG_PROXY_STATE_DIR` or `~/.jig/proxy`, service-file contents, certificate files, route hostname format, and nonzero error exit statuses are not part of `.agent/jig-contract.json` contract version `1`. Generated repos should pin `jig_version` for proxy behavior and treat those details as same-version runtime behavior rather than as make-backed public contract fields.
+
+The current explicit acknowledgement flags, including `--accept-trust-scope` and `--accept-service-scope`, are runtime safety gates rather than make-backed contract fields. Automation should keep using the pinned `jig_version` CLI help and behavior instead of assuming those opt-in prompts are stable across runtime upgrades.
+
+Runtime-owned `.jig.toml` sections are intentionally strict: unknown keys are rejected so local typos fail fast. New keys in `[work]`, `[agent_tooling]`, `[agent_tooling.codex]`, `[dev]`, or app tables require a Jig runtime/template update and a documented migration note; they do not require a `.agent/jig-contract.json` version bump unless they also change make-backed CLI or MCP contract behavior.
+
 ## Contract Version
 
 `.agent/jig-contract.json` has one schema version:

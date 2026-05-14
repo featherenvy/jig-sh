@@ -76,6 +76,8 @@ A shorter product phrasing is:
 
 `.jig.toml` is both public configuration and the renderer answer file. It records repo settings such as `repo_name`, `default_branch`, `jig_version`, crate roots, SQLx settings, web app settings, and template source metadata.
 
+The template source metadata is a trust boundary. In generated or adopted repos, `scripts/install-jig.sh` may install from the exact `_commit` recorded in `.jig.toml` when that value is a hex git revision, so changing `_src_path` or `_commit` is equivalent to changing the source used to install the repo-local Jig runtime.
+
 `crates/jig/src/bootstrap.rs` and its submodules implement template application:
 
 - `init` renders the harness into a new destination and initializes git.
@@ -83,6 +85,10 @@ A shorter product phrasing is:
 - `update` re-renders managed paths from stored template metadata and refuses to overwrite changed managed files unless forced.
 
 `crates/jig/src/runtime.rs` dispatches CLI and MCP tool calls. For make-backed tools, it resolves the tool from `.agent/jig-contract.json`, runs the matching `make` target, records a receipt, and returns structured JSON.
+
+`crates/jig-dev-proxy` implements the Jig local development proxy used by `scripts/jig dev` and `scripts/jig proxy ...`. It is split from `crates/jig` so route storage, HTTP/HTTPS forwarding, certificates, service files, LAN mode, workspace discovery, and process supervision remain testable without depending on the broader CLI, MCP, receipt, or template runtime.
+
+`crates/jig` enables the `dev-proxy` Cargo feature by default so normal installs include the local proxy. Minimal consumers that only need the contract, MCP, and work-receipt runtime can build `jig-sh` with `--no-default-features` to omit the proxy dependency tree.
 
 `crates/jig/src/mcp.rs` is a minimal MCP stdio server. It lists make-backed tools from the manifest and runtime memory tools from code, then dispatches `tools/call` through the same runtime path as the CLI.
 

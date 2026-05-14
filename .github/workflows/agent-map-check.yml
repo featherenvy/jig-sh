@@ -11,7 +11,7 @@ on:
       - ".github/workflows/agent-map-check.yml"
   push:
     branches:
-      - main
+      - master
     paths:
       - "AGENTS.md"
       - "**/AGENTS.md"
@@ -35,9 +35,10 @@ jobs:
   agent-map-check:
     name: Verify AGENTS map drift
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Validate agent-map links and coverage
         shell: bash

@@ -438,7 +438,7 @@ pub(super) fn append_jsonl<T: Serialize>(path: &Path, value: &T) -> Result<()> {
     serde_json::to_writer(&mut file, value)?;
     file.write_all(b"\n")?;
     file.sync_data()?;
-    file.unlock()?;
+    FileExt::unlock(&file)?;
     Ok(())
 }
 
@@ -455,7 +455,7 @@ pub(super) fn append_text(path: &Path, content: &[u8]) -> Result<()> {
     file.lock_exclusive()?;
     file.write_all(content)?;
     file.sync_data()?;
-    file.unlock()?;
+    FileExt::unlock(&file)?;
     Ok(())
 }
 

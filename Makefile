@@ -109,7 +109,7 @@ release-check: ## Run local release validation and cargo publish dry run
 release-tag: ## Validate and create annotated release tag vVERSION
 	scripts/release.sh tag $(RELEASE_VERSION)
 
-release-publish: ## Validate tagged HEAD, push tag to origin, and publish jig-sh
+release-publish: ## Validate tagged HEAD, publish crates, then push tag to origin
 	scripts/release.sh publish $(RELEASE_VERSION)
 
 release-github: ## Create the GitHub Release for vVERSION from CHANGELOG.md

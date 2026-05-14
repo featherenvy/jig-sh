@@ -1,0 +1,1240 @@
+use std::path::{Path, PathBuf};
+
+use anyhow::{Context, Result, bail};
+use serde_json::Value;
+
+use crate::cli::{
+    DevOpts, ProxyAliasOpts, ProxyCertCommand, ProxyCommand, ProxyRuntimeOpts, ProxyServiceCommand,
+    ProxyStartOpts,
+};
+#[cfg(test)]
+use crate::cli::{
+    ProxyCertGenerateOpts, ProxyCertRuntimeOpts, ProxyCertTrustOpts, ProxyCertUntrustOpts,
+    ProxyListOpts, ProxyPruneOpts, ProxyRunOpts, ProxyServiceInstallOpts, ProxyServiceRuntimeOpts,
+    ProxyStopOpts,
+};
+use crate::context::{DevAppConfig, RepoContext};
+
+pub(crate) mod commands {
+    use super::*;
+
+    pub(crate) fn dev(ctx: &RepoContext, opts: DevOpts) -> Result<Value> {
+        reject_no_proxy_runtime_flags(opts.no_proxy, &opts.proxy)?;
+        let discover_workspace = workspace_discovery_enabled(ctx, opts.discover_workspace)?;
+        let settings = settings(ctx, &opts.proxy)?;
+        let apps = configured_apps(ctx, &settings)?;
+        jig_dev_proxy::dev(
+            jig_dev_proxy::DevRequest::new(
+                ctx.repo_name(),
+                ctx.root().to_path_buf(),
+                ctx.web_package_manager(),
+                settings,
+            )
+            .with_apps(apps)
+            .with_selected_apps(opts.apps)
+            .with_discover_workspace(discover_workspace)
+            .with_no_proxy(opts.no_proxy),
+        )
+    }
+
+    pub(crate) fn proxy(ctx: &RepoContext, command: ProxyCommand) -> Result<Value> {
+        match command {
+            ProxyCommand::Start(opts) => proxy_start(ctx, opts),
+            ProxyCommand::Stop(opts) => jig_dev_proxy::proxy_stop(
+                jig_dev_proxy::ProxyStopRequest::new(settings(ctx, &opts.proxy)?),
+            ),
+            ProxyCommand::List(opts) => jig_dev_proxy::proxy_list(
+                jig_dev_proxy::ProxyListRequest::new(settings(ctx, &opts.proxy)?, opts.raw),
+            ),
+            ProxyCommand::Prune(opts) => jig_dev_proxy::proxy_prune(
+                jig_dev_proxy::ProxyPruneRequest::new(settings(ctx, &opts.proxy)?),
+            ),
+            ProxyCommand::Run(opts) => {
+                reject_no_proxy_runtime_flags(opts.no_proxy, &opts.proxy)?;
+                let settings = settings(ctx, &opts.proxy)?;
+                let dir = opts
+                    .dir
+                    .as_deref()
+                    .map(|dir| repo_dir(ctx.root(), dir, "--dir"))
+                    .transpose()?
+                    .unwrap_or_else(|| ctx.root().to_path_buf());
+                let hostname =
+                    jig_dev_proxy::app_hostname(&opts.name, ctx.repo_name(), &settings.tld)?;
+                jig_dev_proxy::proxy_run_foreground(jig_dev_proxy::ProxyRunRequest::new(
+                    settings,
+                    jig_dev_proxy::AppRunSpec::new(
+                        opts.name,
+                        dir,
+                        jig_dev_proxy::CommandSpec::Argv(opts.command),
+                        hostname,
+                    )
+                    .with_kind(
+                        opts.kind
+                            .as_deref()
+                            .map(jig_dev_proxy::AppKind::from_config)
+                            .transpose()?
+                            .unwrap_or(jig_dev_proxy::AppKind::EnvPort),
+                    )
+                    .with_explicit_port(opts.port)
+                    .with_proxy(!opts.no_proxy),
+                ))
+            }
+            ProxyCommand::Alias(opts) => proxy_alias(ctx, opts),
+            ProxyCommand::Cert(command) => proxy_cert(ctx, command),
+            ProxyCommand::Service(command) => proxy_service(ctx, command),
+        }
+    }
+
+    pub(crate) fn can_run_without_context(command: &ProxyCommand) -> bool {
+        if matches!(command, ProxyCommand::Start(opts) if opts.foreground) {
+            return true;
+        }
+        matches!(
+            command,
+            ProxyCommand::Stop(_)
+                | ProxyCommand::List(_)
+                | ProxyCommand::Prune(_)
+                | ProxyCommand::Cert(
+                    ProxyCertCommand::Status(_)
+                        | ProxyCertCommand::Trust(_)
+                        | ProxyCertCommand::Untrust(_)
+                )
+                | ProxyCommand::Service(
+                    ProxyServiceCommand::Uninstall(_) | ProxyServiceCommand::Status(_)
+                )
+        )
+    }
+
+    pub(crate) fn proxy_without_context(command: ProxyCommand) -> Result<Value> {
+        match command {
+            ProxyCommand::Start(opts) if opts.foreground => jig_dev_proxy::proxy_start(
+                jig_dev_proxy::ProxyStartRequest::new(settings_without_context(&opts.proxy)?, true),
+            ),
+            ProxyCommand::Stop(opts) => jig_dev_proxy::proxy_stop(
+                jig_dev_proxy::ProxyStopRequest::new(settings_without_context(&opts.proxy)?),
+            ),
+            ProxyCommand::List(opts) => {
+                jig_dev_proxy::proxy_list(jig_dev_proxy::ProxyListRequest::new(
+                    settings_without_context(&opts.proxy)?,
+                    opts.raw,
+                ))
+            }
+            ProxyCommand::Prune(opts) => jig_dev_proxy::proxy_prune(
+                jig_dev_proxy::ProxyPruneRequest::new(settings_without_context(&opts.proxy)?),
+            ),
+            ProxyCommand::Cert(ProxyCertCommand::Status(opts)) => {
+                jig_dev_proxy::proxy_cert(jig_dev_proxy::ProxyCertRequest::Status {
+                    settings: settings_existing_state_dir_without_context(&opts.proxy)?,
+                })
+            }
+            ProxyCommand::Cert(ProxyCertCommand::Trust(opts)) => {
+                jig_dev_proxy::proxy_cert(jig_dev_proxy::ProxyCertRequest::Trust {
+                    settings: settings_existing_state_dir_without_context(&opts.proxy)?,
+                    accept_trust_scope: opts.accept_trust_scope,
+                })
+            }
+            ProxyCommand::Cert(ProxyCertCommand::Untrust(opts)) => {
+                jig_dev_proxy::proxy_cert(jig_dev_proxy::ProxyCertRequest::Untrust {
+                    settings: settings_existing_state_dir_without_context(&opts.proxy)?,
+                    accept_trust_scope: opts.accept_trust_scope,
+                })
+            }
+            ProxyCommand::Service(ProxyServiceCommand::Uninstall(opts)) => {
+                jig_dev_proxy::proxy_service(jig_dev_proxy::ProxyServiceRequest::Uninstall {
+                    settings: settings_without_context(&opts.proxy)?,
+                })
+            }
+            ProxyCommand::Service(ProxyServiceCommand::Status(opts)) => {
+                jig_dev_proxy::proxy_service(jig_dev_proxy::ProxyServiceRequest::Status {
+                    settings: settings_existing_state_dir_without_context(&opts.proxy)?,
+                })
+            }
+            _ => bail!("This proxy command requires an adopted Jig repo."),
+        }
+    }
+
+    fn proxy_start(ctx: &RepoContext, opts: ProxyStartOpts) -> Result<Value> {
+        jig_dev_proxy::proxy_start(jig_dev_proxy::ProxyStartRequest::new(
+            settings(ctx, &opts.proxy)?,
+            opts.foreground,
+        ))
+    }
+
+    fn proxy_alias(ctx: &RepoContext, opts: ProxyAliasOpts) -> Result<Value> {
+        jig_dev_proxy::proxy_alias(
+            jig_dev_proxy::ProxyAliasRequest::new(
+                settings(ctx, &opts.proxy)?,
+                ctx.repo_name(),
+                opts.name,
+                opts.host,
+                opts.port,
+            )
+            .with_accept_non_loopback_target(opts.accept_non_loopback_target),
+        )
+    }
+
+    fn proxy_cert(ctx: &RepoContext, command: ProxyCertCommand) -> Result<Value> {
+        let request = match command {
+            ProxyCertCommand::Generate(opts) => jig_dev_proxy::ProxyCertRequest::Generate {
+                settings: settings(ctx, &opts.proxy)?,
+                force: opts.force,
+            },
+            ProxyCertCommand::Status(opts) => jig_dev_proxy::ProxyCertRequest::Status {
+                settings: settings_existing_state_dir(ctx, &opts.proxy)?,
+            },
+            ProxyCertCommand::Trust(opts) => jig_dev_proxy::ProxyCertRequest::Trust {
+                settings: settings_existing_state_dir(ctx, &opts.proxy)?,
+                accept_trust_scope: opts.accept_trust_scope,
+            },
+            ProxyCertCommand::Untrust(opts) => jig_dev_proxy::ProxyCertRequest::Untrust {
+                settings: settings_existing_state_dir(ctx, &opts.proxy)?,
+                accept_trust_scope: opts.accept_trust_scope,
+            },
+        };
+        jig_dev_proxy::proxy_cert(request)
+    }
+
+    fn proxy_service(ctx: &RepoContext, command: ProxyServiceCommand) -> Result<Value> {
+        let request = match command {
+            ProxyServiceCommand::Install(opts) => jig_dev_proxy::ProxyServiceRequest::Install {
+                settings: settings(ctx, &opts.proxy)?,
+                current_exe: jig_dev_proxy::current_exe()?,
+                repo_root: ctx.root().to_path_buf(),
+                accept_service_scope: opts.accept_service_scope,
+            },
+            ProxyServiceCommand::Uninstall(opts) => jig_dev_proxy::ProxyServiceRequest::Uninstall {
+                settings: settings(ctx, &opts.proxy)?,
+            },
+            ProxyServiceCommand::Status(opts) => jig_dev_proxy::ProxyServiceRequest::Status {
+                settings: settings_existing_state_dir(ctx, &opts.proxy)?,
+            },
+        };
+        jig_dev_proxy::proxy_service(request)
+    }
+}
+
+fn workspace_discovery_enabled(ctx: &RepoContext, cli_requested: bool) -> Result<bool> {
+    if cli_requested {
+        return Ok(true);
+    }
+    if !ctx.dev_config().workspace_discovery {
+        return Ok(false);
+    }
+    if std::env::var_os("JIG_DEV_ALLOW_WORKSPACE_DISCOVERY").is_some() {
+        return Ok(true);
+    }
+    bail!(
+        "[dev].workspace_discovery requires JIG_DEV_ALLOW_WORKSPACE_DISCOVERY=1 for automatic package script execution, or pass --discover-workspace for this invocation."
+    )
+}
+
+fn configured_apps(
+    ctx: &RepoContext,
+    settings: &jig_dev_proxy::ProxySettings,
+) -> Result<Vec<jig_dev_proxy::AppRunSpec>> {
+    let mut apps = Vec::new();
+    for app in &ctx.dev_config().apps {
+        apps.push(app_from_dev_config(ctx, settings, app)?);
+    }
+    if apps.is_empty() {
+        if ctx
+            .frontend_apps()
+            .iter()
+            .any(|frontend| frontend.coverage_threshold != 0)
+        {
+            eprintln!(
+                "Legacy [[frontend_apps]] coverage_threshold is ignored by dev proxy; move active dev-server settings into [[dev.apps]]."
+            );
+        }
+        for frontend in ctx.frontend_apps() {
+            eprintln!(
+                "Legacy [[frontend_apps]] entry '{}' is being launched as a proxied Vite dev app; move it to [[dev.apps]] to make this explicit.",
+                frontend.name
+            );
+            let dir = repo_dir(ctx.root(), Path::new(&frontend.dir), "frontend app dir")?;
+            let hostname =
+                jig_dev_proxy::app_hostname(&frontend.name, ctx.repo_name(), &settings.tld)?;
+            apps.push(
+                jig_dev_proxy::AppRunSpec::new(
+                    frontend.name.clone(),
+                    dir,
+                    jig_dev_proxy::CommandSpec::Argv(vec![
+                        ctx.web_package_manager().into(),
+                        "run".into(),
+                        "dev".into(),
+                    ]),
+                    hostname,
+                )
+                .with_kind(jig_dev_proxy::AppKind::Vite),
+            );
+        }
+    }
+    Ok(apps)
+}
+
+fn app_from_dev_config(
+    ctx: &RepoContext,
+    settings: &jig_dev_proxy::ProxySettings,
+    app: &DevAppConfig,
+) -> Result<jig_dev_proxy::AppRunSpec> {
+    let name = app.name.trim();
+    if name.is_empty() {
+        bail!("dev app name cannot be empty");
+    }
+    if name != app.name.as_str() {
+        bail!(
+            "dev app name '{}' must not contain leading or trailing whitespace",
+            app.name
+        );
+    }
+    let hostname = jig_dev_proxy::app_hostname(name, ctx.repo_name(), &settings.tld)?;
+    let dir = app
+        .dir
+        .as_deref()
+        .map(|dir| repo_dir(ctx.root(), Path::new(dir), "dev app dir"))
+        .transpose()?
+        .unwrap_or_else(|| ctx.root().to_path_buf());
+    let kind = jig_dev_proxy::AppKind::from_config(&app.kind)?;
+    let command = if !app.argv.is_empty() {
+        jig_dev_proxy::CommandSpec::Argv(app.argv.clone())
+    } else {
+        if kind == jig_dev_proxy::AppKind::Vite {
+            bail!(
+                "dev app '{}' uses kind = \"vite\" and must set argv instead of shell-form command",
+                name
+            );
+        }
+        let command = app
+            .command
+            .clone()
+            .with_context(|| format!("dev app '{name}' requires command or argv"))?;
+        jig_dev_proxy::CommandSpec::Shell(command)
+    };
+    let target_host = app.host.clone().unwrap_or_else(|| "127.0.0.1".into());
+    let target_ip = jig_dev_proxy::parse_ip_literal(&target_host).with_context(|| {
+        format!(
+            "dev app '{}' host '{}' must be an IP literal",
+            name, target_host
+        )
+    })?;
+    if app.proxy && !jig_dev_proxy::ip_is_loopback(target_ip) {
+        bail!(
+            "dev app '{}' uses proxying and must target a loopback IP literal",
+            name
+        );
+    }
+    Ok(jig_dev_proxy::AppRunSpec::new(name, dir, command, hostname)
+        .with_kind(kind)
+        .with_target_host(target_host)
+        .with_explicit_port(app.port)
+        .with_proxy(app.proxy))
+}
+
+fn settings(ctx: &RepoContext, opts: &ProxyRuntimeOpts) -> Result<jig_dev_proxy::ProxySettings> {
+    let config = ctx.dev_config();
+    build_settings(
+        opts,
+        SettingsDefaults {
+            http_port: config.proxy_port,
+            https_port: config.https_port,
+            https: config.https,
+            http2: config.http2,
+            lan: config.lan,
+            tld: config.tld.clone(),
+        },
+        |tld| repo_certificate_names(ctx, tld),
+    )
+}
+
+fn settings_existing_state_dir(
+    ctx: &RepoContext,
+    opts: &ProxyRuntimeOpts,
+) -> Result<jig_dev_proxy::ProxySettings> {
+    require_existing_state_dir(settings(ctx, opts)?)
+}
+
+fn settings_without_context(opts: &ProxyRuntimeOpts) -> Result<jig_dev_proxy::ProxySettings> {
+    let defaults = jig_dev_proxy::ProxySettings::default();
+    build_settings(
+        opts,
+        SettingsDefaults {
+            http_port: defaults.http_port,
+            https_port: defaults.https_port,
+            https: defaults.https,
+            http2: defaults.http2,
+            lan: defaults.lan,
+            tld: defaults.tld,
+        },
+        |_| Ok(Vec::new()),
+    )
+}
+
+fn settings_existing_state_dir_without_context(
+    opts: &ProxyRuntimeOpts,
+) -> Result<jig_dev_proxy::ProxySettings> {
+    require_existing_state_dir(settings_without_context(opts)?)
+}
+
+struct SettingsDefaults {
+    http_port: u16,
+    https_port: Option<u16>,
+    https: bool,
+    http2: bool,
+    lan: bool,
+    tld: String,
+}
+
+fn build_settings(
+    opts: &ProxyRuntimeOpts,
+    defaults: SettingsDefaults,
+    additional_dns_names: impl FnOnce(&str) -> Result<Vec<String>>,
+) -> Result<jig_dev_proxy::ProxySettings> {
+    let tld = opts
+        .tld
+        .clone()
+        .unwrap_or(defaults.tld)
+        .to_ascii_lowercase();
+    jig_dev_proxy::validate_tld(&tld)?;
+    let http_port = opts.http_port.unwrap_or(defaults.http_port);
+    if http_port == 0 {
+        bail!("proxy HTTP port must be greater than 0");
+    }
+    let https_port = opts.https_port.or(defaults.https_port);
+    if https_port == Some(0) {
+        bail!("proxy HTTPS port must be greater than 0");
+    }
+    if https_port == Some(http_port) {
+        bail!("proxy HTTP and HTTPS ports must be different");
+    }
+    let additional_dns_names = additional_dns_names(&tld)?;
+    Ok(jig_dev_proxy::ProxySettings {
+        state_dir: Some(jig_dev_proxy::resolve_state_dir(opts.state_dir.clone())?),
+        http_port,
+        https_port,
+        https: flag_override(defaults.https, opts.https, opts.no_https),
+        http2: flag_override(defaults.http2, opts.http2, opts.no_http2),
+        lan: flag_override(defaults.lan, opts.lan, opts.no_lan),
+        tld,
+        additional_dns_names,
+    })
+}
+
+fn flag_override(default: bool, enable: bool, disable: bool) -> bool {
+    match (enable, disable) {
+        (true, false) => true,
+        (false, true) => false,
+        _ => default,
+    }
+}
+
+fn require_existing_state_dir(
+    settings: jig_dev_proxy::ProxySettings,
+) -> Result<jig_dev_proxy::ProxySettings> {
+    if let Some(path) = &settings.state_dir {
+        if !path.exists() {
+            bail!("proxy state dir {} does not exist", path.display());
+        }
+    }
+    Ok(settings)
+}
+
+fn reject_no_proxy_runtime_flags(no_proxy: bool, opts: &ProxyRuntimeOpts) -> Result<()> {
+    if !no_proxy {
+        return Ok(());
+    }
+    let mut flags = Vec::new();
+    if opts.http_port.is_some() {
+        flags.push("--http-port");
+    }
+    if opts.https_port.is_some() {
+        flags.push("--https-port");
+    }
+    if opts.https {
+        flags.push("--https");
+    }
+    if opts.no_https {
+        flags.push("--no-https");
+    }
+    if opts.http2 {
+        flags.push("--http2");
+    }
+    if opts.no_http2 {
+        flags.push("--no-http2");
+    }
+    if opts.lan {
+        flags.push("--lan");
+    }
+    if opts.no_lan {
+        flags.push("--no-lan");
+    }
+    if opts.tld.is_some() {
+        flags.push("--tld");
+    }
+    // `--state-dir` remains allowed so no-proxy runs can still target the same
+    // state root for compatible status, cert, or follow-up proxy commands.
+    if !flags.is_empty() {
+        bail!(
+            "--no-proxy cannot be combined with proxy runtime options: {}",
+            flags.join(", ")
+        );
+    }
+    Ok(())
+}
+
+fn repo_dir(root: &Path, input: &Path, label: &str) -> Result<PathBuf> {
+    let root = root
+        .canonicalize()
+        .with_context(|| format!("Failed to canonicalize repo root {}", root.display()))?;
+    let candidate = if input.is_absolute() {
+        input.to_path_buf()
+    } else {
+        root.join(input)
+    };
+    let canonical = candidate
+        .canonicalize()
+        .with_context(|| format!("{label} {} must exist", candidate.display()))?;
+    if !canonical.starts_with(&root) {
+        bail!(
+            "{label} {} resolves outside repo root {}",
+            candidate.display(),
+            root.display()
+        );
+    }
+    Ok(canonical)
+}
+
+fn repo_certificate_names(ctx: &RepoContext, tld: &str) -> Result<Vec<String>> {
+    let repo = jig_dev_proxy::dns_label(ctx.repo_name())?;
+    Ok(vec![format!("*.{repo}.{tld}"), format!("{repo}.{tld}")])
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use serde_json::json;
+    use tempfile::tempdir;
+
+    use super::*;
+    use crate::context::DevConfig;
+
+    fn write_contract(root: &std::path::Path) {
+        fs::create_dir_all(root.join(".agent")).unwrap();
+        fs::write(
+            root.join(".agent/jig-contract.json"),
+            serde_json::to_string_pretty(&json!({
+                "contract_version": 1,
+                "tool_namespace": "jig",
+                "jig_version": "0.1.0",
+                "required_make_targets": ["contract-check"],
+                "optional_make_targets": [],
+                "tools": [],
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    }
+
+    fn write_config(root: &std::path::Path, extra: &str) {
+        write_contract(root);
+        fs::write(
+            root.join(".jig.toml"),
+            format!(
+                r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.1.0"
+{extra}
+"#
+            ),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn dev_config_defaults_match_proxy_settings_defaults() {
+        let dev = DevConfig::default();
+        let proxy = jig_dev_proxy::ProxySettings::default();
+
+        assert_eq!(dev.proxy_port, proxy.http_port);
+        assert_eq!(dev.https_port, proxy.https_port);
+        assert_eq!(dev.tld, proxy.tld);
+    }
+
+    #[test]
+    fn dev_apps_cannot_be_combined_with_legacy_frontend_apps() {
+        let temp = tempdir().unwrap();
+        write_contract(temp.path());
+        fs::create_dir_all(temp.path().join("apps/web")).unwrap();
+        fs::write(
+            temp.path().join(".jig.toml"),
+            r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.1.0"
+web_package_manager = "bun"
+
+[[frontend_apps]]
+name = "web"
+dir = "apps/web"
+coverage_threshold = 80
+
+[dev]
+proxy_port = 1555
+
+[[dev.apps]]
+name = "web"
+kind = "vite"
+dir = "apps/web"
+argv = ["bun", "run", "dev"]
+"#,
+        )
+        .unwrap();
+
+        let error = RepoContext::load_from(temp.path()).unwrap_err().to_string();
+
+        assert!(error.contains("cannot both be configured"));
+    }
+
+    #[test]
+    fn legacy_frontend_apps_are_used_when_dev_apps_are_absent() {
+        let temp = tempdir().unwrap();
+        write_contract(temp.path());
+        fs::create_dir_all(temp.path().join("apps/web")).unwrap();
+        fs::write(
+            temp.path().join(".jig.toml"),
+            r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.1.0"
+web_package_manager = "pnpm"
+
+[[frontend_apps]]
+name = "web"
+dir = "apps/web"
+coverage_threshold = 80
+
+[dev]
+proxy_port = 1555
+"#,
+        )
+        .unwrap();
+
+        let ctx = RepoContext::load_from(temp.path()).unwrap();
+        let settings = settings(&ctx, &ProxyRuntimeOpts::default()).unwrap();
+        let apps = configured_apps(&ctx, &settings).unwrap();
+
+        assert_eq!(apps.len(), 1);
+        assert_eq!(apps[0].name, "web");
+        assert_eq!(apps[0].kind, jig_dev_proxy::AppKind::Vite);
+        assert!(matches!(
+            &apps[0].command,
+            jig_dev_proxy::CommandSpec::Argv(argv)
+                if argv == &vec!["pnpm".to_string(), "run".to_string(), "dev".to_string()]
+        ));
+    }
+
+    #[test]
+    fn unknown_dev_app_kind_is_rejected() {
+        let temp = tempdir().unwrap();
+        write_contract(temp.path());
+        fs::write(
+            temp.path().join(".jig.toml"),
+            r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.1.0"
+web_package_manager = "bun"
+
+[dev]
+proxy_port = 1555
+
+[[dev.apps]]
+name = "web"
+kind = "vit"
+command = "bun run dev"
+"#,
+        )
+        .unwrap();
+
+        let ctx = RepoContext::load_from(temp.path()).unwrap();
+        let settings = settings(&ctx, &ProxyRuntimeOpts::default()).unwrap();
+        let error = configured_apps(&ctx, &settings).unwrap_err().to_string();
+
+        assert!(error.contains("Unsupported dev app kind"));
+    }
+
+    #[test]
+    fn dev_app_host_must_be_ip_literal() {
+        let temp = tempdir().unwrap();
+        write_contract(temp.path());
+        fs::write(
+            temp.path().join(".jig.toml"),
+            r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.1.0"
+web_package_manager = "bun"
+
+[dev]
+proxy_port = 1555
+
+[[dev.apps]]
+name = "web"
+host = "api.example.test"
+command = "bun run dev"
+"#,
+        )
+        .unwrap();
+
+        let ctx = RepoContext::load_from(temp.path()).unwrap();
+        let settings = settings(&ctx, &ProxyRuntimeOpts::default()).unwrap();
+        let error = configured_apps(&ctx, &settings).unwrap_err().to_string();
+
+        assert!(error.contains("must be an IP literal"));
+    }
+
+    #[test]
+    fn proxied_dev_app_host_must_be_loopback() {
+        let temp = tempdir().unwrap();
+        write_contract(temp.path());
+        fs::write(
+            temp.path().join(".jig.toml"),
+            r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.1.0"
+web_package_manager = "bun"
+
+[[dev.apps]]
+name = "web"
+host = "192.0.2.10"
+command = "bun run dev"
+"#,
+        )
+        .unwrap();
+
+        let ctx = RepoContext::load_from(temp.path()).unwrap();
+        let settings = settings(&ctx, &ProxyRuntimeOpts::default()).unwrap();
+        let error = configured_apps(&ctx, &settings).unwrap_err().to_string();
+
+        assert!(error.contains("must target a loopback IP literal"));
+    }
+
+    #[test]
+    fn non_proxied_dev_app_may_use_non_loopback_direct_host() {
+        let temp = tempdir().unwrap();
+        write_contract(temp.path());
+        fs::write(
+            temp.path().join(".jig.toml"),
+            r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.1.0"
+web_package_manager = "bun"
+
+[[dev.apps]]
+name = "web"
+host = "192.0.2.10"
+proxy = false
+command = "bun run dev"
+"#,
+        )
+        .unwrap();
+
+        let ctx = RepoContext::load_from(temp.path()).unwrap();
+        let settings = settings(&ctx, &ProxyRuntimeOpts::default()).unwrap();
+        let apps = configured_apps(&ctx, &settings).unwrap();
+
+        assert_eq!(apps[0].target_host, "192.0.2.10");
+        assert!(!apps[0].proxy);
+    }
+
+    #[test]
+    fn dev_app_name_rejects_surrounding_whitespace() {
+        let temp = tempdir().unwrap();
+        write_contract(temp.path());
+        fs::write(
+            temp.path().join(".jig.toml"),
+            r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.1.0"
+web_package_manager = "bun"
+
+[[dev.apps]]
+name = " web "
+command = "bun run dev"
+"#,
+        )
+        .unwrap();
+
+        let ctx = RepoContext::load_from(temp.path()).unwrap();
+        let settings = settings(&ctx, &ProxyRuntimeOpts::default()).unwrap();
+        let error = configured_apps(&ctx, &settings).unwrap_err().to_string();
+
+        assert!(error.contains("must not contain leading or trailing whitespace"));
+    }
+
+    #[test]
+    fn dev_app_dirs_must_stay_under_repo_root() {
+        let temp = tempdir().unwrap();
+        write_contract(temp.path());
+        let outside = tempdir().unwrap();
+        fs::write(
+            temp.path().join(".jig.toml"),
+            format!(
+                r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.1.0"
+
+[[dev.apps]]
+name = "web"
+dir = "{}"
+command = "bun run dev"
+"#,
+                outside.path().display()
+            ),
+        )
+        .unwrap();
+
+        let ctx = RepoContext::load_from(temp.path()).unwrap();
+        let settings = settings(&ctx, &ProxyRuntimeOpts::default()).unwrap();
+        let error = configured_apps(&ctx, &settings).unwrap_err().to_string();
+
+        assert!(error.contains("resolves outside repo root"));
+    }
+
+    #[test]
+    fn settings_do_not_require_configured_app_dirs_to_exist() {
+        let temp = tempdir().unwrap();
+        write_contract(temp.path());
+        fs::write(
+            temp.path().join(".jig.toml"),
+            r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.1.0"
+
+[[dev.apps]]
+name = "web"
+dir = "missing-app-dir"
+command = "bun run dev"
+"#,
+        )
+        .unwrap();
+
+        let ctx = RepoContext::load_from(temp.path()).unwrap();
+
+        let settings = settings(&ctx, &ProxyRuntimeOpts::default()).unwrap();
+        let error = configured_apps(&ctx, &settings).unwrap_err().to_string();
+
+        assert!(error.contains("dev app dir"));
+        assert!(error.contains("must exist"));
+    }
+
+    #[test]
+    fn vite_dev_app_requires_argv() {
+        let temp = tempdir().unwrap();
+        write_contract(temp.path());
+        fs::write(
+            temp.path().join(".jig.toml"),
+            r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.1.0"
+web_package_manager = "bun"
+
+[dev]
+proxy_port = 1555
+
+[[dev.apps]]
+name = "web"
+kind = "vite"
+command = "bun run dev"
+"#,
+        )
+        .unwrap();
+
+        let ctx = RepoContext::load_from(temp.path()).unwrap();
+        let settings = settings(&ctx, &ProxyRuntimeOpts::default()).unwrap();
+        let error = configured_apps(&ctx, &settings).unwrap_err().to_string();
+
+        assert!(error.contains("must set argv"));
+    }
+
+    #[test]
+    fn invalid_dev_tld_is_rejected() {
+        let temp = tempdir().unwrap();
+        write_contract(temp.path());
+        fs::write(
+            temp.path().join(".jig.toml"),
+            r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.1.0"
+
+[dev]
+tld = "bad,tld"
+"#,
+        )
+        .unwrap();
+
+        let ctx = RepoContext::load_from(temp.path()).unwrap();
+        let error = settings(&ctx, &ProxyRuntimeOpts::default())
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("invalid hostname"));
+    }
+
+    #[test]
+    fn public_dev_tld_is_rejected() {
+        let temp = tempdir().unwrap();
+        write_contract(temp.path());
+        fs::write(
+            temp.path().join(".jig.toml"),
+            r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.1.0"
+
+[dev]
+tld = "dev"
+"#,
+        )
+        .unwrap();
+
+        let ctx = RepoContext::load_from(temp.path()).unwrap();
+        let error = settings(&ctx, &ProxyRuntimeOpts::default())
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("is not allowed"));
+    }
+
+    #[test]
+    fn zero_proxy_ports_are_rejected() {
+        let temp = tempdir().unwrap();
+        write_contract(temp.path());
+        fs::write(
+            temp.path().join(".jig.toml"),
+            r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.1.0"
+
+[dev]
+proxy_port = 0
+"#,
+        )
+        .unwrap();
+
+        let ctx = RepoContext::load_from(temp.path()).unwrap();
+        let error = settings(&ctx, &ProxyRuntimeOpts::default())
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("proxy HTTP port must be greater than 0"));
+    }
+
+    #[test]
+    fn explicit_read_only_state_dir_must_exist() {
+        let temp = tempdir().unwrap();
+        write_contract(temp.path());
+        fs::write(
+            temp.path().join(".jig.toml"),
+            r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.1.0"
+"#,
+        )
+        .unwrap();
+        let ctx = RepoContext::load_from(temp.path()).unwrap();
+        let opts = ProxyRuntimeOpts {
+            state_dir: Some(temp.path().join("missing-state")),
+            ..ProxyRuntimeOpts::default()
+        };
+
+        let error = settings_existing_state_dir(&ctx, &opts)
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("does not exist"));
+    }
+
+    #[test]
+    fn settings_does_not_create_missing_state_dir() {
+        let temp = tempdir().unwrap();
+        write_contract(temp.path());
+        fs::write(
+            temp.path().join(".jig.toml"),
+            r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.1.0"
+"#,
+        )
+        .unwrap();
+        let missing = temp.path().join("missing-state");
+        let ctx = RepoContext::load_from(temp.path()).unwrap();
+        let opts = ProxyRuntimeOpts {
+            state_dir: Some(missing.clone()),
+            ..ProxyRuntimeOpts::default()
+        };
+
+        let settings = settings(&ctx, &opts).unwrap();
+
+        assert_eq!(settings.state_dir.as_deref(), Some(missing.as_path()));
+        assert!(!missing.exists());
+    }
+
+    #[test]
+    fn no_proxy_rejects_proxy_runtime_flags() {
+        let opts = ProxyRuntimeOpts {
+            https: true,
+            tld: Some("localhost".into()),
+            ..ProxyRuntimeOpts::default()
+        };
+
+        let error = reject_no_proxy_runtime_flags(true, &opts)
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("--no-proxy cannot be combined"));
+        assert!(error.contains("--https"));
+        assert!(error.contains("--tld"));
+    }
+
+    #[test]
+    fn no_proxy_allows_state_dir_for_other_proxy_commands() {
+        let opts = ProxyRuntimeOpts {
+            state_dir: Some(PathBuf::from("/tmp/jig-proxy-state")),
+            ..ProxyRuntimeOpts::default()
+        };
+
+        reject_no_proxy_runtime_flags(true, &opts).unwrap();
+    }
+
+    #[test]
+    fn contextless_proxy_commands_are_limited_to_host_cleanup_and_status() {
+        assert!(commands::can_run_without_context(&ProxyCommand::Stop(
+            ProxyStopOpts::default()
+        )));
+        assert!(commands::can_run_without_context(&ProxyCommand::Service(
+            ProxyServiceCommand::Status(ProxyServiceRuntimeOpts::default())
+        )));
+        assert!(commands::can_run_without_context(&ProxyCommand::Start(
+            ProxyStartOpts {
+                foreground: true,
+                proxy: ProxyRuntimeOpts::default(),
+            }
+        )));
+        assert!(!commands::can_run_without_context(&ProxyCommand::Start(
+            ProxyStartOpts {
+                foreground: false,
+                proxy: ProxyRuntimeOpts::default(),
+            }
+        )));
+        assert!(!commands::can_run_without_context(&ProxyCommand::Cert(
+            ProxyCertCommand::Generate(ProxyCertGenerateOpts::default())
+        )));
+    }
+
+    #[test]
+    fn contextless_proxy_allowlist_is_exhaustive() {
+        let commands = proxy_command_cases();
+        let allowed = commands
+            .iter()
+            .filter_map(|command| {
+                commands::can_run_without_context(command)
+                    .then_some(proxy_command_case_name(command))
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            allowed,
+            vec![
+                "start:foreground",
+                "stop",
+                "list",
+                "prune",
+                "cert:status",
+                "cert:trust",
+                "cert:untrust",
+                "service:uninstall",
+                "service:status",
+            ]
+        );
+    }
+
+    fn proxy_command_cases() -> Vec<ProxyCommand> {
+        vec![
+            ProxyCommand::Start(ProxyStartOpts {
+                foreground: true,
+                proxy: ProxyRuntimeOpts::default(),
+            }),
+            ProxyCommand::Start(ProxyStartOpts {
+                foreground: false,
+                proxy: ProxyRuntimeOpts::default(),
+            }),
+            ProxyCommand::Stop(ProxyStopOpts::default()),
+            ProxyCommand::List(ProxyListOpts::default()),
+            ProxyCommand::Prune(ProxyPruneOpts::default()),
+            ProxyCommand::Run(ProxyRunOpts {
+                name: "web".into(),
+                kind: None,
+                dir: None,
+                port: Some(3000),
+                no_proxy: false,
+                proxy: ProxyRuntimeOpts::default(),
+                command: vec!["npm".into(), "run".into(), "dev".into()],
+            }),
+            ProxyCommand::Alias(ProxyAliasOpts {
+                name: "web".into(),
+                port: 3000,
+                host: "127.0.0.1".into(),
+                accept_non_loopback_target: false,
+                proxy: ProxyRuntimeOpts::default(),
+            }),
+            ProxyCommand::Cert(ProxyCertCommand::Generate(ProxyCertGenerateOpts::default())),
+            ProxyCommand::Cert(ProxyCertCommand::Status(ProxyCertRuntimeOpts::default())),
+            ProxyCommand::Cert(ProxyCertCommand::Trust(ProxyCertTrustOpts {
+                accept_trust_scope: true,
+                proxy: ProxyRuntimeOpts::default(),
+            })),
+            ProxyCommand::Cert(ProxyCertCommand::Untrust(ProxyCertUntrustOpts {
+                accept_trust_scope: true,
+                proxy: ProxyRuntimeOpts::default(),
+            })),
+            ProxyCommand::Service(ProxyServiceCommand::Install(ProxyServiceInstallOpts {
+                accept_service_scope: true,
+                proxy: ProxyRuntimeOpts::default(),
+            })),
+            ProxyCommand::Service(ProxyServiceCommand::Uninstall(
+                ProxyServiceRuntimeOpts::default(),
+            )),
+            ProxyCommand::Service(ProxyServiceCommand::Status(
+                ProxyServiceRuntimeOpts::default(),
+            )),
+        ]
+    }
+
+    fn proxy_command_case_name(command: &ProxyCommand) -> &'static str {
+        match command {
+            ProxyCommand::Start(opts) if opts.foreground => "start:foreground",
+            ProxyCommand::Start(_) => "start:background",
+            ProxyCommand::Stop(_) => "stop",
+            ProxyCommand::List(_) => "list",
+            ProxyCommand::Prune(_) => "prune",
+            ProxyCommand::Run(_) => "run",
+            ProxyCommand::Alias(_) => "alias",
+            ProxyCommand::Cert(ProxyCertCommand::Generate(_)) => "cert:generate",
+            ProxyCommand::Cert(ProxyCertCommand::Status(_)) => "cert:status",
+            ProxyCommand::Cert(ProxyCertCommand::Trust(_)) => "cert:trust",
+            ProxyCommand::Cert(ProxyCertCommand::Untrust(_)) => "cert:untrust",
+            ProxyCommand::Service(ProxyServiceCommand::Install(_)) => "service:install",
+            ProxyCommand::Service(ProxyServiceCommand::Uninstall(_)) => "service:uninstall",
+            ProxyCommand::Service(ProxyServiceCommand::Status(_)) => "service:status",
+        }
+    }
+
+    #[test]
+    fn contextless_proxy_settings_use_runtime_flags() {
+        let temp = tempdir().unwrap();
+        let settings = settings_without_context(&ProxyRuntimeOpts {
+            state_dir: Some(temp.path().to_path_buf()),
+            http_port: Some(1555),
+            https_port: Some(1556),
+            https: true,
+            no_https: false,
+            http2: false,
+            no_http2: true,
+            lan: true,
+            no_lan: false,
+            tld: Some("Test".into()),
+        })
+        .unwrap();
+
+        assert_eq!(settings.state_dir, Some(temp.path().to_path_buf()));
+        assert_eq!(settings.http_port, 1555);
+        assert_eq!(settings.https_port, Some(1556));
+        assert!(settings.https);
+        assert!(!settings.http2);
+        assert!(settings.lan);
+        assert_eq!(settings.tld, "test");
+        assert!(settings.additional_dns_names.is_empty());
+    }
+
+    #[test]
+    fn proxy_runtime_flags_can_disable_configured_https_and_lan() {
+        let temp = tempdir().unwrap();
+        write_config(
+            temp.path(),
+            r#"
+[dev]
+https = true
+lan = true
+"#,
+        );
+        let ctx = RepoContext::load_from(temp.path()).unwrap();
+
+        let settings = settings(
+            &ctx,
+            &ProxyRuntimeOpts {
+                no_https: true,
+                no_lan: true,
+                ..ProxyRuntimeOpts::default()
+            },
+        )
+        .unwrap();
+
+        assert!(!settings.https);
+        assert!(!settings.lan);
+    }
+
+    #[test]
+    fn proxy_http_and_https_ports_must_differ() {
+        let temp = tempdir().unwrap();
+        write_contract(temp.path());
+        fs::write(
+            temp.path().join(".jig.toml"),
+            r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.1.0"
+
+[dev]
+proxy_port = 1555
+https_port = 1555
+"#,
+        )
+        .unwrap();
+
+        let ctx = RepoContext::load_from(temp.path()).unwrap();
+        let error = settings(&ctx, &ProxyRuntimeOpts::default())
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("must be different"));
+    }
+}

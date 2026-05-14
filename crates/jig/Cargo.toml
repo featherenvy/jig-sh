@@ -3,10 +3,11 @@ name = "jig-sh"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version.workspace = true
 description = "Agent-oriented repository harness and MCP runtime for Rust application repos."
 repository = "https://github.com/bpcakes/jig-sh"
 homepage = "https://github.com/bpcakes/jig-sh"
-documentation = "https://github.com/bpcakes/jig-sh/tree/main/docs"
+documentation = "https://github.com/bpcakes/jig-sh/tree/master/docs"
 readme = "../../README.md"
 keywords = ["agents", "cli", "mcp", "workflow"]
 categories = ["command-line-utilities", "development-tools"]
@@ -18,10 +19,17 @@ name = "jig"
 name = "jig"
 path = "src/main.rs"
 
+[features]
+# The default CLI build includes the local dev proxy. Library consumers that
+# only need the harness/runtime API can use `default-features = false`.
+default = ["dev-proxy"]
+dev-proxy = ["dep:jig-dev-proxy"]
+
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
 fs4.workspace = true
+jig-dev-proxy = { path = "../jig-dev-proxy", version = "=0.1.0", optional = true }
 minijinja = { version = "2.19.0", features = ["custom_syntax"] }
 serde.workspace = true
 serde_json.workspace = true

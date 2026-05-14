@@ -1,0 +1,6 @@
+* text=auto eol=lf
+*.sh text eol=lf
+*.sh.jinja text eol=lf
+
+.agent/plans/*.md merge=union
+.agent/state/*.jsonl merge=union

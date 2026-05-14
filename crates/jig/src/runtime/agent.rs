@@ -47,14 +47,16 @@ pub(super) fn doctor(ctx: &RepoContext) -> Result<JsonValue> {
         .iter()
         .map(|marketplace| marketplace_status(marketplace, config.as_ref(), ctx.root()))
         .collect();
-    // `Iterator::all` is intentionally vacuously true here; `codex_required`
-    // carries the empty-config opt-out semantics.
-    let all_marketplaces_ready = marketplaces.iter().all(|marketplace| {
-        marketplace
-            .get("registered")
-            .and_then(JsonValue::as_bool)
-            .unwrap_or(false)
-    });
+    let all_marketplaces_ready = if codex_required {
+        marketplaces.iter().all(|marketplace| {
+            marketplace
+                .get("registered")
+                .and_then(JsonValue::as_bool)
+                .unwrap_or(false)
+        })
+    } else {
+        true
+    };
 
     Ok(json!({
         "ok": codex_ready && all_marketplaces_ready,
@@ -68,7 +70,7 @@ pub(super) fn doctor(ctx: &RepoContext) -> Result<JsonValue> {
             "config_read": config.is_some()
         },
         "readiness": {
-            "ok_requires_marketplaces_registered": true,
+            "ok_requires_marketplaces_registered": codex_required,
             "ok_requires_plugins_enabled": false
         },
         "marketplaces": marketplaces
@@ -124,6 +126,9 @@ fn requested_marketplace_source(ctx: &RepoContext, explicit: Option<String>) -> 
 
 fn marketplace_source_for_codex(source: &str, repo_root: &Path) -> Result<String> {
     let trimmed = source.trim();
+    if trimmed.is_empty() {
+        bail!("Codex marketplace source cannot be empty");
+    }
     let path = Path::new(trimmed);
     let repo_relative_path = repo_root.join(path);
     if path.is_absolute() || trimmed.starts_with('.') {
@@ -144,7 +149,58 @@ fn marketplace_source_for_codex(source: &str, repo_root: &Path) -> Result<String
             .map(|path| path.display().to_string());
     }
 
+    if !valid_remote_marketplace_source(trimmed) {
+        bail!(
+            "Codex marketplace source '{}' must be a local path, GitHub owner/repo shorthand, git@ URL, or https:// URL",
+            source
+        );
+    }
+
     Ok(trimmed.to_string())
+}
+
+fn valid_remote_marketplace_source(source: &str) -> bool {
+    if source
+        .chars()
+        .any(|ch| ch.is_whitespace() || ch.is_control())
+    {
+        return false;
+    }
+    valid_https_source(source) || valid_git_ssh_source(source) || valid_github_shorthand(source)
+}
+
+fn valid_https_source(source: &str) -> bool {
+    source
+        .strip_prefix("https://")
+        .and_then(|rest| rest.split_once('/'))
+        .is_some_and(|(host, path)| !host.is_empty() && !path.is_empty())
+}
+
+fn valid_git_ssh_source(source: &str) -> bool {
+    source
+        .strip_prefix("git@")
+        .and_then(|rest| rest.split_once(':'))
+        .is_some_and(|(host, path)| !host.is_empty() && !path.is_empty())
+}
+
+fn valid_github_shorthand(source: &str) -> bool {
+    let mut parts = source.split('/');
+    let Some(owner) = parts.next() else {
+        return false;
+    };
+    let Some(repo) = parts.next() else {
+        return false;
+    };
+    parts.next().is_none()
+        && valid_github_component(owner)
+        && valid_github_component(repo.trim_end_matches(".git"))
+}
+
+fn valid_github_component(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .bytes()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, b'-' | b'_' | b'.'))
 }
 
 fn codex_marketplace_add_failed_message(

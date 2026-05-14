@@ -24,6 +24,7 @@ jig_toml_template = root / "templates" / "project" / "scripts" / "jig-toml.sh.ji
 # template needs Jinja directives, replace this parity check with a render check.
 script_template_pairs = [
     (jig_toml_script, jig_toml_template),
+    (install_script, root / "templates" / "project" / "scripts" / "install-jig.sh.jinja"),
     (root / "scripts" / "check-jig-contract.sh", root / "templates" / "project" / "scripts" / "check-jig-contract.sh.jinja"),
 ]
 

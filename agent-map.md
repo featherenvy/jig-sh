@@ -9,6 +9,7 @@ Fast jump index for agent-facing guidance in this repository.
 ## Nested guides
 
 - [crates/jig](./crates/jig/AGENTS.md)
+- [crates/jig-dev-proxy](./crates/jig-dev-proxy/AGENTS.md)
 
 ## Suggested usage pattern
 

@@ -1,6 +1,8 @@
 fn main() {
     if let Err(error) = jig::run() {
-        eprintln!("{error:#}");
+        if !jig::error_is_structured_command_failure(&error) {
+            eprintln!("{error:#}");
+        }
         std::process::exit(1);
     }
 }

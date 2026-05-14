@@ -20,6 +20,22 @@ rust_test_locked_command = "cargo test --workspace --locked"
 web_package_manager = "bun"
 frontend_apps = []
 
+[dev]
+# This source repo dogfoods the proxy runtime but does not auto-discover apps.
+proxy_port = 1355
+https_port = 1443
+https = false
+# HTTPS listener ALPN only; cleartext proxy traffic remains HTTP/1.1.
+http2 = true
+lan = false
+# Must be localhost, local, test, internal, or a subdomain below one of them.
+tld = "localhost"
+# Keep false when legacy [[frontend_apps]] are configured; set true to discover
+# JavaScript workspace packages that expose dev scripts.
+workspace_discovery = false
+# Explicit [[dev.apps]] entries are authoritative. Legacy [[frontend_apps]]
+# entries remain a fallback when no dev apps are configured.
+
 [[work.gates]]
 id = "contract"
 kind = "check"
