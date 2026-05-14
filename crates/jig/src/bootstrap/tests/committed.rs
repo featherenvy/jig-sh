@@ -15,7 +15,7 @@ fn init_rejects_vcs_ref_for_non_git_local_template() {
 
     let error = run_init(InitOpts {
         path: destination,
-        template: template.path().display().to_string(),
+        template: Some(template.path().display().to_string()),
         template_mode: None,
         vcs_ref: Some("main".into()),
         force: false,
@@ -241,6 +241,7 @@ fn update_committed_mode_rejects_explicit_remote_template_with_template_mode() {
     .to_string();
 
     assert!(error.contains("--template-mode only applies to local git template paths."));
+    assert!(error.contains("Omit --template-mode for remote templates"));
 }
 
 #[test]

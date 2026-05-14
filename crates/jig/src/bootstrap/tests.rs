@@ -93,7 +93,7 @@ fn write_test_crate_guide(repo: &Path) {
 fn adopt_repo_for_test(repo: &Path, template: &Path, template_mode: TemplateMode) {
     run_adopt(AdoptOpts {
         path: repo.to_path_buf(),
-        template: template.display().to_string(),
+        template: Some(template.display().to_string()),
         template_mode: Some(template_mode),
         vcs_ref: None,
         force: false,

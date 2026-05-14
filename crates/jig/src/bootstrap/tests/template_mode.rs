@@ -10,7 +10,7 @@ fn adopt_local_git_template_defaults_to_committed_mode() {
 
     run_adopt(AdoptOpts {
         path: repo.clone(),
-        template: template.path().display().to_string(),
+        template: Some(template.path().display().to_string()),
         template_mode: None,
         vcs_ref: None,
         force: false,
@@ -48,7 +48,7 @@ fn adopt_local_git_template_rejects_dirty_committed_source() {
 
     let error = run_adopt(AdoptOpts {
         path: repo,
-        template: template.path().display().to_string(),
+        template: Some(template.path().display().to_string()),
         template_mode: None,
         vcs_ref: None,
         force: false,

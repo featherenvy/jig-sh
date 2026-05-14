@@ -16,11 +16,15 @@ To move onto a newer version of the template while keeping the stored answers, r
 jig update
 ```
 
+For remote template sources, plain `jig update` advances to the remote default branch unless `--vcs-ref` is provided. `jig update --recopy` re-renders from the stored `_commit`.
+
 The file contains both public settings and the private `_src_path` / `_commit` fields that `jig update` uses to resolve future renders. Repos rendered from local committed template checkouts may also store `_template_mode` and `_template_local_path`.
 
 `jig update` refuses to overwrite or remove changed template-managed files unless `--force` is passed.
 
 Root `AGENTS.md` is block-managed instead of file-managed. If the file already exists, `jig adopt` and `jig update` preserve user-authored content and insert or replace only the section between `<!-- BEGIN JIG MANAGED BLOCK -->` and `<!-- END JIG MANAGED BLOCK -->`. Edits inside that managed block are template-owned and may be replaced without `--force`; keep repo-specific guidance outside the markers.
+
+`jig init` and `jig adopt` default to the official `jig-sh` template source at `https://github.com/bpcakes/jig-sh.git`, pinned to the release tag for the installed Jig version. Pass `--template` only when using a local checkout, fork, or private template.
 
 For local git template checkouts, `jig init` / `jig adopt` use a committed source:
 

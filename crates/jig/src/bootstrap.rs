@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -44,6 +45,8 @@ mod template_source;
 
 const ANSWERS_FILE: &str = ".jig.toml";
 const GIT_BIN_ENV: &str = "JIG_GIT_BIN";
+const OFFICIAL_TEMPLATE_SOURCE: &str = "https://github.com/bpcakes/jig-sh.git";
+const REMOTE_TEMPLATE_MODE_ERROR: &str = "--template-mode only applies to local git template paths. Omit --template-mode for remote templates, or pass --template /path/to/jig-sh --template-mode committed.";
 // Legacy conflict helpers keep these in sync with template task side effects.
 #[cfg(test)]
 const ALWAYS_TASK_MUTATED_PATHS: &[&str] = &[".jig.toml", "agent-map.md"];
@@ -99,23 +102,25 @@ pub struct AnswerOpts {
 #[derive(Args, Clone, Debug)]
 #[command(after_help = "\
 Templates:
-  Jig currently ships one repository harness template, stored in the jig-sh source tree
-  under templates/project. Pass the root of a local jig-sh checkout when dogfooding
-  head, or pass the jig-sh git URL when adopting from a remote source.
+  Jig currently defaults to the official jig-sh harness template:
+  https://github.com/bpcakes/jig-sh.git
+
+  Omitted --template uses the release tag for this jig version. Pass --template
+  only when you want a local checkout, fork, or private template.
 
 Examples:
-  jig init /path/to/new-repo --template /path/to/jig-sh --repo-name new-repo --sqlx-enabled false
-  jig init /path/to/new-repo --template https://github.com/bpcakes/jig-sh.git --repo-name new-repo --sqlx-enabled false")]
+  jig init /path/to/new-repo --repo-name new-repo --sqlx-enabled false
+  jig init /path/to/new-repo --template /path/to/jig-sh --repo-name new-repo --sqlx-enabled false")]
 pub struct InitOpts {
     #[arg(help = "Destination directory to create or populate")]
     pub path: PathBuf,
     #[arg(
         long,
         value_name = "PATH_OR_GIT_URL",
-        help = "Root of the jig-sh template source to render",
-        long_help = "Root of the jig-sh template source to render. For local head development, pass the path to your jig-sh checkout, for example /Users/you/src/jig-sh. For remote adoption, pass a git URL such as https://github.com/bpcakes/jig-sh.git. The source must contain templates/project."
+        help = "Template source to render; defaults to the official jig-sh template",
+        long_help = "Template source to render. By default Jig uses the official jig-sh template at https://github.com/bpcakes/jig-sh.git pinned to the release tag for this jig version; passing that canonical HTTPS URL explicitly, with or without .git, has the same pinned behavior unless --vcs-ref is also provided. For local head development, pass the path to your jig-sh checkout, for example /Users/you/src/jig-sh. For remote forks, SSH URLs, or private harnesses, pass a git URL. The source must contain templates/project."
     )]
-    pub template: String,
+    pub template: Option<String>,
     #[arg(
         long,
         value_enum,
@@ -138,23 +143,25 @@ pub struct InitOpts {
 #[derive(Args, Clone, Debug)]
 #[command(after_help = "\
 Templates:
-  Jig currently ships one repository harness template, stored in the jig-sh source tree
-  under templates/project. Pass the root of a local jig-sh checkout when dogfooding
-  head, or pass the jig-sh git URL when adopting from a remote source.
+  Jig currently defaults to the official jig-sh harness template:
+  https://github.com/bpcakes/jig-sh.git
+
+  Omitted --template uses the release tag for this jig version. Pass --template
+  only when you want a local checkout, fork, or private template.
 
 Examples:
-  jig adopt . --template /path/to/jig-sh --repo-name my-repo --sqlx-enabled false
-  jig adopt . --template https://github.com/bpcakes/jig-sh.git --repo-name my-repo --sqlx-enabled false")]
+  jig adopt . --repo-name my-repo --sqlx-enabled false
+  jig adopt . --template /path/to/jig-sh --repo-name my-repo --sqlx-enabled false")]
 pub struct AdoptOpts {
     #[arg(default_value = ".", help = "Existing repository directory to adopt")]
     pub path: PathBuf,
     #[arg(
         long,
         value_name = "PATH_OR_GIT_URL",
-        help = "Root of the jig-sh template source to render",
-        long_help = "Root of the jig-sh template source to render. For local head development, pass the path to your jig-sh checkout, for example /Users/you/src/jig-sh. For remote adoption, pass a git URL such as https://github.com/bpcakes/jig-sh.git. The source must contain templates/project."
+        help = "Template source to render; defaults to the official jig-sh template",
+        long_help = "Template source to render. By default Jig uses the official jig-sh template at https://github.com/bpcakes/jig-sh.git pinned to the release tag for this jig version; passing that canonical HTTPS URL explicitly, with or without .git, has the same pinned behavior unless --vcs-ref is also provided. For local head development, pass the path to your jig-sh checkout, for example /Users/you/src/jig-sh. For remote forks, SSH URLs, or private harnesses, pass a git URL. The source must contain templates/project."
     )]
-    pub template: String,
+    pub template: Option<String>,
     #[arg(
         long,
         value_enum,
@@ -218,8 +225,9 @@ impl TemplateMode {
 pub fn run_init(opts: InitOpts) -> Result<Value> {
     let destination = absolute_path(&opts.path)?;
     validate_init_destination(&destination, opts.force)?;
-    let template =
-        prepare_template_source(&opts.template, opts.template_mode, opts.vcs_ref.as_deref())?;
+    let template_request =
+        resolve_initial_template_request(opts.template.as_deref(), &opts.vcs_ref);
+    let template = prepare_initial_template_source(&template_request, opts.template_mode)?;
 
     let copy_result = render_and_copy_bootstrap_template(BootstrapCopyRequest {
         destination: &destination,
@@ -247,8 +255,9 @@ pub fn run_init(opts: InitOpts) -> Result<Value> {
 pub fn run_adopt(opts: AdoptOpts) -> Result<Value> {
     let destination = absolute_path(&opts.path)?;
     validate_adopt_destination(&destination)?;
-    let template =
-        prepare_template_source(&opts.template, opts.template_mode, opts.vcs_ref.as_deref())?;
+    let template_request =
+        resolve_initial_template_request(opts.template.as_deref(), &opts.vcs_ref);
+    let template = prepare_initial_template_source(&template_request, opts.template_mode)?;
 
     render_and_copy_bootstrap_template(BootstrapCopyRequest {
         destination: &destination,
@@ -267,6 +276,98 @@ pub fn run_adopt(opts: AdoptOpts) -> Result<Value> {
         "answers_file": ANSWERS_FILE,
         "git_initialized": false,
     }))
+}
+
+struct InitialTemplateRequest<'a> {
+    template: &'a str,
+    vcs_ref: Option<Cow<'a, str>>,
+    used_default: bool,
+}
+
+fn resolve_initial_template_request<'a>(
+    template: Option<&'a str>,
+    vcs_ref: &'a Option<String>,
+) -> InitialTemplateRequest<'a> {
+    match template {
+        Some(template) if is_official_template_source(template) => {
+            default_initial_template_request(vcs_ref)
+        }
+        Some(template) => InitialTemplateRequest {
+            template,
+            vcs_ref: vcs_ref.as_deref().map(Cow::Borrowed),
+            used_default: false,
+        },
+        None => default_initial_template_request(vcs_ref),
+    }
+}
+
+fn default_initial_template_request<'a>(vcs_ref: &'a Option<String>) -> InitialTemplateRequest<'a> {
+    InitialTemplateRequest {
+        template: OFFICIAL_TEMPLATE_SOURCE,
+        // The release workflow tags the whole workspace as vVERSION. Keep the
+        // default template pinned to the installed jig binary's workspace version.
+        vcs_ref: Some(
+            vcs_ref
+                .as_deref()
+                .map(Cow::Borrowed)
+                .unwrap_or_else(|| Cow::Owned(official_template_ref())),
+        ),
+        used_default: true,
+    }
+}
+
+fn is_official_template_source(template: &str) -> bool {
+    canonical_template_source(template) == canonical_template_source(OFFICIAL_TEMPLATE_SOURCE)
+}
+
+fn canonical_template_source(template: &str) -> &str {
+    template.strip_suffix(".git").unwrap_or(template)
+}
+
+fn official_template_ref() -> String {
+    // The published binary and the template tag share the workspace version.
+    official_template_ref_for_version(env!("CARGO_PKG_VERSION"))
+}
+
+fn official_template_ref_for_version(version: &str) -> String {
+    format!("v{version}")
+}
+
+fn prepare_initial_template_source(
+    request: &InitialTemplateRequest<'_>,
+    template_mode: Option<TemplateMode>,
+) -> Result<template_source::PreparedTemplateSource> {
+    if request.used_default && template_mode.is_some() {
+        // Keep local-only mode errors direct; wrapping them as default-source
+        // resolution failures would incorrectly suggest a network or tag issue.
+        bail!(REMOTE_TEMPLATE_MODE_ERROR);
+    }
+
+    let result =
+        prepare_template_source(request.template, template_mode, request.vcs_ref.as_deref());
+    if request.used_default {
+        result.with_context(|| default_template_failure_context(request))
+    } else {
+        result
+    }
+}
+
+fn default_template_failure_context(request: &InitialTemplateRequest<'_>) -> String {
+    let Some(vcs_ref) = request.vcs_ref.as_deref() else {
+        return format!(
+            "Failed to resolve the official Jig template {}. For offline use, pass --template <local-path>. To use a specific official ref such as main, pass --vcs-ref <ref>.",
+            request.template
+        );
+    };
+    let ref_requirement = if vcs_ref == official_template_ref() {
+        "network access and a matching release tag. If this Jig binary was built from a prerelease or development version, that tag may not exist yet"
+    } else {
+        "network access and the selected ref must exist"
+    };
+    format!(
+        "Failed to resolve the official Jig template {} at {}. The official template requires {}. For offline use, pass --template <local-path>. To use a different official ref such as main, pass --vcs-ref <ref>.",
+        request.template, vcs_ref, ref_requirement
+    )
 }
 
 pub fn run_update(opts: UpdateOpts) -> Result<Value> {

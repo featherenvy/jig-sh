@@ -10,8 +10,9 @@ use crate::process::{require_success, run_checked_output};
 
 use super::git::{ensure_clean_git_work_tree, git_stdout, is_git_work_tree};
 use super::{
-    ANSWERS_FILE, GIT_BIN_ENV, TEMPLATE_LOCAL_PATH_KEY, TEMPLATE_MODE_KEY, TemplateMode,
-    UpdateOpts, absolute_path, external_program, read_answers_toml,
+    ANSWERS_FILE, GIT_BIN_ENV, REMOTE_TEMPLATE_MODE_ERROR, TEMPLATE_LOCAL_PATH_KEY,
+    TEMPLATE_MODE_KEY, TemplateMode, UpdateOpts, absolute_path, external_program,
+    read_answers_toml,
 };
 
 const COMMIT_KEY: &str = "_commit";
@@ -201,7 +202,7 @@ pub(super) fn prepare_template_source(
 ) -> Result<PreparedTemplateSource> {
     if is_remote_template_source(template) {
         if template_mode.is_some() {
-            bail!("--template-mode only applies to local git template paths.");
+            bail!(REMOTE_TEMPLATE_MODE_ERROR);
         }
         return prepare_remote_template_source(template, vcs_ref);
     }

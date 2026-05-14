@@ -253,7 +253,7 @@ fn run_init_uses_native_renderer_and_git() {
     let destination = temp.path().join("repo");
     let output = run_init(InitOpts {
         path: destination.clone(),
-        template: template.path().display().to_string(),
+        template: Some(template.path().display().to_string()),
         template_mode: None,
         vcs_ref: None,
         force: false,
@@ -276,6 +276,271 @@ fn run_init_uses_native_renderer_and_git() {
 }
 
 #[test]
+fn adopt_without_template_uses_official_template_release_tag_and_records_metadata() {
+    let _guard = lock_env();
+    let temp = tempdir().unwrap();
+    let repo = temp.path().join("repo");
+    write_test_crate_guide(&repo);
+    let template = materialize_template_git_worktree();
+    let fake_commit = "0123456789abcdef0123456789abcdef01234567";
+
+    let log_path = temp.path().join("commands.log");
+    let git_path = temp.path().join("git-stub.sh");
+    fs::write(
+        &git_path,
+        format!(
+            r#"#!/bin/sh
+printf 'git %s\n' "$*" >> "{log_path}"
+if [ "$1" = "clone" ]; then
+  mkdir -p "$4"
+  cp -R "{template}/." "$4"
+  exit 0
+fi
+if [ "$1" = "rev-parse" ]; then
+  printf '{fake_commit}\n'
+  exit 0
+fi
+exit 0
+"#,
+            log_path = log_path.display(),
+            template = template.path().display(),
+            fake_commit = fake_commit,
+        ),
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&git_path, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    let _git_bin = EnvVarGuard::set(GIT_BIN_ENV, &git_path);
+
+    run_adopt(AdoptOpts {
+        path: repo.clone(),
+        template: None,
+        template_mode: None,
+        vcs_ref: None,
+        force: false,
+        defaults: true,
+        no_input: true,
+        answers: AnswerOpts {
+            repo_name: Some("demo".into()),
+            sqlx_enabled: Some(false),
+            ..AnswerOpts::default()
+        },
+    })
+    .unwrap();
+
+    let commands = fs::read_to_string(log_path).unwrap();
+    assert!(commands.contains("git clone --quiet https://github.com/bpcakes/jig-sh.git"));
+    assert!(commands.contains(&format!(
+        "git checkout --quiet v{}",
+        env!("CARGO_PKG_VERSION")
+    )));
+
+    let answers = read_answers_toml(&repo.join(".jig.toml")).unwrap();
+    assert_eq!(
+        answers.get("_src_path").and_then(TomlValue::as_str),
+        Some(OFFICIAL_TEMPLATE_SOURCE)
+    );
+    assert_eq!(
+        answers.get("_commit").and_then(TomlValue::as_str),
+        Some(fake_commit)
+    );
+}
+
+#[test]
+fn omitted_template_preserves_explicit_vcs_ref() {
+    let vcs_ref = Some("main".to_string());
+    let request = resolve_initial_template_request(None, &vcs_ref);
+
+    assert_eq!(request.template, OFFICIAL_TEMPLATE_SOURCE);
+    assert_eq!(request.vcs_ref.as_deref(), Some("main"));
+    assert!(request.used_default);
+}
+
+#[test]
+fn explicit_official_template_url_still_uses_release_pin() {
+    let template = Some(OFFICIAL_TEMPLATE_SOURCE.to_string());
+    let request = resolve_initial_template_request(template.as_deref(), &None);
+
+    assert_eq!(request.template, OFFICIAL_TEMPLATE_SOURCE);
+    assert_eq!(
+        request.vcs_ref.as_deref(),
+        Some(official_template_ref().as_str())
+    );
+    assert!(request.used_default);
+
+    assert!(is_official_template_source(
+        "https://github.com/bpcakes/jig-sh"
+    ));
+    assert!(!is_official_template_source(
+        "https://github.com/bpcakes/jig-sh.git.git"
+    ));
+}
+
+#[test]
+fn omitted_template_uses_release_tag_for_package_version() {
+    assert_eq!(official_template_ref_for_version("1.2.3"), "v1.2.3");
+    assert_eq!(
+        official_template_ref_for_version("1.2.3-rc.1"),
+        "v1.2.3-rc.1"
+    );
+}
+
+#[test]
+fn default_template_mode_rejects_local_only_mode_before_clone() {
+    let _guard = lock_env();
+    let temp = tempdir().unwrap();
+    let repo = temp.path().join("repo");
+    write_test_crate_guide(&repo);
+
+    // The default template is remote, so this must fail before any git clone can start.
+    let error = run_adopt(AdoptOpts {
+        path: repo,
+        template: None,
+        template_mode: Some(TemplateMode::Committed),
+        vcs_ref: None,
+        force: false,
+        defaults: true,
+        no_input: true,
+        answers: AnswerOpts {
+            repo_name: Some("demo".into()),
+            sqlx_enabled: Some(false),
+            ..AnswerOpts::default()
+        },
+    })
+    .unwrap_err();
+
+    let error_chain = format!("{:#}", error);
+    assert!(error_chain.contains("--template-mode only applies to local git template paths."));
+    assert!(error_chain.contains("Omit --template-mode for remote templates"));
+}
+
+#[test]
+fn default_template_resolution_errors_explain_offline_and_ref_overrides() {
+    let _guard = lock_env();
+    let temp = tempdir().unwrap();
+    let repo = temp.path().join("repo");
+    write_test_crate_guide(&repo);
+    let template = materialize_template_git_worktree();
+
+    let git_path = temp.path().join("git-stub.sh");
+    fs::write(
+        &git_path,
+        format!(
+            r#"#!/bin/sh
+if [ "$1" = "clone" ]; then
+  mkdir -p "$4"
+  cp -R "{template}/." "$4"
+  exit 0
+fi
+if [ "$1" = "checkout" ]; then
+  echo "missing release tag" >&2
+  exit 1
+fi
+exit 0
+"#,
+            template = template.path().display(),
+        ),
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&git_path, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    let _git_bin = EnvVarGuard::set(GIT_BIN_ENV, &git_path);
+
+    let error = run_adopt(AdoptOpts {
+        path: repo,
+        template: None,
+        template_mode: None,
+        vcs_ref: None,
+        force: false,
+        defaults: true,
+        no_input: true,
+        answers: AnswerOpts {
+            repo_name: Some("demo".into()),
+            sqlx_enabled: Some(false),
+            ..AnswerOpts::default()
+        },
+    })
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("Failed to resolve the official Jig template"));
+    assert!(error.contains("requires network access"));
+    assert!(error.contains("prerelease or development version"));
+    assert!(error.contains("--template <local-path>"));
+    assert!(error.contains("--vcs-ref <ref>"));
+}
+
+#[test]
+fn default_template_clone_errors_get_official_template_context() {
+    let _guard = lock_env();
+    let temp = tempdir().unwrap();
+    let repo = temp.path().join("repo");
+    write_test_crate_guide(&repo);
+
+    let git_path = temp.path().join("git-stub.sh");
+    fs::write(
+        &git_path,
+        r#"#!/bin/sh
+if [ "$1" = "clone" ]; then
+  echo "network unavailable" >&2
+  exit 1
+fi
+exit 0
+"#,
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&git_path, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    let _git_bin = EnvVarGuard::set(GIT_BIN_ENV, &git_path);
+
+    let error = run_adopt(AdoptOpts {
+        path: repo,
+        template: None,
+        template_mode: None,
+        vcs_ref: None,
+        force: false,
+        defaults: true,
+        no_input: true,
+        answers: AnswerOpts {
+            repo_name: Some("demo".into()),
+            sqlx_enabled: Some(false),
+            ..AnswerOpts::default()
+        },
+    })
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("Failed to resolve the official Jig template"));
+    assert!(error.contains(OFFICIAL_TEMPLATE_SOURCE));
+    assert!(error.contains(&official_template_ref()));
+    assert!(error.contains("requires network access"));
+}
+
+#[test]
+fn default_template_resolution_error_for_explicit_ref_does_not_blame_release_tag() {
+    let vcs_ref = Some("main".to_string());
+    let request = resolve_initial_template_request(None, &vcs_ref);
+    let error = default_template_failure_context(&request);
+
+    assert!(error.contains("at main"));
+    assert!(error.contains("selected ref must exist"));
+    assert!(!error.contains("matching release tag"));
+    assert!(!error.contains("prerelease or development version"));
+}
+
+#[test]
 fn run_init_renders_empty_agent_tooling_lists_as_toml_arrays() {
     let _guard = lock_env();
     let temp = tempdir().unwrap();
@@ -295,7 +560,7 @@ marketplaces = []
 
     run_init(InitOpts {
         path: destination.clone(),
-        template: template.path().display().to_string(),
+        template: Some(template.path().display().to_string()),
         template_mode: None,
         vcs_ref: None,
         force: false,
@@ -336,7 +601,7 @@ plugins = []
 
     run_init(InitOpts {
         path: destination.clone(),
-        template: template.path().display().to_string(),
+        template: Some(template.path().display().to_string()),
         template_mode: None,
         vcs_ref: None,
         force: false,
@@ -385,7 +650,7 @@ fn run_init_falls_back_only_for_unsupported_git_branch_flag() {
     let destination = temp.path().join("repo");
     let output = run_init(InitOpts {
         path: destination,
-        template: template.path().display().to_string(),
+        template: Some(template.path().display().to_string()),
         template_mode: None,
         vcs_ref: None,
         force: false,
@@ -435,7 +700,7 @@ fn run_init_surfaces_git_branch_init_failures() {
     let template = materialize_template_worktree();
     let error = run_init(InitOpts {
         path: temp.path().join("repo"),
-        template: template.path().display().to_string(),
+        template: Some(template.path().display().to_string()),
         template_mode: None,
         vcs_ref: None,
         force: false,
@@ -467,7 +732,7 @@ fn adopt_with_real_template_runs_destination_tasks() {
 
     run_adopt(AdoptOpts {
         path: repo.clone(),
-        template: template.path().display().to_string(),
+        template: Some(template.path().display().to_string()),
         template_mode: Some(TemplateMode::Committed),
         vcs_ref: None,
         force: false,
@@ -509,7 +774,7 @@ fn adopt_appends_jig_block_to_existing_root_agents() {
 
     run_adopt(AdoptOpts {
         path: repo.clone(),
-        template: template.path().display().to_string(),
+        template: Some(template.path().display().to_string()),
         template_mode: Some(TemplateMode::Committed),
         vcs_ref: None,
         force: false,
@@ -553,7 +818,7 @@ fn adopt_refuses_to_replace_symlinked_root_agents_without_force() {
 
     let error = run_adopt(AdoptOpts {
         path: repo.clone(),
-        template: template.path().display().to_string(),
+        template: Some(template.path().display().to_string()),
         template_mode: Some(TemplateMode::Committed),
         vcs_ref: None,
         force: false,
@@ -583,7 +848,7 @@ fn adopt_refuses_to_replace_symlinked_root_agents_without_force() {
 
     run_adopt(AdoptOpts {
         path: repo.clone(),
-        template: template.path().display().to_string(),
+        template: Some(template.path().display().to_string()),
         template_mode: Some(TemplateMode::Committed),
         vcs_ref: None,
         force: true,
@@ -623,7 +888,7 @@ fn adopt_rejects_malformed_existing_root_agents_jig_block() {
 
     let error = run_adopt(AdoptOpts {
         path: repo,
-        template: template.path().display().to_string(),
+        template: Some(template.path().display().to_string()),
         template_mode: Some(TemplateMode::Committed),
         vcs_ref: None,
         force: false,
@@ -652,7 +917,7 @@ fn adopt_with_real_template_keeps_sqlx_files_when_enabled() {
 
     run_adopt(AdoptOpts {
         path: repo.clone(),
-        template: template.path().display().to_string(),
+        template: Some(template.path().display().to_string()),
         template_mode: Some(TemplateMode::Committed),
         vcs_ref: None,
         force: false,
@@ -699,7 +964,7 @@ fn adopt_with_sqlx_and_schema_dumps_disabled_hides_schema_dump_target() {
 
     run_adopt(AdoptOpts {
         path: repo.clone(),
-        template: template.path().display().to_string(),
+        template: Some(template.path().display().to_string()),
         template_mode: Some(TemplateMode::Committed),
         vcs_ref: None,
         force: false,

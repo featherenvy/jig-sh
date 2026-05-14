@@ -25,15 +25,18 @@ struct Cli {
 
 const TEMPLATE_ERROR_HINT: &str = "\
 Templates:
-  Jig currently ships one repository harness template: the jig-sh repo's
-  templates/project directory.
+  Omit --template to use the official jig-sh harness template:
+  https://github.com/bpcakes/jig-sh.git
+
+If you passed --template without a value, either omit it to use the default
+or provide a path/URL.
 
 Use one of:
+  jig adopt . --repo-name my-repo --sqlx-enabled false
+  jig init /path/to/new-repo --repo-name new-repo --sqlx-enabled false
   jig adopt . --template /path/to/jig-sh --repo-name my-repo --sqlx-enabled false
-  jig init /path/to/new-repo --template /path/to/jig-sh --repo-name new-repo --sqlx-enabled false
-  jig adopt . --template https://github.com/bpcakes/jig-sh.git --repo-name my-repo --sqlx-enabled false
 
-For local head development, use the path to your local jig-sh checkout.";
+Pass --template only for a local checkout, fork, or private template.";
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum CommandKind {
@@ -599,7 +602,7 @@ fn exit_with_cli_error(error: clap::Error) -> ! {
 fn should_add_template_hint(error: &clap::Error) -> bool {
     if !matches!(
         error.kind(),
-        ErrorKind::MissingRequiredArgument | ErrorKind::InvalidValue | ErrorKind::TooFewValues
+        ErrorKind::InvalidValue | ErrorKind::TooFewValues
     ) {
         return false;
     }
@@ -641,14 +644,6 @@ mod tests {
 
     #[test]
     fn template_errors_get_hint() {
-        let missing_template =
-            Cli::try_parse_from(["jig", "adopt", ".", "--repo-name", "demo"]).unwrap_err();
-        assert_eq!(
-            missing_template.kind(),
-            clap::error::ErrorKind::MissingRequiredArgument
-        );
-        assert!(should_add_template_hint(&missing_template));
-
         let missing_template_value =
             Cli::try_parse_from(["jig", "adopt", ".", "--template"]).unwrap_err();
         assert_eq!(
@@ -659,6 +654,26 @@ mod tests {
 
         let unrelated = Cli::try_parse_from(["jig", "proxy", "run", "web", "vite"]).unwrap_err();
         assert!(!should_add_template_hint(&unrelated));
+    }
+
+    #[test]
+    fn adopt_and_init_default_to_official_template() {
+        let adopt = Cli::try_parse_from(["jig", "adopt", ".", "--repo-name", "demo"]).unwrap();
+        match adopt.command {
+            CommandKind::Adopt(bootstrap::AdoptOpts { template, .. }) => {
+                assert_eq!(template, None);
+            }
+            other => panic!("expected adopt command, got {other:?}"),
+        }
+
+        let init =
+            Cli::try_parse_from(["jig", "init", "/tmp/demo", "--repo-name", "demo"]).unwrap();
+        match init.command {
+            CommandKind::Init(bootstrap::InitOpts { template, .. }) => {
+                assert_eq!(template, None);
+            }
+            other => panic!("expected init command, got {other:?}"),
+        }
     }
 
     #[test]
