@@ -1,4 +1,6 @@
 use std::borrow::Cow;
+#[cfg(test)]
+use std::cell::Cell;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -45,6 +47,8 @@ mod template_source;
 
 const ANSWERS_FILE: &str = ".jig.toml";
 const GIT_BIN_ENV: &str = "JIG_GIT_BIN";
+const BUILD_TEMPLATE_PIN_RELEASED: &str = "released";
+const BUILD_TEMPLATE_PIN_UNRELEASED: &str = "unreleased";
 const OFFICIAL_TEMPLATE_SOURCE: &str = "https://github.com/bpcakes/jig-sh.git";
 const REMOTE_TEMPLATE_MODE_ERROR: &str = "--template-mode only applies to local git template paths. Omit --template-mode for remote templates, or pass --template /path/to/jig-sh --template-mode committed.";
 // Legacy conflict helpers keep these in sync with template task side effects.
@@ -105,12 +109,12 @@ Templates:
   Jig currently defaults to the official jig-sh harness template:
   https://github.com/bpcakes/jig-sh.git
 
-  Omitted --template uses the release tag for this jig version. Pass --template
-  only when you want a local checkout, fork, or private template.
+  Release builds pin omitted --template to this jig version's release tag.
+  Unreleased or dirty local builds require --template /path/to/jig-sh or --vcs-ref.
 
 Examples:
   jig init /path/to/new-repo --repo-name new-repo --sqlx-enabled false
-  jig init /path/to/new-repo --template /path/to/jig-sh --repo-name new-repo --sqlx-enabled false")]
+  jig init /path/to/new-repo --template /path/to/jig-sh --template-mode committed --repo-name new-repo --sqlx-enabled false")]
 pub struct InitOpts {
     #[arg(help = "Destination directory to create or populate")]
     pub path: PathBuf,
@@ -118,7 +122,7 @@ pub struct InitOpts {
         long,
         value_name = "PATH_OR_GIT_URL",
         help = "Template source to render; defaults to the official jig-sh template",
-        long_help = "Template source to render. By default Jig uses the official jig-sh template at https://github.com/bpcakes/jig-sh.git pinned to the release tag for this jig version; passing that canonical HTTPS URL explicitly, with or without .git, has the same pinned behavior unless --vcs-ref is also provided. For local head development, pass the path to your jig-sh checkout, for example /Users/you/src/jig-sh. For remote forks, SSH URLs, or private harnesses, pass a git URL. The source must contain templates/project."
+        long_help = "Template source to render. Release builds default to the official jig-sh template at https://github.com/bpcakes/jig-sh.git pinned to the release tag for this jig version; passing that canonical HTTPS URL explicitly, with or without .git, has the same pinned behavior unless --vcs-ref is also provided. Unreleased or dirty local builds refuse that implicit release pin because the matching tag may describe older template code. For local head development, pass the path to your jig-sh checkout, for example /Users/you/src/jig-sh. For remote forks, SSH URLs, or private harnesses, pass a git URL. The source must contain templates/project."
     )]
     pub template: Option<String>,
     #[arg(
@@ -146,12 +150,12 @@ Templates:
   Jig currently defaults to the official jig-sh harness template:
   https://github.com/bpcakes/jig-sh.git
 
-  Omitted --template uses the release tag for this jig version. Pass --template
-  only when you want a local checkout, fork, or private template.
+  Release builds pin omitted --template to this jig version's release tag.
+  Unreleased or dirty local builds require --template /path/to/jig-sh or --vcs-ref.
 
 Examples:
   jig adopt . --repo-name my-repo --sqlx-enabled false
-  jig adopt . --template /path/to/jig-sh --repo-name my-repo --sqlx-enabled false")]
+  jig adopt . --template /path/to/jig-sh --template-mode committed --repo-name my-repo --sqlx-enabled false")]
 pub struct AdoptOpts {
     #[arg(default_value = ".", help = "Existing repository directory to adopt")]
     pub path: PathBuf,
@@ -159,7 +163,7 @@ pub struct AdoptOpts {
         long,
         value_name = "PATH_OR_GIT_URL",
         help = "Template source to render; defaults to the official jig-sh template",
-        long_help = "Template source to render. By default Jig uses the official jig-sh template at https://github.com/bpcakes/jig-sh.git pinned to the release tag for this jig version; passing that canonical HTTPS URL explicitly, with or without .git, has the same pinned behavior unless --vcs-ref is also provided. For local head development, pass the path to your jig-sh checkout, for example /Users/you/src/jig-sh. For remote forks, SSH URLs, or private harnesses, pass a git URL. The source must contain templates/project."
+        long_help = "Template source to render. Release builds default to the official jig-sh template at https://github.com/bpcakes/jig-sh.git pinned to the release tag for this jig version; passing that canonical HTTPS URL explicitly, with or without .git, has the same pinned behavior unless --vcs-ref is also provided. Unreleased or dirty local builds refuse that implicit release pin because the matching tag may describe older template code. For local head development, pass the path to your jig-sh checkout, for example /Users/you/src/jig-sh. For remote forks, SSH URLs, or private harnesses, pass a git URL. The source must contain templates/project."
     )]
     pub template: Option<String>,
     #[arg(
@@ -226,7 +230,7 @@ pub fn run_init(opts: InitOpts) -> Result<Value> {
     let destination = absolute_path(&opts.path)?;
     validate_init_destination(&destination, opts.force)?;
     let template_request =
-        resolve_initial_template_request(opts.template.as_deref(), &opts.vcs_ref);
+        resolve_initial_template_request(opts.template.as_deref(), &opts.vcs_ref)?;
     let template = prepare_initial_template_source(&template_request, opts.template_mode)?;
 
     let copy_result = render_and_copy_bootstrap_template(BootstrapCopyRequest {
@@ -256,7 +260,7 @@ pub fn run_adopt(opts: AdoptOpts) -> Result<Value> {
     let destination = absolute_path(&opts.path)?;
     validate_adopt_destination(&destination)?;
     let template_request =
-        resolve_initial_template_request(opts.template.as_deref(), &opts.vcs_ref);
+        resolve_initial_template_request(opts.template.as_deref(), &opts.vcs_ref)?;
     let template = prepare_initial_template_source(&template_request, opts.template_mode)?;
 
     render_and_copy_bootstrap_template(BootstrapCopyRequest {
@@ -278,31 +282,67 @@ pub fn run_adopt(opts: AdoptOpts) -> Result<Value> {
     }))
 }
 
+#[derive(Debug)]
 struct InitialTemplateRequest<'a> {
     template: &'a str,
     vcs_ref: Option<Cow<'a, str>>,
     used_default: bool,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BuildTemplatePinPolicy {
+    Released,
+    Unreleased,
+    Unknown,
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_BUILD_TEMPLATE_PIN_POLICY: Cell<Option<BuildTemplatePinPolicy>> = const { Cell::new(None) };
+}
+
 fn resolve_initial_template_request<'a>(
     template: Option<&'a str>,
     vcs_ref: &'a Option<String>,
-) -> InitialTemplateRequest<'a> {
+) -> Result<InitialTemplateRequest<'a>> {
+    resolve_initial_template_request_with_policy(
+        template,
+        vcs_ref,
+        current_build_template_pin_policy(),
+    )
+}
+
+fn resolve_initial_template_request_with_policy<'a>(
+    template: Option<&'a str>,
+    vcs_ref: &'a Option<String>,
+    pin_policy: BuildTemplatePinPolicy,
+) -> Result<InitialTemplateRequest<'a>> {
     match template {
         Some(template) if is_official_template_source(template) => {
-            default_initial_template_request(vcs_ref)
+            default_initial_template_request(vcs_ref, pin_policy)
         }
-        Some(template) => InitialTemplateRequest {
+        Some(template) => Ok(InitialTemplateRequest {
             template,
             vcs_ref: vcs_ref.as_deref().map(Cow::Borrowed),
             used_default: false,
-        },
-        None => default_initial_template_request(vcs_ref),
+        }),
+        None => default_initial_template_request(vcs_ref, pin_policy),
     }
 }
 
-fn default_initial_template_request<'a>(vcs_ref: &'a Option<String>) -> InitialTemplateRequest<'a> {
-    InitialTemplateRequest {
+fn default_initial_template_request<'a>(
+    vcs_ref: &'a Option<String>,
+    pin_policy: BuildTemplatePinPolicy,
+) -> Result<InitialTemplateRequest<'a>> {
+    if vcs_ref.is_none() && pin_policy == BuildTemplatePinPolicy::Unreleased {
+        bail!(
+            "This jig binary was built from unreleased or dirty local source version {}.\nThe default official template pin {} may not match this binary.\nTo render from your checkout, pass --template /path/to/jig-sh --template-mode committed.\nTo use official remote template code, pass --vcs-ref <ref>.",
+            env!("CARGO_PKG_VERSION"),
+            official_template_ref(),
+        );
+    }
+
+    Ok(InitialTemplateRequest {
         template: OFFICIAL_TEMPLATE_SOURCE,
         // The release workflow tags the whole workspace as vVERSION. Keep the
         // default template pinned to the installed jig binary's workspace version.
@@ -313,6 +353,31 @@ fn default_initial_template_request<'a>(vcs_ref: &'a Option<String>) -> InitialT
                 .unwrap_or_else(|| Cow::Owned(official_template_ref())),
         ),
         used_default: true,
+    })
+}
+
+fn current_build_template_pin_policy() -> BuildTemplatePinPolicy {
+    #[cfg(test)]
+    {
+        TEST_BUILD_TEMPLATE_PIN_POLICY
+            .with(Cell::get)
+            .unwrap_or(BuildTemplatePinPolicy::Released)
+    }
+
+    #[cfg(not(test))]
+    {
+        build_template_pin_policy_from_env(option_env!("JIG_BUILD_OFFICIAL_TEMPLATE_PIN"))
+    }
+}
+
+fn build_template_pin_policy_from_env(value: Option<&str>) -> BuildTemplatePinPolicy {
+    match value {
+        Some(BUILD_TEMPLATE_PIN_RELEASED) => BuildTemplatePinPolicy::Released,
+        Some(BUILD_TEMPLATE_PIN_UNRELEASED) => BuildTemplatePinPolicy::Unreleased,
+        // Published crates do not carry .git metadata, so build.rs emits
+        // unknown. Missing or unrecognized values keep the same release-pin
+        // behavior rather than failing crates.io and packaged installs.
+        _ => BuildTemplatePinPolicy::Unknown,
     }
 }
 

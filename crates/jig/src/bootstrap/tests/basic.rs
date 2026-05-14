@@ -54,6 +54,27 @@ fn write_answers_fixture(dir: &Path, sqlx_enabled: Option<bool>) {
     fs::write(dir.join(".jig.toml"), body).unwrap();
 }
 
+fn with_test_build_template_pin_policy<T>(
+    policy: BuildTemplatePinPolicy,
+    run: impl FnOnce() -> T,
+) -> T {
+    struct Guard(Option<BuildTemplatePinPolicy>);
+
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            TEST_BUILD_TEMPLATE_PIN_POLICY.with(|slot| slot.set(self.0));
+        }
+    }
+
+    let previous = TEST_BUILD_TEMPLATE_PIN_POLICY.with(|slot| {
+        let previous = slot.get();
+        slot.set(Some(policy));
+        previous
+    });
+    let _guard = Guard(previous);
+    run()
+}
+
 #[test]
 fn rendered_conflicts_detects_generated_paths() {
     let rendered = tempdir().unwrap();
@@ -353,7 +374,7 @@ exit 0
 #[test]
 fn omitted_template_preserves_explicit_vcs_ref() {
     let vcs_ref = Some("main".to_string());
-    let request = resolve_initial_template_request(None, &vcs_ref);
+    let request = resolve_initial_template_request(None, &vcs_ref).unwrap();
 
     assert_eq!(request.template, OFFICIAL_TEMPLATE_SOURCE);
     assert_eq!(request.vcs_ref.as_deref(), Some("main"));
@@ -363,7 +384,13 @@ fn omitted_template_preserves_explicit_vcs_ref() {
 #[test]
 fn explicit_official_template_url_still_uses_release_pin() {
     let template = Some(OFFICIAL_TEMPLATE_SOURCE.to_string());
-    let request = resolve_initial_template_request(template.as_deref(), &None);
+    let no_ref = None;
+    let request = resolve_initial_template_request_with_policy(
+        template.as_deref(),
+        &no_ref,
+        BuildTemplatePinPolicy::Released,
+    )
+    .unwrap();
 
     assert_eq!(request.template, OFFICIAL_TEMPLATE_SOURCE);
     assert_eq!(
@@ -378,6 +405,176 @@ fn explicit_official_template_url_still_uses_release_pin() {
     assert!(!is_official_template_source(
         "https://github.com/bpcakes/jig-sh.git.git"
     ));
+}
+
+#[test]
+fn unreleased_build_rejects_implicit_official_release_pin() {
+    let no_ref = None;
+    let error = resolve_initial_template_request_with_policy(
+        None,
+        &no_ref,
+        BuildTemplatePinPolicy::Unreleased,
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("unreleased or dirty local source"));
+    assert!(error.contains(&official_template_ref()));
+    assert!(error.contains("--template /path/to/jig-sh --template-mode committed"));
+    assert!(error.contains("--vcs-ref <ref>"));
+}
+
+#[test]
+fn run_adopt_rejects_default_template_for_unreleased_build_policy() {
+    let temp = tempdir().unwrap();
+    let repo = temp.path().join("repo");
+    write_test_crate_guide(&repo);
+
+    let error = with_test_build_template_pin_policy(BuildTemplatePinPolicy::Unreleased, || {
+        run_adopt(AdoptOpts {
+            path: repo,
+            template: None,
+            template_mode: None,
+            vcs_ref: None,
+            force: false,
+            defaults: true,
+            no_input: true,
+            answers: AnswerOpts {
+                repo_name: Some("demo".into()),
+                sqlx_enabled: Some(false),
+                ..AnswerOpts::default()
+            },
+        })
+        .unwrap_err()
+        .to_string()
+    });
+
+    assert!(error.contains("unreleased or dirty local source"));
+    assert!(error.contains(&official_template_ref()));
+}
+
+#[test]
+fn unreleased_build_rejects_canonical_official_url_without_ref() {
+    for template in [
+        "https://github.com/bpcakes/jig-sh",
+        "https://github.com/bpcakes/jig-sh.git",
+    ] {
+        let no_ref = None;
+        let error = resolve_initial_template_request_with_policy(
+            Some(template),
+            &no_ref,
+            BuildTemplatePinPolicy::Unreleased,
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("unreleased or dirty local source"));
+        assert!(error.contains(&official_template_ref()));
+    }
+}
+
+#[test]
+fn unreleased_build_allows_explicit_official_ref() {
+    let vcs_ref = Some("main".to_string());
+    let request = resolve_initial_template_request_with_policy(
+        None,
+        &vcs_ref,
+        BuildTemplatePinPolicy::Unreleased,
+    )
+    .unwrap();
+
+    assert_eq!(request.template, OFFICIAL_TEMPLATE_SOURCE);
+    assert_eq!(request.vcs_ref.as_deref(), Some("main"));
+    assert!(request.used_default);
+}
+
+#[test]
+fn unreleased_build_allows_explicit_official_release_tag() {
+    let vcs_ref = Some("v0.1.0".to_string());
+    let request = resolve_initial_template_request_with_policy(
+        None,
+        &vcs_ref,
+        BuildTemplatePinPolicy::Unreleased,
+    )
+    .unwrap();
+
+    assert_eq!(request.template, OFFICIAL_TEMPLATE_SOURCE);
+    assert_eq!(request.vcs_ref.as_deref(), Some("v0.1.0"));
+    assert!(request.used_default);
+}
+
+#[test]
+fn unreleased_build_allows_explicit_official_ref_for_canonical_urls() {
+    for template in [
+        "https://github.com/bpcakes/jig-sh",
+        "https://github.com/bpcakes/jig-sh.git",
+    ] {
+        let vcs_ref = Some("main".to_string());
+        let request = resolve_initial_template_request_with_policy(
+            Some(template),
+            &vcs_ref,
+            BuildTemplatePinPolicy::Unreleased,
+        )
+        .unwrap();
+
+        assert_eq!(request.template, OFFICIAL_TEMPLATE_SOURCE);
+        assert_eq!(request.vcs_ref.as_deref(), Some("main"));
+        assert!(request.used_default);
+    }
+}
+
+#[test]
+fn build_template_pin_policy_env_parser_handles_all_values() {
+    assert_eq!(
+        build_template_pin_policy_from_env(Some("released")),
+        BuildTemplatePinPolicy::Released
+    );
+    assert_eq!(
+        build_template_pin_policy_from_env(Some("unreleased")),
+        BuildTemplatePinPolicy::Unreleased
+    );
+    assert_eq!(
+        build_template_pin_policy_from_env(Some("unknown")),
+        BuildTemplatePinPolicy::Unknown
+    );
+    assert_eq!(
+        build_template_pin_policy_from_env(None),
+        BuildTemplatePinPolicy::Unknown
+    );
+}
+
+#[test]
+fn unknown_build_uses_release_pin_for_packaged_installs() {
+    let no_ref = None;
+    let request = resolve_initial_template_request_with_policy(
+        None,
+        &no_ref,
+        BuildTemplatePinPolicy::Unknown,
+    )
+    .unwrap();
+
+    assert_eq!(request.template, OFFICIAL_TEMPLATE_SOURCE);
+    assert_eq!(
+        request.vcs_ref.as_deref(),
+        Some(official_template_ref().as_str())
+    );
+    assert!(request.used_default);
+}
+
+#[test]
+fn unreleased_build_allows_non_official_template_source() {
+    let template = Some("/path/to/jig-sh".to_string());
+    let no_ref = None;
+    let request = resolve_initial_template_request_with_policy(
+        template.as_deref(),
+        &no_ref,
+        BuildTemplatePinPolicy::Unreleased,
+    )
+    .unwrap();
+
+    assert_eq!(request.template, "/path/to/jig-sh");
+    assert_eq!(request.vcs_ref.as_deref(), None);
+    assert!(!request.used_default);
 }
 
 #[test]
@@ -531,7 +728,7 @@ exit 0
 #[test]
 fn default_template_resolution_error_for_explicit_ref_does_not_blame_release_tag() {
     let vcs_ref = Some("main".to_string());
-    let request = resolve_initial_template_request(None, &vcs_ref);
+    let request = resolve_initial_template_request(None, &vcs_ref).unwrap();
     let error = default_template_failure_context(&request);
 
     assert!(error.contains("at main"));

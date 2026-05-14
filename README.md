@@ -29,7 +29,7 @@ cargo install jig-sh
 
 Generated repos install and pin their own `jig` version automatically via `scripts/install-jig.sh`. You only need a global install to run `jig init` or `jig adopt` on a repo for the first time.
 
-By default, `jig init` and `jig adopt` clone the official template from GitHub. For offline use or local head dogfooding, pass `--template /path/to/jig-sh`.
+By default, release builds of `jig init` and `jig adopt` clone the official template from GitHub at the matching `vVERSION` tag. For offline use or local head dogfooding, pass `--template /path/to/jig-sh --template-mode committed`.
 
 **Bootstrap a new repo:**
 
@@ -129,15 +129,17 @@ For existing repositories, root `AGENTS.md` remains repo-owned. `jig adopt` inse
 
 ## Templates
 
-In Jig, `--template` means the source repository containing the harness files to render into another project. By default, `jig init` and `jig adopt` use the official `jig-sh` template at `https://github.com/bpcakes/jig-sh.git`, pinned to the release tag for the installed Jig version. Passing exactly `https://github.com/bpcakes/jig-sh` or `https://github.com/bpcakes/jig-sh.git` explicitly has the same pinned behavior unless `--vcs-ref` is also provided; SSH, fork, and private URLs follow normal remote-template behavior.
+In Jig, `--template` means the source repository containing the harness files to render into another project. Release builds of `jig init` and `jig adopt` use the official `jig-sh` template at `https://github.com/bpcakes/jig-sh.git`, pinned to the release tag for the installed Jig version. Passing exactly `https://github.com/bpcakes/jig-sh` or `https://github.com/bpcakes/jig-sh.git` explicitly has the same pinned behavior unless `--vcs-ref` is also provided; SSH, fork, and private URLs follow normal remote-template behavior.
 
 Pass `--template` only when you want to dogfood a local checkout, fork, or private template:
 
 ```sh
---template /path/to/jig-sh
+--template /path/to/jig-sh --template-mode committed
 ```
 
-Prerelease or development builds still try the exact `vVERSION` tag for that binary. If that tag has not been published yet, pass `--vcs-ref main` or use a local checkout with `--template /path/to/jig-sh`.
+Unreleased or dirty local builds installed from a checkout refuse the implicit official `vVERSION` pin because that tag can describe older template code than the binary you are running. Dirty means tracked working-tree changes. Pass `--template /path/to/jig-sh --template-mode committed` to render from your checkout, or pass `--vcs-ref main` or another explicit official ref when you intentionally want remote template code.
+
+Release automation that builds Jig from a git checkout must either fetch tags before building or set the build-time environment variable `JIG_ASSUME_RELEASE_BUILD=1` while running `cargo build` / `cargo install`, after validating the version and tag.
 
 ## Local Dev Proxy
 

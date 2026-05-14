@@ -9,7 +9,8 @@
 - Enable the `dev-proxy` Cargo feature by default while preserving `--no-default-features` builds for contract/MCP-only consumers.
 
 ### Changed
-- Default `jig init` and `jig adopt` to the official `jig-sh` template source pinned to the installed Jig version's release tag; the first render now needs network access unless `--template` points at a local checkout or another offline source, so air-gapped scripts should pass an explicit local template.
+- Default release builds of `jig init` and `jig adopt` to the official `jig-sh` template source pinned to the installed Jig version's release tag; unreleased or dirty local builds now refuse that implicit release pin and require `--template /path/to/jig-sh` or `--vcs-ref <ref>` so local binaries do not render stale release templates.
+- Release automation that builds Jig from a git checkout should fetch tags before building, or set `JIG_ASSUME_RELEASE_BUILD=1` after validating the workspace version and release tag.
 - BREAKING for local dogfooding: resolve `JIG_DEV_BIN` directly instead of copying it into the Jig cache, so local runtime changes use the current development binary after version validation.
 - Hard-fail `scripts/install-jig.sh` when `JIG_DEV_BIN` is set but missing, non-executable, or resolves to a binary whose version does not match the generated repo instead of falling back to cached runtime selection. Direct callers of `scripts/install-jig.sh` should use `scripts/jig`, set a matching `JIG_DEV_BIN`, unset it, or run the normal cached installer path.
 - Split the local development proxy runtime into the `jig-dev-proxy` workspace crate used by the `jig-sh` CLI.
