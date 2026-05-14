@@ -1,10 +1,13 @@
 # jig.sh
 
-Reusable harness for making Rust application repos operable by coding agents, including SQLx/Postgres backends and tooling-only Rust repos, with optional web apps.
+[![Tests](https://github.com/bpcakes/jig-sh/actions/workflows/rust-tests.yml/badge.svg)](https://github.com/bpcakes/jig-sh/actions/workflows/rust-tests.yml)
+[![Crates.io](https://img.shields.io/crates/v/jig-sh)](https://crates.io/crates/jig-sh)
 
-Jig turns a repo into an operating environment for coding agents. It makes agentic software work repeatable, inspectable, and reviewable through:
+Jig turns a Rust application repo into an operating environment for coding agents. Without it, agents lose context across machines, lack a stable execution contract, and leave no inspectable record of their work. Jig fixes that by generating the scaffolding once and keeping it in sync.
 
-- agent-facing repo guidance
+It makes agentic software work repeatable, inspectable, and reviewable through:
+
+- agent-facing repo guidance (`AGENTS.md`, `agent-map.md`)
 - a stable top-level `make` contract
 - a typed `jig` runtime over that contract
 - a repo-scoped local dev proxy for stable development hostnames
@@ -12,6 +15,20 @@ Jig turns a repo into an operating environment for coding agents. It makes agent
 - repo policy scripts
 - GitHub Actions workflows
 - template-based sync via the native `jig` renderer
+
+## Prerequisites
+
+- Rust 1.85+
+- Bun — for repos with web app targets
+- Postgres — when `sqlx_enabled = true`
+
+## Installation
+
+```sh
+cargo install jig-sh
+```
+
+Generated repos install and pin their own `jig` version automatically via `scripts/install-jig.sh`. You only need a global install to run `jig init` or `jig adopt` on a repo for the first time.
 
 ## What It Generates
 
@@ -30,7 +47,7 @@ The template renders these repo-owned assets into a consumer repository:
 
 Generated repos keep `make` as the execution backend, but they also get a `scripts/jig` launcher, MCP wiring, and append-only repo memory under `.agent/state/*.jsonl`.
 
-On fresh machines, generated repos can check and bootstrap expected Codex-side Jig skills through the launcher:
+On fresh machines, generated repos can check and bootstrap expected agent skills through the launcher:
 
 ```sh
 scripts/jig agent doctor
@@ -39,31 +56,13 @@ scripts/jig agent bootstrap
 
 For local dogfooding with an existing sibling `jig-skills` checkout, pass `--marketplace ../jig-skills` to `agent bootstrap`.
 
-The template does not try to generate your application code, crate-level `AGENTS.md` files, or a schema dump implementation. Those remain project-owned. SQLx, migration, and schema-check contract pieces are optional via `sqlx_enabled`.
+The template does not generate application code, crate-level `AGENTS.md` files, or a schema dump implementation — those remain project-owned. SQLx, migration, and schema-check contract pieces are optional via `sqlx_enabled`.
 
-For existing repositories, root `AGENTS.md` remains repo-owned. `jig adopt` inserts or updates only the marked Jig managed block and preserves the rest of the file.
-
-## Templates
-
-In Jig, `--template` means the source repository that contains the harness files
-to render into another project. Today Jig ships one general-purpose repository
-harness template: this `jig-sh` repo's `templates/project` directory.
-
-Use a local `jig-sh` checkout when you want to dogfood head:
-
-```sh
---template /path/to/jig-sh
-```
-
-Use the public git source when you want to adopt from the shared template:
-
-```sh
---template https://github.com/bpcakes/jig-sh.git
-```
+For existing repositories, root `AGENTS.md` remains repo-owned. `jig adopt` inserts or updates only the marked Jig-managed block and preserves the rest of the file.
 
 ## Quick Start
 
-Bootstrap a new repo from the template:
+**Bootstrap a new repo:**
 
 ```sh
 jig init /path/to/target-repo \
@@ -83,7 +82,7 @@ jig init /path/to/target-repo \
   --sqlx-enabled false
 ```
 
-Adopt the template in an existing repository:
+**Adopt the template in an existing repository:**
 
 ```sh
 cd /path/to/target-repo
@@ -96,7 +95,9 @@ jig adopt . \
 
 For a tooling-only repo, replace the migration flag with `--sqlx-enabled false`.
 
-Update an adopted repo. `jig update` refuses to overwrite changed template-managed files unless `--force` is passed:
+**Update an adopted repo:**
+
+`jig update` refuses to overwrite changed template-managed files unless `--force` is passed:
 
 ```sh
 cd /path/to/target-repo
@@ -113,16 +114,45 @@ jig update \
   --force
 ```
 
-When changing the `jig` runtime itself, build a dev binary and point the launcher at it so the repo-local cache cannot mask current code:
+To re-render from stored `.jig.toml` answers without advancing the template source:
+
+```sh
+cd /path/to/target-repo
+jig update --recopy
+```
+
+Pass `--force` if the rendered output should replace existing template-managed files.
+
+`.jig.toml` serves as both the public repo-facing config and the renderer answers file used by `jig update --recopy`. `jig update --recopy` re-renders from the stored `_commit`; plain `jig update` advances to the current resolved template source. Set `template_source_url` in `.jig.toml` for portable recopy/update behavior across machines.
+
+**Develop against a local build:**
 
 ```sh
 cargo build -p jig-sh --bin jig
 JIG_DEV_BIN=target/debug/jig scripts/jig work status
 ```
 
+## Templates
+
+In Jig, `--template` means the source repository containing the harness files to render into another project. Today Jig ships one general-purpose repository harness template: this repo's `templates/project` directory.
+
+Use a local checkout to dogfood head:
+
+```sh
+--template /path/to/jig-sh
+```
+
+Use the public git source to adopt from the shared template:
+
+```sh
+--template https://github.com/bpcakes/jig-sh.git
+```
+
 ## Local Dev Proxy
 
-Generated repos can run supervised development commands behind stable local hostnames:
+Generated repos can run supervised development commands behind stable local hostnames.
+
+### Running apps
 
 ```sh
 scripts/jig dev
@@ -132,37 +162,32 @@ scripts/jig proxy list
 
 `scripts/jig dev` runs configured `[[dev.apps]]`, legacy `[[frontend_apps]]`, or discovered workspace apps. It does not run the generic `dev_command`; keep `make dev` for repo-wide commands that do not bind a supervised app port. Prefer `argv` for `[[dev.apps]]`; shell-form `command` runs through the platform shell from committed repo configuration and should be treated as trusted code execution. Apps with `proxy = false` run directly and do not publish Jig proxy routes.
 
-For HTTPS browser trust, generate and explicitly trust the local CA:
+### HTTPS setup
+
+Generate and explicitly trust the local CA:
 
 ```sh
 scripts/jig proxy cert generate
 scripts/jig proxy cert trust --accept-trust-scope
+```
+
+To remove trust before regenerating or discarding a CA:
+
+```sh
 scripts/jig proxy cert untrust --accept-trust-scope
 ```
 
-The trusted CA is local and name-constrained to configured Jig development DNS names plus loopback and detected IPv4 LAN addresses, but the trust and untrust commands still require `--accept-trust-scope` to acknowledge platform trust-store mutation. Keep `ca-key.pem` private, exclude the proxy state directory from backup or sync tools that may copy private keys outside local filesystem permissions, and run `scripts/jig proxy cert untrust --accept-trust-scope` before regenerating or discarding a trusted CA. On macOS, untrust removes matching Jig CA certificates from the login keychain by fingerprint; on Linux, Jig invokes the p11-kit and CA-refresh helpers from fixed system tool directories, and untrust removes the exact current CA trust anchor when available. Automatic certificate generation, trust, and untrust are supported on macOS and Linux; Windows HTTPS certificate files are not written until owner-only ACL hardening is implemented.
+The `--accept-trust-scope` flag is required to acknowledge platform trust-store mutation. The CA is local and name-constrained to configured Jig development DNS names plus loopback and detected IPv4 LAN addresses. Keep `ca-key.pem` private and exclude the proxy state directory from backup or sync tools.
 
-Process-owned proxy routes are supported on Linux and macOS. LAN mode binds the proxy on `0.0.0.0`; reachable LAN clients can use process-owned routes to supervised loopback apps, while aliases remain loopback-client-only. On Windows and BSD-like platforms, Jig can still run app commands directly with `scripts/jig proxy run --no-proxy`, or you can use `scripts/jig proxy alias` for manually managed loopback services, but automatic process-owned route publication is refused until high-confidence process start-token verification is available. Windows `proxy stop` uses the authenticated health PID but cannot start-token-check that PID before `taskkill`.
+Automatic certificate generation, trust, and untrust are supported on macOS and Linux. On macOS, untrust removes matching Jig CA certificates from the login keychain by fingerprint. On Linux, Jig invokes the p11-kit and CA-refresh helpers from fixed system tool directories. Windows HTTPS certificate files are not written until owner-only ACL hardening is implemented.
 
-The `jig-sh` crate enables the local proxy stack by default. Library or MCP/contract-only consumers that do not need the TLS/HTTP proxy dependencies can build with `default-features = false`; the `dev` and `proxy` CLI surfaces remain parseable but return clear unsupported-feature errors.
+### Platform notes
 
-If you edit `.jig.toml` and want a full re-render from the stored answers:
+Process-owned proxy routes are supported on Linux and macOS. LAN mode binds the proxy on `0.0.0.0`; reachable LAN clients can use process-owned routes to supervised loopback apps, while aliases remain loopback-client-only.
 
-```sh
-cd /path/to/target-repo
-jig update --recopy
-```
+On Windows and BSD-like platforms, run app commands directly with `scripts/jig proxy run --no-proxy`, or use `scripts/jig proxy alias` for manually managed loopback services. Automatic process-owned route publication is not available on these platforms.
 
-If the rendered output should replace existing template-managed files, pass `--force`.
-
-The generated repo uses `.jig.toml` as both:
-
-- the public repo-facing config
-- the native renderer answers file used by `jig update` and `jig update --recopy`
-
-Set `template_source_url` in `.jig.toml` if you want portable recopy/update behavior across machines. When set, the renderer writes it into `_src_path`; otherwise local template renders keep the local source path.
-
-`jig update --recopy` re-renders from the stored `_commit`. Plain `jig update` advances to the current resolved template source.
+The `jig-sh` crate enables the proxy stack by default. Library or MCP/contract-only consumers that do not need TLS/HTTP proxy dependencies can build with `default-features = false`; the `dev` and `proxy` CLI surfaces remain parseable but return clear unsupported-feature errors.
 
 ## Required Repo Conventions
 
@@ -186,15 +211,14 @@ Optional web apps are expected to expose these package scripts in each configure
 
 The default workflow assumes Bun for package installation and script execution.
 
-Generated repos also expect Rust to be available for `scripts/install-jig.sh`, which installs the exact pinned `jig` version when the launcher is first used.
-
 ## Layout
 
-- `crates/jig/`: publishable `jig` runtime and MCP server
-- `templates/project/`: files rendered into downstream repos
-- `docs/`: config, adoption, and public-contract guidance
-- `examples/`: example answer files
-- `scripts/validate-fixtures.sh`: renders sample repos and validates the generated harness
+- `crates/jig/` — publishable `jig` runtime and MCP server
+- `crates/jig-dev-proxy/` — local HTTP/HTTPS proxy with TLS certificate management
+- `templates/project/` — files rendered into downstream repos
+- `docs/` — configuration reference, adoption guide, and public contract documentation
+- `examples/` — example `.jig.toml` answer files
+- `scripts/validate-fixtures.sh` — renders sample repos and validates the generated harness
 
 ## Validate This Repo
 
@@ -202,15 +226,16 @@ Generated repos also expect Rust to be available for `scripts/install-jig.sh`, w
 ./scripts/validate-fixtures.sh
 ```
 
-## Release Jig
+## Release
 
 Use the GitHub Actions `Release` workflow for the lowest-touch release path. Leave `version` blank to publish the next patch version, or set it explicitly. The workflow prepares the release commit, updates `CHANGELOG.md`, creates a local tag, publishes `jig-dev-proxy` and then `jig-sh` to crates.io through trusted publishing, pushes the tag to origin after both crates publish, and creates the GitHub Release.
 
-For the already-published `v0.1.0`, run the same workflow with `backfill_v0_1_0=true` to create the missing GitHub Release without publishing or retagging.
+`CHANGELOG.md` release sections are generated from git history. Conventional commit prefixes (`feat:`, `fix:`, `docs:`, `test:`, `refactor:`, `perf:`, `build:`, `ci:`, `chore:`) drive the release-note categories; unprefixed commits land in `Other`. Do not hand-edit an upcoming version section before running the workflow.
 
-`CHANGELOG.md` release sections are generated from git history and owned by the release automation. Conventional commit prefixes (`feat:`, `fix:`, `docs:`, `test:`, `tests:`, `refactor:`, `perf:`, `build:`, `ci:`, `chore:`) drive the release-note categories; unprefixed commits land in `Other`. Do not hand-edit an upcoming version section before running the workflow; put any wording changes in a follow-up commit after the generated release notes exist.
+<details>
+<summary>Local release steps</summary>
 
-The local release script remains the typed entrypoint for validation and manual recovery. The `release-github` target requires the GitHub CLI (`gh`) with permission to create releases.
+The local release script is the typed entrypoint for validation and manual recovery. The `release-github` target requires the GitHub CLI (`gh`) with permission to create releases.
 
 ```sh
 make release-prepare RELEASE_VERSION=0.1.1
@@ -223,14 +248,22 @@ make release-publish RELEASE_VERSION=0.1.1
 make release-github RELEASE_VERSION=0.1.1
 ```
 
-The release version defaults to the `jig-sh` package version from Cargo metadata. To override it explicitly:
+- `release-prepare` — updates all pinned version files and regenerates `CHANGELOG.md`
+- `release-check` — requires a clean worktree, verifies version wiring and changelog coverage, runs `make ci`, validates rendered fixtures, and runs crates.io publish dry runs
+- `release-tag` — creates the annotated local `vVERSION` tag after the same checks
+- `release-publish` — requires the tag to point at `HEAD`, publishes `jig-dev-proxy`, waits for crates.io to see it, publishes `jig-sh`, then pushes the tag to origin
+- `release-github` — creates the GitHub Release from the matching `CHANGELOG.md` section
 
-```sh
-make release-check RELEASE_VERSION=0.1.0
-```
+Before the first split-crate release, pre-create crates.io Trusted Publishing configuration for both packages (`jig-dev-proxy` and `jig-sh`), repository `bpcakes/jig-sh`, workflow `release.yml`, and environment `crates-io`. Protect that GitHub environment with required reviewers.
 
-`release-prepare` updates all pinned version files and regenerates `CHANGELOG.md`; run it before `release-tag` when bumping versions locally. `release-check` requires a clean worktree, verifies repo version wiring and changelog coverage, runs `make ci`, validates rendered fixtures, and runs crates.io publish dry runs where the registry dependency chain allows them. Before a new `jig-dev-proxy` version exists in the registry, `release-check` validates the `jig-sh` package with a local registry patch so the package is still built before any version is published. `release-tag` creates the annotated local `vVERSION` tag after the same checks. `release-publish` first requires that tag to point at `HEAD`, reruns the full checks, publishes `jig-dev-proxy`, waits for crates.io to see it, publishes `jig-sh`, then pushes the tag to `origin` if needed and verifies the remote tag resolves to `HEAD`. `release-github` creates the GitHub Release from the matching `CHANGELOG.md` section.
-
-Before the first split-crate release, pre-create crates.io Trusted Publishing configuration for both packages: `jig-dev-proxy` and `jig-sh`, repository `bpcakes/jig-sh`, workflow `release.yml`, and environment `crates-io`; protect that GitHub environment with required reviewers. If either package is not registered for trusted publishing, the first publish attempt for that package fails before the release tag is pushed. Fix the registry/auth/network issue and rerun the publish step or `make release-publish`; it will skip package versions already present on crates.io and push the remote tag only after every crate is published. If crates.io rejects a package before any crate version is published, fix the release commit and rerun with the explicit prepared version. If only part of the crate set was published, keep the same version for the remaining package when the published crate contents are acceptable; bump only when a published crate version itself must change because crates.io versions cannot be overwritten or republished after yank.
+`release-publish` skips package versions already present on crates.io and pushes the remote tag only after every crate is published. If only part of the crate set was published, keep the same version for remaining packages; bump only when a published crate version itself must change, since crates.io versions cannot be overwritten after yank.
 
 If a workflow run pushes the release commit but fails before the tag is pushed, rerun the workflow with the explicit prepared version instead of leaving `version` blank.
+
+For the already-published `v0.1.0`, run the workflow with `backfill_v0_1_0=true` to create the missing GitHub Release without publishing or retagging.
+
+</details>
+
+## License
+
+MIT
