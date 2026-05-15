@@ -82,9 +82,8 @@ impl CliProgress {
     where
         E: fmt::Display,
     {
-        result.map_err(|error| {
+        result.inspect_err(|_| {
             self.blocked("operation failed; see error below");
-            error
         })
     }
 
