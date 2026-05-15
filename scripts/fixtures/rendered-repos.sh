@@ -43,7 +43,7 @@ validate_backend_fixture() {
     git commit -m "change answers" >/dev/null
     scripts/jig update --recopy --force >/dev/null
     grep -q '^DEFAULT_BRANCH ?= dev$' Makefile
-    grep -q '^JIG_VERSION ?= 0.1.0$' Makefile
+    grep -q '^JIG_VERSION ?= 0.2.0-beta.1$' Makefile
     if [[ -f .github/workflows/webapp-checks.yml ]]; then
       rg -q "No web apps configured" .github/workflows/webapp-checks.yml
     fi

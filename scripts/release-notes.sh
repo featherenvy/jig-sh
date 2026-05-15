@@ -82,7 +82,12 @@ release_date = sys.argv[2]
 subjects = [
     line.strip()
     for line in pathlib.Path(sys.argv[3]).read_text().splitlines()
-    if line.strip() and not re.fullmatch(r"release v?\d+\.\d+\.\d+", line.strip(), re.IGNORECASE)
+    if line.strip()
+    and not re.fullmatch(
+        r"release v?\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?",
+        line.strip(),
+        re.IGNORECASE,
+    )
 ]
 
 groups = [
@@ -159,7 +164,7 @@ if not text.startswith("# Changelog"):
     raise SystemExit("CHANGELOG.md must start with '# Changelog'.")
 
 pattern = re.compile(
-    rf"^## v{re.escape(version)} - .+?(?=^## v|\Z)",
+    rf"^## v{re.escape(version)} - .+?(?=^## |\Z)",
     re.MULTILINE | re.DOTALL,
 )
 section_exists = pattern.search(text)
@@ -201,7 +206,7 @@ if not path.exists():
 
 text = path.read_text()
 match = re.search(
-    rf"^## v{re.escape(version)} - .+?(?=^## v|\Z)",
+    rf"^## v{re.escape(version)} - .+?(?=^## |\Z)",
     text,
     re.MULTILINE | re.DOTALL,
 )

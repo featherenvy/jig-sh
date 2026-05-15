@@ -282,14 +282,10 @@ fn starts_turbofish(after_name: &str) -> bool {
 }
 
 fn test_module_decl_code(code: &str) -> Option<TestModuleDecl> {
-    let Some(mod_index) = find_keyword(code, "mod") else {
-        return None;
-    };
+    let mod_index = find_keyword(code, "mod")?;
     let after_mod = code[mod_index + 3..].trim_start();
     let mut chars = after_mod.char_indices();
-    let Some((_, first)) = chars.next() else {
-        return None;
-    };
+    let (_, first) = chars.next()?;
     if !(first == '_' || first.is_ascii_alphabetic()) {
         return None;
     }

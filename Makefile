@@ -8,7 +8,7 @@ BUN ?= bun
 BUN_INSTALL_FLAGS ?= --frozen-lockfile
 
 DEFAULT_BRANCH ?= main
-JIG_VERSION ?= 0.1.0
+JIG_VERSION ?= 0.2.0-beta.1
 RUST_CRATE_ROOTS := crates
 
 BOOTSTRAP_COMMAND := cargo fetch

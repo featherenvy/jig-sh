@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 INSTALLER="$ROOT_DIR/scripts/install-jig.sh"
-JIG_VERSION="0.1.0"
+JIG_VERSION="0.2.0-beta.1"
 
 if [[ ! -x "$INSTALLER" ]]; then
   echo "Missing $INSTALLER." >&2

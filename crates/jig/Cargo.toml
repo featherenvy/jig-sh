@@ -29,7 +29,7 @@ dev-proxy = ["dep:jig-dev-proxy"]
 anyhow.workspace = true
 clap.workspace = true
 fs4.workspace = true
-jig-dev-proxy = { path = "../jig-dev-proxy", version = "=0.1.0", optional = true }
+jig-dev-proxy = { workspace = true, optional = true }
 minijinja = { version = "2.19.0", features = ["custom_syntax"] }
 serde.workspace = true
 serde_json.workspace = true

@@ -107,7 +107,7 @@ import sys
 
 version = sys.argv[1]
 bump = sys.argv[2]
-match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", version)
+match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?", version)
 if not match:
     raise SystemExit(f"Cannot bump non-semver version: {version}")
 
@@ -147,6 +147,7 @@ require_version_consistency() {
   local make_version
   local contract_version
   local launcher_version
+  local proxy_dependency_version
 
   local package_name
   for package_name in "${PUBLISH_PACKAGE_NAMES[@]}"; do
@@ -156,6 +157,26 @@ require_version_consistency() {
       exit 1
     fi
   done
+
+  proxy_dependency_version="$(python3 - "$ROOT_DIR/Cargo.toml" <<'PY'
+import pathlib
+import re
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text()
+match = re.search(r'(?m)^jig-dev-proxy\s*=\s*\{[^}\n]*version\s*=\s*"=([^"]+)"', text)
+if match:
+    print(match.group(1))
+PY
+)"
+  if [[ -z "$proxy_dependency_version" ]]; then
+    echo "Could not read jig-dev-proxy exact dependency version from workspace Cargo.toml." >&2
+    exit 1
+  fi
+  if [[ "$proxy_dependency_version" != "$version" ]]; then
+    echo "jig-dev-proxy dependency version is $proxy_dependency_version, expected $version." >&2
+    exit 1
+  fi
 
   make_version="$(sed -n 's/^JIG_VERSION[[:space:]]*[:?]\{0,1\}=[[:space:]]*//p' "$ROOT_DIR/Makefile" | sed 's/[[:space:]]*#.*$//; s/[[:space:]]*$//')"
   if [[ -z "$make_version" ]]; then
@@ -357,8 +378,9 @@ import sys
 root = pathlib.Path(sys.argv[1])
 version = sys.argv[2]
 release_fixture_files = sys.argv[3:]
-if not re.fullmatch(r"\d+\.\d+\.\d+", version):
-    raise SystemExit(f"Version must be MAJOR.MINOR.PATCH, got {version!r}.")
+semver_release = r"\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
+if not re.fullmatch(semver_release, version):
+    raise SystemExit(f"Version must be MAJOR.MINOR.PATCH[-PRERELEASE], got {version!r}.")
 
 def replace_required(path, pattern, replacement, label=None, flags=0):
     text = path.read_text()
@@ -400,6 +422,12 @@ replace_exactly_once(
     r'(?ms)(^\[workspace\.package\]\n(?:(?!^\[).)*?^version\s*=\s*)"[^"]*"',
     rf'\g<1>"{version}"',
     "workspace package version",
+)
+replace_exactly_once(
+    root / "Cargo.toml",
+    r'(jig-dev-proxy\s*=\s*\{[^}\n]*version\s*=\s*)"=[^"]*"',
+    rf'\g<1>"={version}"',
+    "workspace jig-dev-proxy exact dependency version",
 )
 for package in ("jig-dev-proxy", "jig-sh"):
     replace_exactly_once(
@@ -445,12 +473,12 @@ for path in sorted(jig_toml_paths):
 replace_optional(
     root / "scripts" / "fixtures" / "rendered-repos.sh",
     # This file stores the expected grep pattern literally, including ^ and $.
-    r"\^JIG_VERSION \?= \d+\.\d+\.\d+\$",
+    r"\^JIG_VERSION \?= [^$]+\$",
     f"^JIG_VERSION ?= {version}$",
 )
 replace_optional(
     root / "scripts" / "fixtures" / "runtime-smoke.sh",
-    r"\.git/jig-tools/\d+\.\d+\.\d+/bin/jig",
+    r"\.git/jig-tools/[^/]+/bin/jig",
     f".git/jig-tools/{version}/bin/jig",
 )
 PY
@@ -465,7 +493,7 @@ release_stage() {
   local release_path
 
   for release_path in \
-    Cargo.toml Cargo.lock Makefile scripts/jig .agent/jig-contract.json CHANGELOG.md \
+    Cargo.toml Cargo.lock crates/jig/Cargo.toml Makefile scripts/jig .agent/jig-contract.json CHANGELOG.md \
     scripts/fixtures/rendered-repos.sh scripts/fixtures/runtime-smoke.sh
   do
     if [[ -e "$ROOT_DIR/$release_path" ]]; then

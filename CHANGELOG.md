@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.2.0-beta.1 - 2026-05-15
+
+### Changed
+- Extract tests into dedicated modules
+
+### Other
+- Implement scripts/jig agent doctor/bootstrap for Jig skills setup
+- Migrate .jig configuration from YAML to TOML format
+- Add GitHub Actions release workflow and CHANGELOG
+- Add goal command for structured work harnesses with validation contracts
+- Implement goal work harness with input validation and normalization
+- Implement local development proxy with HTTP/HTTPS, process supervision, and multi-app support
+- Improve README clarity, structure, and documentation
+- Default jig init and adopt to official template source; add CONTRIBUTING guide
+- Add build-time template pin policy for released vs unreleased Jig builds
+- Upgrade jig contract to v2: command-based tools and enhanced validation
+- Add progress tracking to bootstrap operations with formatted terminal output
+- Add policy module for repository validation checks
+
 ## Unreleased
 
 ### Added

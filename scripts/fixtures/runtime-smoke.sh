@@ -185,7 +185,7 @@ PY
     rg -q "Runtime validation" ".agent/plans/${plan_id}.md"
     [[ -f .agent/state/receipts.jsonl ]]
     [[ -f .agent/state/decisions.jsonl ]]
-    [[ -f ".git/jig-tools/0.1.0/bin/jig" ]]
+    [[ -f ".git/jig-tools/0.2.0-beta.1/bin/jig" ]]
     if [[ "$expect_sqlx" == "1" ]]; then
       find crates/acme-db/migrations -name "*_${migration_name}.up.sql" | grep -q .
     fi
