@@ -4,16 +4,28 @@ on:
   pull_request:
     paths:
       - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - ".jig.toml"
+      - ".agent/jig-contract.json"
       - "Makefile"
-      - "scripts/check-rust-file-loc.sh"
+      - "scripts/jig"
+      - "scripts/install-jig.sh"
       - ".github/workflows/repo-policy.yml"
   push:
     branches:
       - master
     paths:
       - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - ".jig.toml"
+      - ".agent/jig-contract.json"
       - "Makefile"
-      - "scripts/check-rust-file-loc.sh"
+      - "scripts/jig"
+      - "scripts/install-jig.sh"
       - ".github/workflows/repo-policy.yml"
   merge_group:
     types:
@@ -35,9 +47,18 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1
+        with:
+          cache: false
+          rustflags: ""
+      - name: Build current Jig binary
+        run: cargo build -p jig-sh --bin jig --locked
       - name: Detect disallowed mod.rs files
+        env:
+          JIG_DEV_BIN: target/debug/jig
         run: |
-          make check-no-mod-rs
+          scripts/jig check-no-mod-rs
 
   rust-file-loc:
     name: Enforce agentic-first Rust file size policy
@@ -48,6 +69,23 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           fetch-depth: 0
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1
+        with:
+          cache: false
+          rustflags: ""
+      - name: Build current Jig binary
+        run: cargo build -p jig-sh --bin jig --locked
       - name: Check Rust file LOC policy
+        env:
+          JIG_DEV_BIN: target/debug/jig
         run: |
-          make check-rust-file-loc
+          set -euo pipefail
+          if git rev-parse --verify origin/master >/dev/null 2>&1; then
+            base_ref="$(git merge-base HEAD origin/master)"
+          elif git rev-parse --verify HEAD^ >/dev/null 2>&1; then
+            base_ref="HEAD^"
+          else
+            base_ref="4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+          fi
+          scripts/jig check-rust-file-loc --changed-against "$base_ref"

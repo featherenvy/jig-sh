@@ -6,8 +6,11 @@ on:
       - "AGENTS.md"
       - "**/AGENTS.md"
       - "agent-map.md"
-      - "scripts/check-agent-map.sh"
-      - "scripts/generate-agent-map.sh"
+[% for root in rust_crate_roots %]
+      - "<<[ root ]>>/**"
+[% endfor %]
+      - "scripts/jig"
+      - "scripts/install-jig.sh"
       - ".github/workflows/agent-map-check.yml"
   push:
     branches:
@@ -16,8 +19,11 @@ on:
       - "AGENTS.md"
       - "**/AGENTS.md"
       - "agent-map.md"
-      - "scripts/check-agent-map.sh"
-      - "scripts/generate-agent-map.sh"
+[% for root in rust_crate_roots %]
+      - "<<[ root ]>>/**"
+[% endfor %]
+      - "scripts/jig"
+      - "scripts/install-jig.sh"
       - ".github/workflows/agent-map-check.yml"
   merge_group:
     types:
@@ -39,7 +45,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: false
+          rustflags: ""
+
       - name: Validate agent-map links and coverage
         shell: bash
         run: |
-          scripts/check-agent-map.sh
+          scripts/jig agent-map check

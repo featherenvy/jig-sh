@@ -232,7 +232,61 @@ PY
     fi
 
     local file_version
-    file_version="$("$ROOT_DIR/scripts/jig-toml.sh" get "$ROOT_DIR/$version_file" jig_version)"
+    file_version="$(python3 - "$ROOT_DIR/$version_file" <<'PY'
+import ast
+import pathlib
+import re
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text()
+
+try:
+    import tomllib
+except ModuleNotFoundError:
+    tomllib = None
+
+if tomllib is not None:
+    print(tomllib.loads(text).get("jig_version", ""))
+    raise SystemExit(0)
+
+# Release-pinned answer files keep jig_version at top level. tomllib remains
+# authoritative when available.
+def strip_inline_comment(value):
+    quote = None
+    escaped = False
+    for index, char in enumerate(value):
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\":
+            escaped = True
+            continue
+        if quote is not None:
+            if char == quote:
+                quote = None
+            continue
+        if char in {"'", '"'}:
+            quote = char
+            continue
+        if char == "#":
+            return value[:index].rstrip()
+    return value.strip()
+
+pattern = re.compile(r"^\s*jig_version\s*=\s*(.*?)\s*$")
+for line in text.splitlines():
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#"):
+        continue
+    if stripped.startswith("["):
+        break
+    match = pattern.match(line)
+    if match:
+        print(ast.literal_eval(strip_inline_comment(match.group(1))))
+        break
+else:
+    print("")
+PY
+)"
     if [[ -z "$file_version" ]]; then
       echo "$version_file is missing jig_version." >&2
       exit 1

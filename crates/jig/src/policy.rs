@@ -1,0 +1,726 @@
+use std::collections::{BTreeMap, HashSet};
+use std::env;
+use std::fs;
+use std::path::{Component, Path, PathBuf};
+use std::process::{Command, Stdio};
+
+use anyhow::{Context, Result, bail};
+use serde_json::{Value, json};
+
+use crate::cli::{CheckMigrationImmutabilityOpts, CheckRustFileLocOpts};
+use crate::context::RepoContext;
+use crate::process::require_success;
+use crate::tool_defs::{cli_command, tool};
+
+const EMPTY_TREE_HASH: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+// New or growing files above this fail unless an explicit exception is present.
+const HARD_LIMIT: usize = 800;
+// Files above this fail even with an exception unless they are legacy and non-increasing.
+const ABSOLUTE_MAX: usize = 1000;
+// Files entering this band warn but do not fail.
+const SOFT_LIMIT_START: usize = 500;
+// Files above this warn that they are approaching the hard limit.
+const SOFT_LIMIT_END: usize = 600;
+// Files above this emit informational guidance for agent-review ergonomics.
+const TARGET_HIGH: usize = 400;
+const LEGACY_TEST_RUST_LOCKED_TARGET: &str = "test-rust-locked";
+
+mod agent_map;
+mod sqlx;
+
+#[derive(Debug)]
+pub(crate) struct NativeToolOutput {
+    pub(crate) exit_status: i32,
+    pub(crate) stdout: String,
+    pub(crate) stderr: String,
+}
+
+pub(crate) fn run_direct(ctx: &RepoContext, command: crate::cli::CommandKind) -> Result<Value> {
+    match command {
+        crate::cli::CommandKind::AgentMap(command) => match command {
+            crate::cli::AgentMapCommand::Generate(opts) => agent_map::generate(ctx, &opts),
+            crate::cli::AgentMapCommand::Check(opts) => agent_map::check(ctx, &opts),
+        },
+        crate::cli::CommandKind::CheckAgentGuides => agent_map::check_guides(ctx),
+        crate::cli::CommandKind::CheckRustFileLoc(opts) => check_rust_file_loc(ctx, &opts),
+        crate::cli::CommandKind::CheckNoModRs => check_no_mod_rs(ctx),
+        crate::cli::CommandKind::CheckMigrationImmutability(opts) => {
+            check_migration_immutability(ctx, &opts)
+        }
+        crate::cli::CommandKind::GenerateSqlxUncheckedQueriesTodo(opts) => {
+            sqlx::generate_todo(ctx, &opts)
+        }
+        crate::cli::CommandKind::CheckSqlxUncheckedNonTest => sqlx::check_non_test(ctx),
+        crate::cli::CommandKind::Bootstrap(_)
+        | crate::cli::CommandKind::FmtCheck(_)
+        | crate::cli::CommandKind::Clippy(_)
+        | crate::cli::CommandKind::Test(_)
+        | crate::cli::CommandKind::TestLocked(_)
+        | crate::cli::CommandKind::SqlxCheck(_)
+        | crate::cli::CommandKind::SchemaCheck(_)
+        | crate::cli::CommandKind::SchemaDump(_)
+        | crate::cli::CommandKind::MigrationAdd(_)
+        | crate::cli::CommandKind::ContractCheck(_)
+        | crate::cli::CommandKind::Dev(_)
+        | crate::cli::CommandKind::RunTarget(_)
+        | crate::cli::CommandKind::Proxy(_)
+        | crate::cli::CommandKind::Agent(_)
+        | crate::cli::CommandKind::Work(_)
+        | crate::cli::CommandKind::Init(_)
+        | crate::cli::CommandKind::Adopt(_)
+        | crate::cli::CommandKind::Update(_)
+        | crate::cli::CommandKind::Mcp => unreachable!("non-policy command routed to policy"),
+    }
+}
+
+pub(crate) fn contract_check(ctx: &RepoContext) -> Result<NativeToolOutput> {
+    let mut errors = Vec::new();
+    let root = ctx.root();
+    let manifest_path = root.join(".agent/jig-contract.json");
+    let mcp_path = root.join(".mcp.json");
+    let jig_script = root.join("scripts/jig");
+    let install_script = root.join("scripts/install-jig.sh");
+
+    if ctx.jig_version().is_empty() {
+        errors.push("Missing jig_version in .jig.toml.".to_string());
+    }
+    if ctx.tool_specs().iter().any(|tool| tool.kind == "memory") {
+        errors.push("Runtime state tools must not be declared in .agent/jig-contract.json.".into());
+    }
+    if !mcp_path.exists() {
+        errors.push("Missing .mcp.json.".into());
+    }
+    if !jig_script.exists() {
+        errors.push("Missing scripts/jig launcher.".into());
+    }
+    if !install_script.exists() {
+        errors.push("Missing scripts/install-jig.sh installer.".into());
+    }
+    if ctx.makefile_enabled() && !root.join("Makefile").exists() {
+        errors.push("makefile_enabled is true, but Makefile is missing.".into());
+    }
+    if ctx.sqlx_enabled() && ctx.rust_migration_dir().is_empty() {
+        errors.push("sqlx_enabled is true, but rust_migration_dir is empty.".into());
+    }
+    match ctx.contract_version() {
+        1 => {
+            let makefile_path = root.join("Makefile");
+            if !makefile_path.exists() {
+                errors.push("Missing Makefile required by contract version 1.".into());
+            } else if let Ok(makefile) = fs::read_to_string(&makefile_path) {
+                let targets = makefile_targets(&makefile);
+                for target in ctx.required_make_targets() {
+                    if !targets.contains(target.as_str()) {
+                        errors.push(format!("Missing required Make target: {target}."));
+                    }
+                }
+            }
+        }
+        2 => {
+            for command_key in ctx.required_commands() {
+                if !crate::context::SUPPORTED_COMMAND_KEYS.contains(&command_key.as_str()) {
+                    errors.push(format!(
+                        "Unsupported required command in jig contract: {command_key}."
+                    ));
+                    continue;
+                }
+                if let Err(error) = ctx.command_for_key(command_key) {
+                    errors.push(error.to_string());
+                }
+            }
+        }
+        other => errors.push(format!("Unsupported contract_version: {other}.")),
+    }
+
+    let tool_names = ctx
+        .tool_specs()
+        .iter()
+        .map(|tool| tool.name.as_str())
+        .collect::<HashSet<_>>();
+    for required in required_contract_tools(ctx) {
+        if !tool_names.contains(required) {
+            errors.push(format!("Missing required jig tool definition: {required}."));
+        }
+    }
+    for tool in ctx.tool_specs() {
+        match tool.kind.as_str() {
+            "native" => {
+                // Keep this whitelist aligned with runtime::execute_native_tool.
+                if !matches!(
+                    tool.name.as_str(),
+                    tool::CONTRACT_CHECK | tool::MIGRATION_ADD | tool::SCHEMA_CHECK
+                ) {
+                    errors.push(format!("Unsupported native tool: {}.", tool.name));
+                }
+            }
+            "command" => {
+                let Some(command_key) = tool.command.as_deref().filter(|key| !key.is_empty())
+                else {
+                    errors.push(format!(
+                        "Command-backed tool {} is missing command.",
+                        tool.name
+                    ));
+                    continue;
+                };
+                if !ctx
+                    .required_commands()
+                    .iter()
+                    .any(|required| required == command_key)
+                {
+                    errors.push(format!(
+                        "Command-backed tool {} references undeclared command {command_key}.",
+                        tool.name
+                    ));
+                }
+            }
+            "make" => {
+                if ctx.makefile_enabled() && !root.join("Makefile").exists() {
+                    errors.push(format!(
+                        "Make-backed tool {} requires Makefile, but Makefile is missing.",
+                        tool.name
+                    ));
+                }
+                if !ctx.makefile_enabled() {
+                    errors.push(format!(
+                        "Make-backed tool {} is declared while makefile_enabled is false.",
+                        tool.name
+                    ));
+                }
+            }
+            other => errors.push(format!("Unsupported tool kind for {}: {other}.", tool.name)),
+        }
+    }
+
+    if !errors.is_empty() {
+        return Ok(NativeToolOutput {
+            exit_status: 1,
+            stdout: String::new(),
+            stderr: errors
+                .into_iter()
+                .map(|error| format!("ERROR: {error}\n"))
+                .collect(),
+        });
+    }
+
+    Ok(NativeToolOutput {
+        exit_status: 0,
+        stdout: format!(
+            "jig contract check passed.\n  - manifest: {}\n  - jig version: {}\n  - tool definitions: {}\n",
+            manifest_path.display(),
+            ctx.jig_version(),
+            ctx.tool_specs().len()
+        ),
+        stderr: String::new(),
+    })
+}
+
+pub(crate) fn migration_add(ctx: &RepoContext, name: &str) -> Result<NativeToolOutput> {
+    if !ctx.sqlx_enabled() {
+        bail!("migration-add requires sqlx_enabled = true");
+    }
+    let migration_dir = ctx.rust_migration_dir();
+    if migration_dir.trim().is_empty() {
+        bail!("rust_migration_dir is empty");
+    }
+    let slug = slugify(name);
+    if slug.is_empty() {
+        bail!("Migration name {name:?} must contain at least one alphanumeric character.");
+    }
+    let timestamp = utc_timestamp()?;
+    let base = ctx
+        .root()
+        .join(migration_dir)
+        .join(format!("{timestamp}_{slug}"));
+    let up = base.with_extension("up.sql");
+    let down = base.with_extension("down.sql");
+    if up.exists() || down.exists() {
+        bail!("Migration files already exist for {}.", base.display());
+    }
+    if let Some(parent) = up.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("Failed to create {}", parent.display()))?;
+    }
+    fs::write(&up, format!("-- forward migration: {slug}\n"))
+        .with_context(|| format!("Failed to write {}", up.display()))?;
+    fs::write(&down, format!("-- rollback migration: {slug}\n"))
+        .with_context(|| format!("Failed to write {}", down.display()))?;
+    Ok(NativeToolOutput {
+        exit_status: 0,
+        stdout: format!("Created:\n  - {}\n  - {}\n", up.display(), down.display()),
+        stderr: String::new(),
+    })
+}
+
+pub(crate) fn schema_check(ctx: &RepoContext) -> Result<NativeToolOutput> {
+    let command_text = ctx.schema_dump_command();
+    if command_text.trim().is_empty() {
+        bail!("schema_dump_command is empty");
+    }
+    let schema_docs_dir = env::var("SCHEMA_DOCS_DIR").unwrap_or_else(|_| "docs/schema".into());
+    // A check intentionally reruns the configured dump command, then fails if
+    // the dump output path has uncommitted changes.
+    let output = Command::new("bash")
+        .current_dir(ctx.root())
+        .arg("-c")
+        .arg(command_text)
+        .output()
+        .context("Failed to run schema_dump_command")?;
+    require_success(&output, |_| {
+        format!(
+            "schema_dump_command failed with status {}\nstdout:\n{}\nstderr:\n{}",
+            output.status.code().unwrap_or(1),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+    })?;
+    let status = git_text(
+        ctx.root(),
+        &["status", "--porcelain", "--", schema_docs_dir.as_str()],
+    )?;
+    if !status.trim().is_empty() {
+        let diff = git_text(
+            ctx.root(),
+            &["--no-pager", "diff", "--", schema_docs_dir.as_str()],
+        )?;
+        return Ok(NativeToolOutput {
+            exit_status: 1,
+            stdout: String::new(),
+            stderr: format!(
+                "Schema dump is stale. Re-run {command_text} and commit {schema_docs_dir} changes.\n{status}{diff}"
+            ),
+        });
+    }
+    Ok(NativeToolOutput {
+        exit_status: 0,
+        stdout: "Schema dump is up to date.\n".into(),
+        stderr: String::new(),
+    })
+}
+
+fn required_contract_tools(ctx: &RepoContext) -> Vec<&'static str> {
+    let mut required = vec![
+        tool::FMT_CHECK,
+        tool::CLIPPY,
+        tool::TEST,
+        tool::CONTRACT_CHECK,
+    ];
+    // Contract v2 standardizes the command-backed bootstrap surface for agent
+    // setup; v1 repos only require it when their legacy manifest declares it.
+    if ctx.contract_version() == 2
+        || has_required_key(ctx, cli_command::BOOTSTRAP, "bootstrap_command")
+    {
+        required.push(tool::BOOTSTRAP);
+    }
+    if has_required_key(
+        ctx,
+        LEGACY_TEST_RUST_LOCKED_TARGET,
+        "rust_test_locked_command",
+    ) || has_required_key(ctx, cli_command::TEST_LOCKED, "rust_test_locked_command")
+    {
+        required.push(tool::TEST_LOCKED);
+    }
+    if ctx.sqlx_enabled() || has_required_key(ctx, cli_command::SQLX_CHECK, "sqlx_check_command") {
+        required.push(tool::SQLX_CHECK);
+    }
+    if ctx.sqlx_enabled()
+        || has_required_key(ctx, cli_command::MIGRATION_ADD, "migration_add_command")
+    {
+        required.push(tool::MIGRATION_ADD);
+    }
+    if (ctx.sqlx_enabled() && ctx.schema_dump_enabled())
+        || has_required_key(ctx, cli_command::SCHEMA_CHECK, "schema_check_command")
+    {
+        required.push(tool::SCHEMA_CHECK);
+    }
+    if (ctx.sqlx_enabled() && ctx.schema_dump_enabled())
+        || has_required_key(ctx, cli_command::SCHEMA_DUMP, "schema_dump_command")
+    {
+        required.push(tool::SCHEMA_DUMP);
+    }
+    required.sort_unstable();
+    required.dedup();
+    required
+}
+
+fn has_required_key(ctx: &RepoContext, make_target: &str, command_key: &str) -> bool {
+    // Contract v1 declares make targets; contract v2 declares command keys.
+    // Consult both so one helper can support migrated and legacy manifests.
+    ctx.required_make_targets()
+        .iter()
+        .any(|target| target == make_target)
+        || ctx
+            .required_commands()
+            .iter()
+            .any(|command| command == command_key)
+}
+
+fn makefile_targets(makefile: &str) -> HashSet<&str> {
+    makefile
+        .lines()
+        .filter_map(|line| {
+            let (target, _) = line.split_once(':')?;
+            if target
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-'))
+            {
+                Some(target)
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+pub(crate) fn write_agent_map(root: &Path, map_path: &Path) -> Result<()> {
+    agent_map::write(root, map_path)
+}
+
+pub(super) fn normalize_repo_relative_path(path: &Path, label: &str) -> Result<PathBuf> {
+    if path.is_absolute() {
+        bail!("{label} must be repository-relative: {}", path.display());
+    }
+
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::Normal(part) => normalized.push(part),
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                bail!(
+                    "{label} must stay inside the repository: {}",
+                    path.display()
+                )
+            }
+        }
+    }
+
+    if normalized.as_os_str().is_empty() {
+        bail!("{label} must not be empty");
+    }
+
+    Ok(normalized)
+}
+
+fn check_no_mod_rs(ctx: &RepoContext) -> Result<Value> {
+    let tracked = git_list_files(ctx.root(), ctx.rust_crate_roots())?;
+    let violations = tracked
+        .into_iter()
+        .filter(|path| path == "mod.rs" || path.ends_with("/mod.rs"))
+        .collect::<Vec<_>>();
+    Ok(json!({ "ok": violations.is_empty(), "violations": violations }))
+}
+
+fn check_rust_file_loc(ctx: &RepoContext, opts: &CheckRustFileLocOpts) -> Result<Value> {
+    let mode_count = [opts.staged, opts.changed_against.is_some(), opts.all]
+        .into_iter()
+        .filter(|value| *value)
+        .count();
+    if mode_count != 1 {
+        bail!("Exactly one of --staged, --changed-against, or --all is required.");
+    }
+    let previous_ref = if opts.staged {
+        if git_success(ctx.root(), &["rev-parse", "--verify", "HEAD"])? {
+            "HEAD".to_string()
+        } else {
+            EMPTY_TREE_HASH.into()
+        }
+    } else if let Some(ref_name) = &opts.changed_against {
+        ref_name.clone()
+    } else {
+        EMPTY_TREE_HASH.into()
+    };
+    let candidates = rust_candidate_files(ctx, opts)?;
+    let renames = if opts.all {
+        BTreeMap::new()
+    } else {
+        rust_renames(ctx, opts)?
+    };
+    let mut errors = Vec::new();
+    let mut warnings = Vec::new();
+    let mut infos = Vec::new();
+    for file in candidates {
+        if !ctx.root().join(&file).is_file() && !opts.staged {
+            continue;
+        }
+        let current = if opts.staged {
+            git_blob(ctx.root(), &format!(":{file}"))?
+        } else {
+            let path = ctx.root().join(&file);
+            fs::read_to_string(&path)
+                .with_context(|| format!("Failed to read {}", path.display()))?
+        };
+        let current_count = current.lines().count();
+        let previous_count =
+            previous_line_count(ctx.root(), &previous_ref, &file, renames.get(&file))?;
+        let has_exception = current
+            .lines()
+            .take(40)
+            .any(|line| line.contains("agentic-loc-exception:") || line.contains("@generated"));
+        if current_count > ABSOLUTE_MAX {
+            if current_count <= previous_count && previous_count > ABSOLUTE_MAX {
+                warnings.push(format!(
+                    "{file} remains above the absolute max at {current_count} LOC but did not increase."
+                ));
+            } else {
+                errors.push(format!(
+                    "{file} is {current_count} LOC, above the absolute max of {ABSOLUTE_MAX}."
+                ));
+            }
+        } else if current_count > HARD_LIMIT {
+            if current_count <= previous_count && previous_count > HARD_LIMIT {
+                warnings.push(format!(
+                    "{file} remains above the hard limit at {current_count} LOC but did not increase."
+                ));
+            } else if has_exception {
+                warnings.push(format!(
+                    "{file} is {current_count} LOC and uses an explicit exception annotation."
+                ));
+            } else {
+                errors.push(format!(
+                    "{file} is {current_count} LOC, above the hard limit of {HARD_LIMIT}."
+                ));
+            }
+        } else if current_count > SOFT_LIMIT_END {
+            warnings.push(format!(
+                "{file} is {current_count} LOC and is approaching the hard limit."
+            ));
+        } else if current_count > SOFT_LIMIT_START {
+            warnings.push(format!(
+                "{file} is {current_count} LOC and is above the soft limit."
+            ));
+        } else if current_count > TARGET_HIGH {
+            infos.push(format!(
+                "{file} is {current_count} LOC and is approaching the soft limit."
+            ));
+        }
+    }
+    Ok(json!({
+        "ok": errors.is_empty(),
+        "errors": errors,
+        "warnings": warnings,
+        "infos": infos,
+    }))
+}
+
+fn check_migration_immutability(
+    ctx: &RepoContext,
+    opts: &CheckMigrationImmutabilityOpts,
+) -> Result<Value> {
+    let dir = ctx.rust_migration_dir();
+    if dir.trim().is_empty() {
+        bail!("rust_migration_dir is empty");
+    }
+    let bytes = git_output(
+        ctx.root(),
+        &[
+            "diff",
+            "--name-status",
+            "-z",
+            "-M",
+            "--diff-filter=ADMRT",
+            &opts.changed_against,
+            "HEAD",
+            "--",
+            dir,
+        ],
+    )?;
+    let violations = migration_immutability_violations(&bytes);
+    Ok(json!({ "ok": violations.is_empty(), "violations": violations }))
+}
+
+fn migration_immutability_violations(bytes: &[u8]) -> Vec<String> {
+    let mut violations = Vec::new();
+    let entries = split_nul(bytes);
+    let mut index = 0usize;
+    while index < entries.len() {
+        let status = &entries[index];
+        index += 1;
+        if status == "A" {
+            index += 1;
+        } else if status.starts_with('R') {
+            if index + 2 > entries.len() {
+                break;
+            }
+            let old_path = entries[index].clone();
+            let new_path = entries[index + 1].clone();
+            index += 2;
+            violations.push(format!(
+                "{old_path}: Existing migration files are immutable. Rename detected ({status}): {old_path} -> {new_path}. Add a new forward-only migration instead."
+            ));
+        } else if index < entries.len() {
+            let path = entries[index].clone();
+            index += 1;
+            violations.push(format!(
+                "{path}: Existing migration files are immutable. Change detected ({status}) in {path}. Add a new forward-only migration instead."
+            ));
+        }
+    }
+    violations
+}
+
+fn rust_candidate_files(ctx: &RepoContext, opts: &CheckRustFileLocOpts) -> Result<Vec<String>> {
+    let mut args = vec!["diff", "--name-only", "--diff-filter=AMRT", "-z"];
+    let changed_ref;
+    if opts.staged {
+        args.push("--cached");
+    } else if let Some(reference) = &opts.changed_against {
+        changed_ref = reference.as_str();
+        args.push(changed_ref);
+        args.push("HEAD");
+    }
+    if opts.all {
+        return git_list_files(ctx.root(), ctx.rust_crate_roots()).map(|files| {
+            files
+                .into_iter()
+                .filter(|path| path.ends_with(".rs"))
+                .collect::<Vec<_>>()
+        });
+    }
+    args.push("--");
+    let root_args = ctx
+        .rust_crate_roots()
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    args.extend(root_args);
+    Ok(split_nul(&git_output(ctx.root(), &args)?)
+        .into_iter()
+        .filter(|path| path.ends_with(".rs"))
+        .collect())
+}
+
+fn rust_renames(
+    ctx: &RepoContext,
+    opts: &CheckRustFileLocOpts,
+) -> Result<BTreeMap<String, String>> {
+    let mut args = vec!["diff", "--name-status", "--diff-filter=R", "-z"];
+    if opts.staged {
+        args.push("--cached");
+    } else if let Some(reference) = &opts.changed_against {
+        args.push(reference);
+        args.push("HEAD");
+    }
+    args.push("--");
+    let root_args = ctx
+        .rust_crate_roots()
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    args.extend(root_args);
+    let entries = split_nul(&git_output(ctx.root(), &args)?);
+    let mut renames = BTreeMap::new();
+    let mut index = 0usize;
+    while index + 2 < entries.len() {
+        let _status = &entries[index];
+        let old = entries[index + 1].clone();
+        let new = entries[index + 2].clone();
+        renames.insert(new, old);
+        index += 3;
+    }
+    Ok(renames)
+}
+
+fn previous_line_count(
+    root: &Path,
+    reference: &str,
+    path: &str,
+    renamed_from: Option<&String>,
+) -> Result<usize> {
+    if let Some(contents) = git_blob_optional(root, &format!("{reference}:{path}"))? {
+        return Ok(contents.lines().count());
+    }
+    let Some(old) = renamed_from else {
+        return Ok(0);
+    };
+    Ok(git_blob_optional(root, &format!("{reference}:{old}"))?
+        .map(|contents| contents.lines().count())
+        .unwrap_or(0))
+}
+
+fn git_list_files(root: &Path, roots: &[String]) -> Result<Vec<String>> {
+    let mut args = vec!["ls-files", "-z", "--"];
+    args.extend(roots.iter().map(String::as_str));
+    Ok(split_nul(&git_output(root, &args)?))
+}
+
+fn git_blob(root: &Path, spec: &str) -> Result<String> {
+    git_text(root, &["show", spec])
+}
+
+fn git_blob_optional(root: &Path, spec: &str) -> Result<Option<String>> {
+    let output = Command::new("git")
+        .current_dir(root)
+        .args(["show", spec])
+        .stderr(Stdio::null())
+        .output()?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    Ok(Some(String::from_utf8_lossy(&output.stdout).into_owned()))
+}
+
+pub(super) fn git_success(root: &Path, args: &[&str]) -> Result<bool> {
+    Ok(Command::new("git")
+        .current_dir(root)
+        .args(args)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()?
+        .success())
+}
+
+fn git_text(root: &Path, args: &[&str]) -> Result<String> {
+    Ok(String::from_utf8_lossy(&git_output(root, args)?).into_owned())
+}
+
+pub(super) fn git_output(root: &Path, args: &[&str]) -> Result<Vec<u8>> {
+    let output = Command::new("git").current_dir(root).args(args).output()?;
+    if !output.status.success() {
+        bail!(
+            "git {} failed with status {}\nstderr:\n{}",
+            args.join(" "),
+            output.status.code().unwrap_or(1),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(output.stdout)
+}
+
+pub(super) fn split_nul(bytes: &[u8]) -> Vec<String> {
+    bytes
+        .split(|byte| *byte == 0)
+        .filter(|part| !part.is_empty())
+        .map(|part| String::from_utf8_lossy(part).into_owned())
+        .collect()
+}
+
+fn slugify(value: &str) -> String {
+    let mut slug = String::new();
+    let mut last_was_sep = false;
+    for ch in value.chars().flat_map(char::to_lowercase) {
+        if ch.is_ascii_alphanumeric() {
+            slug.push(ch);
+            last_was_sep = false;
+        } else if !last_was_sep && !slug.is_empty() {
+            slug.push('_');
+            last_was_sep = true;
+        }
+    }
+    slug.trim_matches('_').to_string()
+}
+
+fn utc_timestamp() -> Result<String> {
+    let now = time::OffsetDateTime::now_utc();
+    Ok(format!(
+        "{:04}{:02}{:02}{:02}{:02}{:02}",
+        now.year(),
+        u8::from(now.month()),
+        now.day(),
+        now.hour(),
+        now.minute(),
+        now.second()
+    ))
+}
+
+#[cfg(test)]
+mod tests;

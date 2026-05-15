@@ -65,10 +65,6 @@ impl RenderAnswers {
     pub(super) fn makefile_enabled(&self) -> bool {
         self.makefile_enabled
     }
-
-    pub(super) fn sqlx_enabled(&self) -> bool {
-        self.sqlx_enabled
-    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -230,14 +226,7 @@ impl RawAnswers {
                 shell_quote(metadata_dir)
             )
         });
-        let migration_add_command = self.migration_add_command.or_else(|| {
-            rust_migration_dir.as_deref().map(|dir| {
-                format!(
-                    "RUST_MIGRATION_DIR={} scripts/add-migration.sh",
-                    shell_quote(dir)
-                )
-            })
-        });
+        let migration_add_command = self.migration_add_command;
 
         Ok(RenderAnswers {
             repo_name,
@@ -258,17 +247,13 @@ impl RawAnswers {
             rust_sqlx_metadata_dir,
             schema_dump_enabled,
             schema_dump_command,
-            schema_check_command: self
-                .schema_check_command
-                .unwrap_or_else(|| "scripts/check-schema-dump.sh".into()),
+            schema_check_command: self.schema_check_command.unwrap_or_default(),
             sqlx_check_command,
             migration_add_command,
             bootstrap_command: self
                 .bootstrap_command
                 .unwrap_or_else(|| "cargo fetch".into()),
-            contract_check_command: self
-                .contract_check_command
-                .unwrap_or_else(|| "scripts/check-jig-contract.sh".into()),
+            contract_check_command: self.contract_check_command.unwrap_or_default(),
             dev_command: self.dev_command.unwrap_or_else(|| {
                 r#"echo "Define dev_command in .jig.toml" >&2 && exit 1"#.into()
             }),

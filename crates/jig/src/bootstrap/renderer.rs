@@ -2,7 +2,6 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use anyhow::{Context, Result, bail};
 use minijinja::{Environment, UndefinedBehavior, syntax::SyntaxConfig};
@@ -53,7 +52,7 @@ pub(super) fn stage_render(request: RenderStageRequest<'_>) -> Result<StagedRend
     ))?;
     request
         .progress
-        .step("generate agent map", "scripts/generate-agent-map.sh");
+        .step("generate agent map", "native renderer");
     request
         .progress
         .log_blocked_on_err(run_post_render_tasks(&destination))?;
@@ -120,9 +119,6 @@ fn render_template_files(
             continue;
         }
         managed_paths.insert(relative.clone());
-        if managed_paths::should_prune_rendered_path(&relative, answers) {
-            continue;
-        }
 
         let source = fs::read_to_string(&template_path)
             .with_context(|| format!("Failed to read {}", template_path.display()))?;
@@ -131,8 +127,6 @@ fn render_template_files(
             .with_context(|| format!("Failed to render {}", template_path.display()))?;
         write_rendered_file(destination, &relative, rendered.as_bytes())?;
     }
-
-    managed_paths.extend(managed_paths::sqlx_pruned_task_paths());
 
     Ok(managed_paths)
 }
@@ -301,19 +295,7 @@ fn remove_existing_symlink(path: &Path) -> Result<()> {
 
 fn run_post_render_tasks(destination: &Path) -> Result<()> {
     set_scripts_executable(destination)?;
-    let output = Command::new("bash")
-        .arg("scripts/generate-agent-map.sh")
-        .current_dir(destination)
-        .output()
-        .context("Failed to start bash scripts/generate-agent-map.sh")?;
-    if !output.status.success() {
-        bail!(
-            "scripts/generate-agent-map.sh failed.\nstdout:\n{}\nstderr:\n{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-    Ok(())
+    crate::policy::write_agent_map(destination, Path::new("agent-map.md"))
 }
 
 #[cfg(unix)]

@@ -9,7 +9,6 @@ rust_migration_dir = "crates/acme-db/migrations"
 rust_sqlx_metadata_dir = ".sqlx"
 schema_dump_enabled = true
 schema_dump_command = "scripts/dump-schema.sh"
-migration_add_command = "scripts/add-migration.sh"
 bootstrap_command = "make deps"
 dev_command = "echo \"dev is project-owned\" >&2 && exit 1"
 rust_fmt_check_command = "cargo fmt --all -- --check"

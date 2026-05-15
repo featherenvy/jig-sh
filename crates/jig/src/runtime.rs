@@ -57,6 +57,13 @@ pub(crate) fn dispatch(ctx: &RepoContext, command: CommandKind) -> Result<Value>
         CommandKind::ContractCheck(opts) => {
             execute_manifest_tool(ctx, tool::CONTRACT_CHECK, json!({}), opts.plan_id)
         }
+        other @ (CommandKind::AgentMap(_)
+        | CommandKind::CheckAgentGuides
+        | CommandKind::CheckRustFileLoc(_)
+        | CommandKind::CheckNoModRs
+        | CommandKind::CheckMigrationImmutability(_)
+        | CommandKind::GenerateSqlxUncheckedQueriesTodo(_)
+        | CommandKind::CheckSqlxUncheckedNonTest) => crate::policy::run_direct(ctx, other),
         CommandKind::Dev(opts) => crate::dev_proxy::commands::dev(ctx, opts),
         CommandKind::RunTarget(opts) => execute_manifest_tool(
             ctx,
@@ -160,6 +167,10 @@ fn execute_manifest_tool_with_options(
         );
     }
 
+    if tool_defs::is_native_tool(tool) {
+        return execute_native_tool(ctx, &tool.name, args, plan_id, collect_worktree_fingerprint);
+    }
+
     if tool_defs::is_command_tool(tool) {
         let command_key = tool
             .command
@@ -178,6 +189,70 @@ fn execute_manifest_tool_with_options(
     }
 
     bail!("Unsupported tool kind '{}' for {tool_name}", tool.kind)
+}
+
+fn execute_native_tool(
+    ctx: &RepoContext,
+    tool_name: &str,
+    args: Value,
+    plan_id: Option<String>,
+    collect_worktree_fingerprint: bool,
+) -> Result<Value> {
+    let started = now_ms();
+    let output = match tool_name {
+        tool::CONTRACT_CHECK => crate::policy::contract_check(ctx),
+        tool::MIGRATION_ADD => {
+            let name = args
+                .get(args::NAME)
+                .and_then(Value::as_str)
+                .ok_or_else(|| anyhow!("{} requires a name argument", tool::MIGRATION_ADD))?;
+            crate::policy::migration_add(ctx, name)
+        }
+        tool::SCHEMA_CHECK => crate::policy::schema_check(ctx),
+        _ => bail!("Unsupported native tool: {tool_name}"),
+    }?;
+    let ended = now_ms();
+
+    let receipt_id = record_receipt(
+        ctx,
+        ReceiptInput {
+            tool_name,
+            args: args.clone(),
+            invoked_make_target: None,
+            invoked_command_key: None,
+            plan_id,
+            started_at_ms: started,
+            ended_at_ms: ended,
+            exit_status: output.exit_status,
+            stdout: &output.stdout,
+            stderr: &output.stderr,
+            session_override: None,
+            collect_git_metadata: true,
+            collect_worktree_fingerprint,
+            worktree_fingerprint_override: None,
+        },
+    )?;
+
+    if output.exit_status != 0 {
+        bail!(
+            "{tool_name} failed with status {}\nstdout:\n{}\nstderr:\n{}",
+            output.exit_status,
+            output.stdout,
+            output.stderr
+        );
+    }
+
+    Ok(json!({
+        "ok": true,
+        "tool": tool_name,
+        "args": args,
+        "result": {
+            "exit_status": output.exit_status,
+            "stdout": output.stdout,
+            "stderr": output.stderr,
+        },
+        "receipt_id": receipt_id,
+    }))
 }
 
 fn execute_make_tool(

@@ -26,15 +26,15 @@ validate_backend_fixture() {
     git config user.name "Fixture"
     git config user.email "fixture@example.com"
     settle_fixture_cargo_workspace
-    scripts/generate-agent-map.sh
+    scripts/jig agent-map generate >/dev/null
     git add .
     git commit -m "fixture" >/dev/null
     make help >/dev/null
-    bash scripts/check-agent-map.sh
-    bash scripts/check-agent-guides.sh
-    bash scripts/check-rust-file-loc.sh --all >/dev/null
-    bash scripts/check-migration-immutability.sh --changed-against HEAD
-    bash scripts/check-sqlx-unchecked-non-test.sh >/dev/null
+    scripts/jig agent-map check >/dev/null
+    scripts/jig check-agent-guides >/dev/null
+    scripts/jig check-rust-file-loc --all >/dev/null
+    scripts/jig check-migration-immutability --changed-against HEAD >/dev/null
+    scripts/jig check-sqlx-unchecked-non-test >/dev/null
     coverage_dir="$(mktemp -d)"
     COVERAGE_DIR="$coverage_dir" COVERAGE_THRESHOLD=0 node scripts/enforce-coverage.js >/dev/null
     rm -rf "$coverage_dir"
@@ -62,16 +62,16 @@ validate_full_stack_fixture() {
     git config user.name "Fixture"
     git config user.email "fixture@example.com"
     settle_fixture_cargo_workspace
-    scripts/generate-agent-map.sh
+    scripts/jig agent-map generate >/dev/null
     git add .
     git commit -m "fixture" >/dev/null
     make help >/dev/null
-    bash scripts/check-agent-map.sh
-    bash scripts/check-agent-guides.sh
-    bash scripts/check-rust-file-loc.sh --all >/dev/null
-    bash scripts/check-migration-immutability.sh --changed-against HEAD
-    bash scripts/check-sqlx-unchecked-non-test.sh >/dev/null
-    bash scripts/check-schema-dump.sh >/dev/null
+    scripts/jig agent-map check >/dev/null
+    scripts/jig check-agent-guides >/dev/null
+    scripts/jig check-rust-file-loc --all >/dev/null
+    scripts/jig check-migration-immutability --changed-against HEAD >/dev/null
+    scripts/jig check-sqlx-unchecked-non-test >/dev/null
+    scripts/jig schema-check >/dev/null
     scripts/jig update --recopy --force >/dev/null
     rg -q "frontend" .github/workflows/webapp-checks.yml
     rg -q "admin-panel" .github/workflows/webapp-checks.yml
@@ -91,13 +91,13 @@ validate_tooling_only_fixture() {
     git config user.name "Fixture"
     git config user.email "fixture@example.com"
     settle_fixture_cargo_workspace
-    scripts/generate-agent-map.sh
+    scripts/jig agent-map generate >/dev/null
     git add .
     git commit -m "fixture" >/dev/null
     make help >/dev/null
-    bash scripts/check-agent-map.sh
-    bash scripts/check-agent-guides.sh
-    bash scripts/check-rust-file-loc.sh --all >/dev/null
+    scripts/jig agent-map check >/dev/null
+    scripts/jig check-agent-guides >/dev/null
+    scripts/jig check-rust-file-loc --all >/dev/null
     coverage_dir="$(mktemp -d)"
     COVERAGE_DIR="$coverage_dir" COVERAGE_THRESHOLD=0 node scripts/enforce-coverage.js >/dev/null
     rm -rf "$coverage_dir"

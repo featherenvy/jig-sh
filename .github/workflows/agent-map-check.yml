@@ -6,8 +6,12 @@ on:
       - "AGENTS.md"
       - "**/AGENTS.md"
       - "agent-map.md"
-      - "scripts/check-agent-map.sh"
-      - "scripts/generate-agent-map.sh"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "crates/**"
+      - "scripts/jig"
+      - "scripts/install-jig.sh"
       - ".github/workflows/agent-map-check.yml"
   push:
     branches:
@@ -16,8 +20,12 @@ on:
       - "AGENTS.md"
       - "**/AGENTS.md"
       - "agent-map.md"
-      - "scripts/check-agent-map.sh"
-      - "scripts/generate-agent-map.sh"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "crates/**"
+      - "scripts/jig"
+      - "scripts/install-jig.sh"
       - ".github/workflows/agent-map-check.yml"
   merge_group:
     types:
@@ -40,7 +48,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1
+        with:
+          cache: false
+          rustflags: ""
+
+      - name: Build current Jig binary
+        run: cargo build -p jig-sh --bin jig --locked
+
       - name: Validate agent-map links and coverage
         shell: bash
+        env:
+          JIG_DEV_BIN: target/debug/jig
         run: |
-          scripts/check-agent-map.sh
+          scripts/jig agent-map check

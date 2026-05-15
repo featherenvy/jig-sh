@@ -32,7 +32,7 @@ fn mcp_call_dispatches_command_tool_without_makefile() {
 }
 
 #[test]
-fn mcp_command_migration_add_passes_name_env() {
+fn mcp_native_migration_add_creates_files() {
     let temp = tempdir().unwrap();
     fs::create_dir_all(temp.path().join(".agent")).unwrap();
     fs::write(
@@ -42,7 +42,8 @@ _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
 jig_version = "0.1.0"
-migration_add_command = 'printf "migration:%s\n" "$NAME"'
+sqlx_enabled = true
+rust_migration_dir = "migrations"
 "#,
     )
     .unwrap();
@@ -52,13 +53,12 @@ migration_add_command = 'printf "migration:%s\n" "$NAME"'
             "contract_version": 2,
             "tool_namespace": "jig",
             "jig_version": "0.1.0",
-            "required_commands": ["migration_add_command"],
+            "required_commands": ["rust_test_command"],
             "tools": [
                 {
                     "name": "jig.migration_add",
-                    "kind": "command",
-                    "description": "Add migration.",
-                    "command": "migration_add_command"
+                    "kind": "native",
+                    "description": "Add migration."
                 }
             ],
         }))
@@ -70,8 +70,160 @@ migration_add_command = 'printf "migration:%s\n" "$NAME"'
     let output = call_tool(&ctx, "jig.migration_add", json!({ "name": "create_users" })).unwrap();
 
     assert_eq!(output["ok"], true);
-    assert_eq!(output["command_key"], "migration_add_command");
-    assert_eq!(output["result"]["stdout"], "migration:create_users\n");
+    assert!(
+        output["result"]["stdout"]
+            .as_str()
+            .unwrap()
+            .contains("create_users")
+    );
+    let entries = fs::read_dir(temp.path().join("migrations"))
+        .unwrap()
+        .count();
+    assert_eq!(entries, 2);
+}
+
+#[test]
+fn mcp_native_contract_check_validates_manifest() {
+    let temp = tempdir().unwrap();
+    fs::create_dir_all(temp.path().join(".agent")).unwrap();
+    fs::create_dir_all(temp.path().join("scripts")).unwrap();
+    fs::write(temp.path().join(".mcp.json"), "{}").unwrap();
+    fs::write(temp.path().join("scripts/jig"), "#!/bin/sh\n").unwrap();
+    fs::write(temp.path().join("scripts/install-jig.sh"), "#!/bin/sh\n").unwrap();
+    fs::write(
+        temp.path().join(".jig.toml"),
+        r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.1.0"
+makefile_enabled = false
+bootstrap_command = "cargo fetch"
+rust_fmt_check_command = "cargo fmt --check"
+rust_clippy_command = "cargo clippy"
+rust_test_command = "cargo test"
+"#,
+    )
+    .unwrap();
+    fs::write(
+        temp.path().join(".agent/jig-contract.json"),
+        serde_json::to_string_pretty(&json!({
+            "contract_version": 2,
+            "tool_namespace": "jig",
+            "jig_version": "0.1.0",
+            "required_commands": [
+                "bootstrap_command",
+                "rust_fmt_check_command",
+                "rust_clippy_command",
+                "rust_test_command"
+            ],
+            "tools": [
+                {
+                    "name": "jig.bootstrap",
+                    "kind": "command",
+                    "description": "Bootstrap.",
+                    "command": "bootstrap_command"
+                },
+                {
+                    "name": "jig.fmt_check",
+                    "kind": "command",
+                    "description": "Format.",
+                    "command": "rust_fmt_check_command"
+                },
+                {
+                    "name": "jig.clippy",
+                    "kind": "command",
+                    "description": "Clippy.",
+                    "command": "rust_clippy_command"
+                },
+                {
+                    "name": "jig.test",
+                    "kind": "command",
+                    "description": "Test.",
+                    "command": "rust_test_command"
+                },
+                {
+                    "name": "jig.contract_check",
+                    "kind": "native",
+                    "description": "Contract check."
+                }
+            ],
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let ctx = RepoContext::load_from(temp.path()).unwrap();
+
+    let output = call_tool(&ctx, "jig.contract_check", json!({})).unwrap();
+
+    assert_eq!(output["ok"], true);
+    assert!(
+        output["result"]["stdout"]
+            .as_str()
+            .unwrap()
+            .contains("jig contract check passed")
+    );
+}
+
+#[test]
+fn mcp_native_schema_check_detects_clean_schema_dump() {
+    let temp = tempdir().unwrap();
+    fs::create_dir_all(temp.path().join(".agent")).unwrap();
+    fs::create_dir_all(temp.path().join("docs/schema")).unwrap();
+    fs::write(temp.path().join("docs/schema/tables.sql"), "stable\n").unwrap();
+    fs::write(
+        temp.path().join(".jig.toml"),
+        r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.1.0"
+sqlx_enabled = true
+schema_dump_enabled = true
+rust_migration_dir = "migrations"
+schema_dump_command = "mkdir -p docs/schema && printf 'stable\n' > docs/schema/tables.sql"
+rust_test_command = "cargo test"
+"#,
+    )
+    .unwrap();
+    fs::write(
+        temp.path().join(".agent/jig-contract.json"),
+        serde_json::to_string_pretty(&json!({
+            "contract_version": 2,
+            "tool_namespace": "jig",
+            "jig_version": "0.1.0",
+            "required_commands": ["rust_test_command", "schema_dump_command"],
+            "tools": [
+                {
+                    "name": "jig.schema_check",
+                    "kind": "native",
+                    "description": "Schema check."
+                }
+            ],
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    for args in [
+        ["init", "-q"].as_slice(),
+        ["config", "user.name", "Fixture"].as_slice(),
+        ["config", "user.email", "fixture@example.com"].as_slice(),
+        ["add", "."].as_slice(),
+        ["commit", "-m", "fixture", "-q"].as_slice(),
+    ] {
+        let status = Command::new("git")
+            .current_dir(temp.path())
+            .args(args)
+            .status()
+            .unwrap();
+        assert!(status.success());
+    }
+    let ctx = RepoContext::load_from(temp.path()).unwrap();
+
+    let output = call_tool(&ctx, "jig.schema_check", json!({})).unwrap();
+
+    assert_eq!(output["ok"], true);
+    assert_eq!(output["result"]["stdout"], "Schema dump is up to date.\n");
 }
 
 #[test]

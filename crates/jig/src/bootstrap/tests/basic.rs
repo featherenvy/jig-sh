@@ -85,12 +85,7 @@ fn rendered_conflicts_detects_generated_paths() {
     fs::create_dir_all(destination.path().join("scripts")).unwrap();
     fs::write(destination.path().join("scripts/jig"), "existing").unwrap();
 
-    let conflicts = rendered_conflicts(
-        rendered.path(),
-        &rendered.path().join(".jig.toml"),
-        destination.path(),
-    )
-    .unwrap();
+    let conflicts = rendered_conflicts(rendered.path(), destination.path()).unwrap();
     assert_eq!(conflicts, vec!["scripts/jig"]);
 }
 
@@ -102,17 +97,12 @@ fn rendered_conflicts_marks_task_mutated_outputs() {
     fs::write(rendered.path().join("agent-map.md"), "placeholder").unwrap();
     fs::write(destination.path().join("agent-map.md"), "existing").unwrap();
 
-    let conflicts = rendered_conflicts(
-        rendered.path(),
-        &rendered.path().join(".jig.toml"),
-        destination.path(),
-    )
-    .unwrap();
+    let conflicts = rendered_conflicts(rendered.path(), destination.path()).unwrap();
     assert_eq!(conflicts, vec!["agent-map.md"]);
 }
 
 #[test]
-fn rendered_conflicts_marks_sqlx_pruned_task_outputs() {
+fn rendered_conflicts_marks_removed_managed_paths() {
     let rendered = tempdir().unwrap();
     let destination = tempdir().unwrap();
     write_answers_fixture(rendered.path(), Some(false));
@@ -129,12 +119,7 @@ fn rendered_conflicts_marks_sqlx_pruned_task_outputs() {
     )
     .unwrap();
 
-    let conflicts = rendered_conflicts(
-        rendered.path(),
-        &rendered.path().join(".jig.toml"),
-        destination.path(),
-    )
-    .unwrap();
+    let conflicts = rendered_conflicts(rendered.path(), destination.path()).unwrap();
     assert_eq!(conflicts, vec!["scripts/add-migration.sh"]);
 }
 
@@ -148,12 +133,7 @@ fn rendered_conflicts_ignores_identical_files() {
     fs::write(rendered.path().join("scripts/jig"), "same").unwrap();
     fs::write(destination.path().join("scripts/jig"), "same").unwrap();
 
-    let conflicts = rendered_conflicts(
-        rendered.path(),
-        &rendered.path().join(".jig.toml"),
-        destination.path(),
-    )
-    .unwrap();
+    let conflicts = rendered_conflicts(rendered.path(), destination.path()).unwrap();
     assert!(conflicts.is_empty());
 }
 
@@ -180,12 +160,7 @@ fn rendered_conflicts_detects_executable_bit_changes() {
     )
     .unwrap();
 
-    let conflicts = rendered_conflicts(
-        rendered.path(),
-        &rendered.path().join(".jig.toml"),
-        destination.path(),
-    )
-    .unwrap();
+    let conflicts = rendered_conflicts(rendered.path(), destination.path()).unwrap();
     assert_eq!(conflicts, vec!["scripts/jig"]);
 }
 
@@ -201,12 +176,7 @@ fn rendered_conflicts_detects_file_replacing_symlink() {
     fs::write(destination.path().join("scripts/target"), "same").unwrap();
     create_symlink(Path::new("target"), &destination.path().join("scripts/jig")).unwrap();
 
-    let conflicts = rendered_conflicts(
-        rendered.path(),
-        &rendered.path().join(".jig.toml"),
-        destination.path(),
-    )
-    .unwrap();
+    let conflicts = rendered_conflicts(rendered.path(), destination.path()).unwrap();
     assert_eq!(conflicts, vec!["scripts/jig"]);
 }
 
@@ -219,12 +189,7 @@ fn rendered_conflicts_detects_blocking_ancestor_file() {
     fs::write(rendered.path().join("scripts/jig"), "rendered").unwrap();
     fs::write(destination.path().join("scripts"), "blocking file").unwrap();
 
-    let conflicts = rendered_conflicts(
-        rendered.path(),
-        &rendered.path().join(".jig.toml"),
-        destination.path(),
-    )
-    .unwrap();
+    let conflicts = rendered_conflicts(rendered.path(), destination.path()).unwrap();
     assert_eq!(conflicts, vec!["scripts"]);
 }
 
@@ -1193,7 +1158,6 @@ fn adopt_with_real_template_keeps_sqlx_files_when_enabled() {
             sqlx_enabled: Some(true),
             rust_migration_dir: Some("migrations".into()),
             rust_sqlx_metadata_dir: Some(".sqlx".into()),
-            migration_add_command: Some("scripts/add-migration.sh".into()),
             ..AnswerOpts::default()
         },
     })
@@ -1201,21 +1165,28 @@ fn adopt_with_real_template_keeps_sqlx_files_when_enabled() {
 
     let agent_map = fs::read_to_string(repo.join("agent-map.md")).unwrap();
     assert!(agent_map.contains("[crates/api](./crates/api/AGENTS.md)"));
-    assert!(repo.join("scripts/add-migration.sh").exists());
+    assert!(!repo.join("scripts/add-migration.sh").exists());
     assert!(
-        repo.join("scripts/check-migration-immutability.sh")
+        !repo
+            .join("scripts/check-migration-immutability.sh")
             .exists()
     );
     assert!(
-        repo.join("scripts/check-sqlx-unchecked-non-test.sh")
+        !repo
+            .join("scripts/check-sqlx-unchecked-non-test.sh")
             .exists()
     );
     assert!(
-        repo.join("scripts/generate-sqlx-unchecked-queries-todo.sh")
+        !repo
+            .join("scripts/generate-sqlx-unchecked-queries-todo.sh")
             .exists()
     );
     let answers = fs::read_to_string(repo.join(".jig.toml")).unwrap();
     assert!(answers.contains("sqlx_enabled = true"));
+    assert!(!answers.contains("migration_add_command"));
+    let contract = fs::read_to_string(repo.join(".agent/jig-contract.json")).unwrap();
+    assert!(contract.contains(r#""name": "jig.migration_add""#));
+    assert!(contract.contains(r#""kind": "native""#));
 }
 
 #[test]
@@ -1241,7 +1212,6 @@ fn adopt_with_sqlx_and_schema_dumps_disabled_hides_schema_dump_target() {
             schema_dump_enabled: Some(false),
             rust_migration_dir: Some("migrations".into()),
             rust_sqlx_metadata_dir: Some(".sqlx".into()),
-            migration_add_command: Some("scripts/add-migration.sh".into()),
             ..AnswerOpts::default()
         },
     })

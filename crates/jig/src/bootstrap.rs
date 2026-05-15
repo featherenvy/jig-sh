@@ -531,12 +531,6 @@ fn template_progress_label(template: Option<&str>) -> String {
 }
 
 #[cfg(test)]
-fn read_optional_answer_bool(answers_path: &Path, key: &str) -> Result<Option<bool>> {
-    let answers = read_answers_toml(answers_path)?;
-    Ok(answers.get(key).and_then(TomlValue::as_bool))
-}
-
-#[cfg(test)]
 fn read_optional_answer_string(answers_path: &Path, key: &str) -> Result<Option<String>> {
     let answers = read_answers_toml(answers_path)?;
     Ok(answers

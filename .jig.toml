@@ -12,7 +12,6 @@ sqlx_enabled = false
 rust_crate_roots = ["crates"]
 schema_dump_enabled = false
 bootstrap_command = "cargo fetch"
-contract_check_command = "scripts/check-jig-contract.sh"
 # Legacy Makefile-adapter dev command; scripts/jig dev uses [dev] below.
 dev_command = "cargo test --workspace"
 rust_fmt_check_command = "cargo fmt --all -- --check"

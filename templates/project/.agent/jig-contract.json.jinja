@@ -7,16 +7,9 @@
     "rust_fmt_check_command",
     "rust_clippy_command",
     "rust_test_command",
-    "rust_test_locked_command",
-[% if sqlx_enabled %]
-    "sqlx_check_command",
-    "migration_add_command",
-[% endif %]
-[% if sqlx_enabled and schema_dump_enabled %]
-    "schema_check_command",
-    "schema_dump_command",
-[% endif %]
-    "contract_check_command"
+    "rust_test_locked_command"[% if sqlx_enabled %],
+    "sqlx_check_command"[% endif %][% if sqlx_enabled and schema_dump_enabled %],
+    "schema_dump_command"[% endif %]
   ],
   "tools": [
     {
@@ -53,9 +46,8 @@
 [% if schema_dump_enabled %]
     {
       "name": "jig.schema_check",
-      "kind": "command",
-      "description": "Run the configured schema check command.",
-      "command": "schema_check_command"
+      "kind": "native",
+      "description": "Run the native schema drift check."
     },
     {
       "name": "jig.schema_dump",
@@ -72,16 +64,14 @@
     },
     {
       "name": "jig.migration_add",
-      "kind": "command",
-      "description": "Run the configured migration creation command.",
-      "command": "migration_add_command"
+      "kind": "native",
+      "description": "Add timestamped SQL migration stubs."
     },
 [% endif %]
     {
       "name": "jig.contract_check",
-      "kind": "command",
-      "description": "Run the configured Jig contract check command.",
-      "command": "contract_check_command"
+      "kind": "native",
+      "description": "Run the native Jig contract check."
     }
 [% if makefile_enabled %]
     ,

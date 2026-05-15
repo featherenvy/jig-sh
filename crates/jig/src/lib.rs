@@ -41,6 +41,7 @@ mod dev_proxy {
 }
 mod git_receipts;
 mod mcp;
+mod policy;
 mod process;
 mod progress;
 mod runtime;

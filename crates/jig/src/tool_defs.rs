@@ -31,15 +31,25 @@ pub(crate) mod args {
 pub(crate) mod cli_command {
     pub(crate) const ADOPT: &str = "adopt";
     pub(crate) const AGENT: &str = "agent";
+    pub(crate) const AGENT_MAP: &str = "agent-map";
+    pub(crate) const AGENT_MAP_CHECK: &str = "check";
+    pub(crate) const AGENT_MAP_GENERATE: &str = "generate";
     pub(crate) const AGENT_BOOTSTRAP: &str = "bootstrap";
     pub(crate) const AGENT_DOCTOR: &str = "doctor";
     // Top-level `jig bootstrap` and nested `jig agent bootstrap` intentionally
     // share the same parser label in different Clap command scopes.
     pub(crate) const BOOTSTRAP: &str = "bootstrap";
     pub(crate) const CLIPPY: &str = "clippy";
+    pub(crate) const CHECK_AGENT_GUIDES: &str = "check-agent-guides";
+    pub(crate) const CHECK_MIGRATION_IMMUTABILITY: &str = "check-migration-immutability";
+    pub(crate) const CHECK_NO_MOD_RS: &str = "check-no-mod-rs";
+    pub(crate) const CHECK_RUST_FILE_LOC: &str = "check-rust-file-loc";
+    pub(crate) const CHECK_SQLX_UNCHECKED_NON_TEST: &str = "check-sqlx-unchecked-non-test";
     pub(crate) const CONTRACT_CHECK: &str = "contract-check";
     pub(crate) const DEV: &str = "dev";
     pub(crate) const FMT_CHECK: &str = "fmt-check";
+    pub(crate) const GENERATE_SQLX_UNCHECKED_QUERIES_TODO: &str =
+        "generate-sqlx-unchecked-queries-todo";
     pub(crate) const INIT: &str = "init";
     pub(crate) const MCP: &str = "mcp";
     pub(crate) const MIGRATION_ADD: &str = "migration-add";
@@ -81,6 +91,7 @@ pub(crate) mod cli_command {
 pub(crate) mod kind {
     pub(crate) const COMMAND: &str = "command";
     pub(crate) const MAKE: &str = "make";
+    pub(crate) const NATIVE: &str = "native";
 }
 
 pub(crate) mod tool {
@@ -326,8 +337,12 @@ pub(crate) fn is_command_tool(tool: &ManifestTool) -> bool {
     tool.kind == kind::COMMAND
 }
 
+pub(crate) fn is_native_tool(tool: &ManifestTool) -> bool {
+    tool.kind == kind::NATIVE
+}
+
 pub(crate) fn is_execution_tool(tool: &ManifestTool) -> bool {
-    is_make_tool(tool) || is_command_tool(tool)
+    is_make_tool(tool) || is_command_tool(tool) || is_native_tool(tool)
 }
 
 pub(crate) fn execution_tool_args(tool: &ManifestTool, args_obj: &JsonObject) -> Result<Value> {

@@ -53,11 +53,8 @@ When `sqlx_enabled` is `true`, these additional keys are required:
 - `makefile_enabled`: when `true`, Jig renders a root Makefile adapter; adoption defaults it to `false` if a root `Makefile` already exists
 - `schema_dump_enabled`: when `true` and `sqlx_enabled` is also `true`, the template renders schema dump and schema freshness commands
 - `schema_dump_command`: command behind `scripts/jig schema-dump` when `sqlx_enabled` and `schema_dump_enabled` are both `true`
-- `schema_check_command`: command behind `scripts/jig schema-check` when `sqlx_enabled` and `schema_dump_enabled` are both `true`
 - `sqlx_check_command`: command behind `scripts/jig sqlx-check` when `sqlx_enabled` is `true`
-- `migration_add_command`: command behind `scripts/jig migration-add` when `sqlx_enabled` is `true`
 - `bootstrap_command`: implementation behind `scripts/jig bootstrap`; set this explicitly when bootstrap must install web dependencies or run project-specific setup beyond the default `cargo fetch`
-- `contract_check_command`: implementation behind `scripts/jig contract-check`
 - `dev_command`: legacy project-owned dev command used by the optional Makefile adapter's `make dev`; Makefile-less v2 renders omit it, and older repos that retain it do not use it for `scripts/jig dev`
 - `rust_fmt_check_command`
 - `rust_clippy_command`
@@ -67,11 +64,13 @@ When `sqlx_enabled` is `true`, these additional keys are required:
 - `frontend_apps`: list of app definitions
 - `dev`: Jig-native local development proxy settings and app definitions
 
-All top-level `*_command` values are committed repo configuration and run through non-login `bash -c` from the repo root with the user's normal process environment. Treat changes to these keys like changes to project-owned shell scripts or Makefile recipes. `scripts/jig migration-add NAME` passes the requested migration name to `migration_add_command` as the `NAME` environment variable; other path-like settings should be embedded in the configured command string or handled by the called script.
+Top-level `*_command` values are committed repo configuration and run through non-login `bash -c` from the repo root with the user's normal process environment. Treat changes to these keys like changes to project-owned shell scripts or Makefile recipes. Jig-owned checks such as `scripts/jig contract-check`, `scripts/jig migration-add NAME`, `scripts/jig schema-check`, and repo policy checks run natively inside the binary.
+
+Contracts that declare `"kind": "native"` tools require the repo's pinned `scripts/jig` runtime version. Do not run an older cached `jig` binary against a repo after updating its `.agent/jig-contract.json`; use the launcher so the `jig_version` pin is enforced.
 
 ## Accepted Key Summary
 
-Jig rejects unknown `.jig.toml` keys so stale template answers fail early. The accepted top-level keys are `_src_path`, `_commit`, `_template_mode`, `_template_local_path`, `repo_name`, `default_branch`, `ci_github_runner`, `jig_version`, `template_source_url`, `makefile_enabled`, `sqlx_enabled`, `rust_crate_roots`, `rust_migration_dir`, `rust_sqlx_metadata_dir`, `schema_dump_enabled`, `schema_dump_command`, `schema_check_command`, `sqlx_check_command`, `migration_add_command`, `bootstrap_command`, `contract_check_command`, `dev_command`, `rust_fmt_check_command`, `rust_clippy_command`, `rust_test_command`, `rust_test_locked_command`, `web_package_manager`, `frontend_apps`, `dev`, `work`, and `agent_tooling`.
+Jig rejects unknown `.jig.toml` keys so stale template answers fail early. The accepted top-level keys are `_src_path`, `_commit`, `_template_mode`, `_template_local_path`, `repo_name`, `default_branch`, `ci_github_runner`, `jig_version`, `template_source_url`, `makefile_enabled`, `sqlx_enabled`, `rust_crate_roots`, `rust_migration_dir`, `rust_sqlx_metadata_dir`, `schema_dump_enabled`, `schema_dump_command`, `schema_check_command`, `sqlx_check_command`, `migration_add_command`, `bootstrap_command`, `contract_check_command`, `dev_command`, `rust_fmt_check_command`, `rust_clippy_command`, `rust_test_command`, `rust_test_locked_command`, `web_package_manager`, `frontend_apps`, `dev`, `work`, and `agent_tooling`. `schema_check_command`, `migration_add_command`, and `contract_check_command` are legacy accepted keys for older rendered repos; new renders use native binary implementations. Older hand-edited v2 manifests that still list these legacy command keys must either keep the matching `.jig.toml` values until updated, or switch the corresponding tools to their native forms.
 
 Nested accepted keys are:
 
@@ -343,6 +342,8 @@ When both `sqlx_enabled` and `schema_dump_enabled` are `true`, it also exposes:
 
 - `scripts/jig schema-check`
 - `scripts/jig schema-dump`
+
+`scripts/jig schema-check` reruns `schema_dump_command`, then checks `SCHEMA_DOCS_DIR` for drift. `SCHEMA_DOCS_DIR` defaults to `docs/schema` when the environment variable is unset.
 
 When `makefile_enabled = true`, the generated `Makefile` exposes these convenience adapter targets:
 

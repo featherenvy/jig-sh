@@ -7,8 +7,7 @@
     "rust_fmt_check_command",
     "rust_clippy_command",
     "rust_test_command",
-    "rust_test_locked_command",
-    "contract_check_command"
+    "rust_test_locked_command"
   ],
   "tools": [
     {
@@ -43,9 +42,8 @@
     },
     {
       "name": "jig.contract_check",
-      "kind": "command",
-      "description": "Run the configured Jig contract check command.",
-      "command": "contract_check_command"
+      "kind": "native",
+      "description": "Run the native Jig contract check."
     },
     {
       "name": "jig.run_target",

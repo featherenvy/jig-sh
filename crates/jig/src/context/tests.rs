@@ -41,6 +41,89 @@ fn load_optional_ignores_stale_jig_repo_root() {
 }
 
 #[test]
+fn supported_command_keys_are_backed_by_repo_config() {
+    let temp = tempdir().unwrap();
+    fs::create_dir_all(temp.path().join(".agent")).unwrap();
+    fs::write(
+        temp.path().join(".jig.toml"),
+        r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.1.0"
+bootstrap_command = "cargo fetch"
+contract_check_command = "scripts/jig contract-check"
+migration_add_command = "scripts/jig migration-add \"$NAME\""
+rust_clippy_command = "cargo clippy"
+rust_fmt_check_command = "cargo fmt --check"
+rust_test_command = "cargo test"
+rust_test_locked_command = "cargo test --locked"
+schema_check_command = "scripts/jig schema-check"
+schema_dump_command = "scripts/dump-schema.sh"
+sqlx_check_command = "cargo sqlx prepare --check"
+"#,
+    )
+    .unwrap();
+    fs::write(
+        temp.path().join(".agent/jig-contract.json"),
+        serde_json::to_string_pretty(&json!({
+            "contract_version": 2,
+            "tool_namespace": "jig",
+            "jig_version": "0.1.0",
+            "required_commands": SUPPORTED_COMMAND_KEYS,
+            "tools": [],
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let ctx = RepoContext::load_from(temp.path()).unwrap();
+    for key in SUPPORTED_COMMAND_KEYS {
+        assert!(ctx.command_for_key(key).is_ok(), "{key}");
+    }
+}
+
+#[test]
+fn missing_legacy_contract_check_command_stays_empty() {
+    let temp = tempdir().unwrap();
+    fs::create_dir_all(temp.path().join(".agent")).unwrap();
+    fs::write(
+        temp.path().join(".jig.toml"),
+        r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.1.0"
+rust_fmt_check_command = "cargo fmt --check"
+rust_clippy_command = "cargo clippy"
+rust_test_command = "cargo test"
+"#,
+    )
+    .unwrap();
+    fs::write(
+        temp.path().join(".agent/jig-contract.json"),
+        serde_json::to_string_pretty(&json!({
+            "contract_version": 2,
+            "tool_namespace": "jig",
+            "jig_version": "0.1.0",
+            "required_commands": ["contract_check_command"],
+            "tools": [],
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let ctx = RepoContext::load_from(temp.path()).unwrap();
+    let error = ctx.command_for_key("contract_check_command").unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("contract_check_command is empty")
+    );
+}
+
+#[test]
 fn legacy_work_checks_become_required_check_gates() {
     let temp = tempdir().unwrap();
     fs::create_dir_all(temp.path().join(".agent")).unwrap();

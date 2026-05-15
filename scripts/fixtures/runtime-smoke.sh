@@ -63,7 +63,7 @@ send({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
 response = recv()
 tool_names = {tool["name"] for tool in response["result"]["tools"]}
 assert "jig.fmt_check" in tool_names, tool_names
-assert ("jig.schema_check" in tool_names) == expect_sqlx, tool_names
+assert ("jig.schema_check" in tool_names) == expect_schema_dump, tool_names
 assert ("jig.schema_dump" in tool_names) == expect_schema_dump, tool_names
 assert ("jig.sqlx_check" in tool_names) == expect_sqlx, tool_names
 assert ("jig.migration_add" in tool_names) == expect_sqlx, tool_names
@@ -110,17 +110,23 @@ import pathlib
 manifest = json.loads(pathlib.Path(".agent/jig-contract.json").read_text())
 expect_schema_dump = os.environ["EXPECT_SCHEMA_DUMP"] == "1"
 expect_sqlx = os.environ["EXPECT_SQLX"] == "1"
-targets = set(manifest["required_make_targets"])
+targets = set(manifest.get("required_make_targets", []))
+commands = set(manifest.get("required_commands", []))
 tools = {tool["name"] for tool in manifest["tools"]}
+tools_by_name = {tool["name"]: tool for tool in manifest["tools"]}
 
-assert ("schema-dump" in targets) == expect_schema_dump, manifest
-assert ("schema-check" in targets) == expect_sqlx, manifest
+assert (("schema-dump" in targets) or ("schema_dump_command" in commands)) == expect_schema_dump, manifest
 assert ("jig.schema_dump" in tools) == expect_schema_dump, manifest
-assert ("jig.schema_check" in tools) == expect_sqlx, manifest
-assert ("sqlx-check" in targets) == expect_sqlx, manifest
-assert ("migration-add" in targets) == expect_sqlx, manifest
+assert ("jig.schema_check" in tools) == expect_schema_dump, manifest
+assert (("sqlx-check" in targets) or ("sqlx_check_command" in commands)) == expect_sqlx, manifest
 assert ("jig.sqlx_check" in tools) == expect_sqlx, manifest
 assert ("jig.migration_add" in tools) == expect_sqlx, manifest
+if "jig.contract_check" in tools_by_name:
+    assert tools_by_name["jig.contract_check"]["kind"] == "native", manifest
+if "jig.migration_add" in tools_by_name:
+    assert tools_by_name["jig.migration_add"]["kind"] == "native", manifest
+if "jig.schema_check" in tools_by_name:
+    assert tools_by_name["jig.schema_check"]["kind"] == "native", manifest
 assert "jig.session_start" not in tools, manifest
 PY
 
@@ -164,9 +170,9 @@ required = {
     "jig.decisions_add",
 }
 if os.environ["EXPECT_SQLX"] == "1":
-    required.update({"jig.sqlx_check", "jig.schema_check", "jig.migration_add"})
+    required.update({"jig.sqlx_check", "jig.migration_add"})
 if os.environ["EXPECT_SCHEMA_DUMP"] == "1":
-    required.add("jig.schema_dump")
+    required.update({"jig.schema_check", "jig.schema_dump"})
 
 missing = sorted(required - tools)
 if missing:

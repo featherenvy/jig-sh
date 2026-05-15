@@ -62,6 +62,20 @@ pub(crate) enum CommandKind {
     MigrationAdd(MigrationAddOpts),
     #[command(name = tool_defs::cli_command::CONTRACT_CHECK)]
     ContractCheck(ToolOpts),
+    #[command(name = tool_defs::cli_command::AGENT_MAP, subcommand)]
+    AgentMap(AgentMapCommand),
+    #[command(name = tool_defs::cli_command::CHECK_AGENT_GUIDES)]
+    CheckAgentGuides,
+    #[command(name = tool_defs::cli_command::CHECK_RUST_FILE_LOC)]
+    CheckRustFileLoc(CheckRustFileLocOpts),
+    #[command(name = tool_defs::cli_command::CHECK_NO_MOD_RS)]
+    CheckNoModRs,
+    #[command(name = tool_defs::cli_command::CHECK_MIGRATION_IMMUTABILITY)]
+    CheckMigrationImmutability(CheckMigrationImmutabilityOpts),
+    #[command(name = tool_defs::cli_command::GENERATE_SQLX_UNCHECKED_QUERIES_TODO)]
+    GenerateSqlxUncheckedQueriesTodo(GenerateSqlxUncheckedQueriesTodoOpts),
+    #[command(name = tool_defs::cli_command::CHECK_SQLX_UNCHECKED_NON_TEST)]
+    CheckSqlxUncheckedNonTest,
     #[command(name = tool_defs::cli_command::DEV)]
     Dev(DevOpts),
     #[command(name = tool_defs::cli_command::RUN_TARGET)]
@@ -74,6 +88,20 @@ pub(crate) enum CommandKind {
     Work(WorkCommand),
     #[command(name = tool_defs::cli_command::MCP)]
     Mcp,
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum AgentMapCommand {
+    #[command(name = tool_defs::cli_command::AGENT_MAP_GENERATE)]
+    Generate(AgentMapOpts),
+    #[command(name = tool_defs::cli_command::AGENT_MAP_CHECK)]
+    Check(AgentMapOpts),
+}
+
+#[derive(Args, Debug)]
+pub(crate) struct AgentMapOpts {
+    #[arg(long = "map", default_value = "agent-map.md")]
+    pub(crate) map_path: PathBuf,
 }
 
 #[derive(Debug, Subcommand)]
@@ -397,6 +425,33 @@ pub(crate) struct RunTargetOpts {
     pub(crate) name: String,
     #[command(flatten)]
     pub(crate) tool: ToolOpts,
+}
+
+#[derive(Args, Debug)]
+pub(crate) struct CheckRustFileLocOpts {
+    #[arg(long, help = "Check staged Rust files against HEAD.")]
+    pub(crate) staged: bool,
+    #[arg(
+        long = "changed-against",
+        help = "Check Rust files changed between the given git ref and HEAD."
+    )]
+    pub(crate) changed_against: Option<String>,
+    #[arg(
+        long,
+        help = "Check all tracked Rust files against a zero baseline; existing oversized legacy files fail unless annotated."
+    )]
+    pub(crate) all: bool,
+}
+
+#[derive(Args, Debug)]
+pub(crate) struct CheckMigrationImmutabilityOpts {
+    #[arg(long = "changed-against")]
+    pub(crate) changed_against: String,
+}
+
+#[derive(Args, Debug)]
+pub(crate) struct GenerateSqlxUncheckedQueriesTodoOpts {
+    pub(crate) output: Option<PathBuf>,
 }
 
 #[derive(Args, Debug)]

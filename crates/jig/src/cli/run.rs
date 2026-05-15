@@ -1,7 +1,7 @@
 use std::io::Write;
 use std::process;
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 use clap::Parser;
 use clap::error::{ContextKind, ContextValue, ErrorKind};
 
@@ -26,7 +26,7 @@ pub(crate) fn run() -> Result<()> {
         #[cfg(feature = "dev-proxy")]
         CommandKind::Dev(opts) => {
             let Some(ctx) = RepoContext::load_optional()? else {
-                bail!(
+                anyhow::bail!(
                     "`scripts/jig dev` requires an adopted Jig repo with `.jig.toml` dev app configuration. Run it from a Jig repo, or use `scripts/jig proxy run <name> -- <command>` for an ad-hoc command."
                 );
             };
@@ -70,7 +70,15 @@ pub(super) fn command_reports_failure_with_ok(command: &CommandKind) -> bool {
     // missing or unregistered.
     matches!(
         command,
-        CommandKind::Dev(_) | CommandKind::Proxy(_) | CommandKind::Agent(AgentCommand::Doctor)
+        CommandKind::Dev(_)
+            | CommandKind::Proxy(_)
+            | CommandKind::Agent(AgentCommand::Doctor)
+            | CommandKind::AgentMap(AgentMapCommand::Check(_))
+            | CommandKind::CheckAgentGuides
+            | CommandKind::CheckRustFileLoc(_)
+            | CommandKind::CheckNoModRs
+            | CommandKind::CheckMigrationImmutability(_)
+            | CommandKind::CheckSqlxUncheckedNonTest
     )
 }
 

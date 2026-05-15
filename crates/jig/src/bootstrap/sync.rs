@@ -5,14 +5,14 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 
+#[cfg(test)]
+use super::ALWAYS_TASK_MUTATED_PATHS;
 use super::ANSWERS_FILE;
 use super::file_copy::{
     copy_file_or_symlink_with_permissions, path_exists, prepare_copy_destination_and_read_metadata,
 };
 use super::managed_paths;
 use super::staged_render::StagedRender;
-#[cfg(test)]
-use super::{ALWAYS_TASK_MUTATED_PATHS, read_optional_answer_bool};
 use crate::progress::CliProgress;
 
 pub(super) struct ApplyRenderOptions<'a> {
@@ -164,25 +164,13 @@ fn remove_destination_path(path: &Path) -> Result<()> {
 }
 
 #[cfg(test)]
-pub(super) fn rendered_conflicts(
-    rendered_root: &Path,
-    answers_path: &Path,
-    destination: &Path,
-) -> Result<Vec<String>> {
+pub(super) fn rendered_conflicts(rendered_root: &Path, destination: &Path) -> Result<Vec<String>> {
     let mut conflicts = BTreeSet::new();
     collect_sync_conflicts(rendered_root, destination, rendered_root, &mut conflicts)?;
     for relative in ALWAYS_TASK_MUTATED_PATHS {
         let path = destination.join(relative);
         if path.exists() {
             conflicts.insert((*relative).to_string());
-        }
-    }
-    if read_optional_answer_bool(answers_path, "sqlx_enabled")? == Some(false) {
-        for relative in managed_paths::sqlx_pruned_task_paths() {
-            let path = destination.join(&relative);
-            if path.exists() {
-                conflicts.insert(relative.display().to_string());
-            }
         }
     }
     Ok(conflicts.into_iter().collect())

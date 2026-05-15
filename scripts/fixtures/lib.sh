@@ -2,7 +2,6 @@
 
 FIXTURE_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 ROOT_DIR="${ROOT_DIR:-$(cd "$FIXTURE_SCRIPT_DIR/../.." && pwd -P)}"
-JIG_TOML="${JIG_TOML:-$ROOT_DIR/scripts/jig-toml.sh}"
 
 json_get() {
   local expression="$1"
@@ -30,11 +29,99 @@ else:
 }
 
 answers_get() {
-  "$JIG_TOML" get "$1" "$2"
+  python3 - "$1" "$2" <<'PY'
+import ast
+import pathlib
+import re
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text()
+key = sys.argv[2]
+
+try:
+    import tomllib
+except ModuleNotFoundError:
+    tomllib = None
+
+if tomllib is not None:
+    value = tomllib.loads(text).get(key, "")
+    print("" if value is None else value)
+    raise SystemExit(0)
+
+# Fixture fallback is limited to top-level answer keys. tomllib remains
+# authoritative when available.
+def strip_inline_comment(value):
+    quote = None
+    escaped = False
+    for index, char in enumerate(value):
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\":
+            escaped = True
+            continue
+        if quote is not None:
+            if char == quote:
+                quote = None
+            continue
+        if char in {"'", '"'}:
+            quote = char
+            continue
+        if char == "#":
+            return value[:index].rstrip()
+    return value.strip()
+
+pattern = re.compile(rf"^\s*{re.escape(key)}\s*=\s*(.*?)\s*$")
+for line in text.splitlines():
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#"):
+        continue
+    if stripped.startswith("["):
+        break
+    match = pattern.match(line)
+    if match:
+        value = ast.literal_eval(strip_inline_comment(match.group(1)))
+        break
+else:
+    value = ""
+print("" if value is None else value)
+PY
 }
 
 answers_set() {
-  "$JIG_TOML" set "$1" "$2" "$3"
+  python3 - "$1" "$2" "$3" <<'PY'
+import pathlib
+import re
+import sys
+
+path = pathlib.Path(sys.argv[1])
+key = sys.argv[2]
+raw_value = sys.argv[3]
+lines = path.read_text().splitlines()
+existing_is_bool = False
+
+try:
+    import tomllib
+except ModuleNotFoundError:
+    tomllib = None
+
+if tomllib is not None:
+    existing_is_bool = isinstance(tomllib.loads(path.read_text()).get(key), bool)
+
+if existing_is_bool and raw_value.lower() in {"true", "false"}:
+    replacement = f"{key} = {raw_value.lower()}"
+else:
+    value = raw_value.replace("\\", "\\\\").replace('"', '\\"')
+    replacement = f'{key} = "{value}"'
+pattern = re.compile(rf"^(\s*){re.escape(key)}\s*=")
+for index, line in enumerate(lines):
+    if pattern.match(line):
+        lines[index] = replacement
+        break
+else:
+    lines.append(replacement)
+path.write_text("\n".join(lines) + "\n")
+PY
 }
 
 render_fixture() {

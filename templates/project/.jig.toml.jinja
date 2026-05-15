@@ -17,14 +17,11 @@ rust_sqlx_metadata_dir = "<<[ rust_sqlx_metadata_dir | replace("\\", "\\\\") | r
 schema_dump_enabled = [% if schema_dump_enabled %]true[% else %]false[% endif %]
 [% if sqlx_enabled and schema_dump_enabled %]
 schema_dump_command = "<<[ schema_dump_command | replace("\\", "\\\\") | replace("\"", "\\\"") ]>>"
-schema_check_command = "<<[ schema_check_command | replace("\\", "\\\\") | replace("\"", "\\\"") ]>>"
 [% endif %]
 [% if sqlx_enabled %]
 sqlx_check_command = "<<[ sqlx_check_command | replace("\\", "\\\\") | replace("\"", "\\\"") ]>>"
-migration_add_command = "<<[ migration_add_command | replace("\\", "\\\\") | replace("\"", "\\\"") ]>>"
 [% endif %]
 bootstrap_command = "<<[ bootstrap_command | replace("\\", "\\\\") | replace("\"", "\\\"") ]>>"
-contract_check_command = "<<[ contract_check_command | replace("\\", "\\\\") | replace("\"", "\\\"") ]>>"
 [% if makefile_enabled %]
 # Legacy Makefile-adapter dev command; scripts/jig dev uses [dev] below.
 dev_command = "<<[ dev_command | replace("\\", "\\\\") | replace("\"", "\\\"") ]>>"

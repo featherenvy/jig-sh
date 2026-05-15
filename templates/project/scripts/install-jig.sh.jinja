@@ -3,10 +3,69 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 ANSWERS_FILE="$ROOT_DIR/.jig.toml"
-JIG_TOML="$ROOT_DIR/scripts/jig-toml.sh"
 
 read_field() {
-  "$JIG_TOML" get "$ANSWERS_FILE" "$1"
+  python3 - "$ANSWERS_FILE" "$1" <<'PY'
+import ast
+import pathlib
+import re
+import sys
+
+try:
+    import tomllib
+except ModuleNotFoundError:
+    tomllib = None
+
+text = pathlib.Path(sys.argv[1]).read_text()
+key = sys.argv[2]
+
+if tomllib is not None:
+    value = tomllib.loads(text).get(key, "")
+    if value is None:
+        value = ""
+    if not isinstance(value, str):
+        print(f"Unsupported non-string value for {key}.", file=sys.stderr)
+        raise SystemExit(1)
+    print(value)
+    raise SystemExit(0)
+
+# The fallback intentionally reads only top-level scalar string answers used by
+# this launcher. tomllib remains authoritative when available.
+def strip_inline_comment(value):
+    quote = None
+    escaped = False
+    for index, char in enumerate(value):
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\":
+            escaped = True
+            continue
+        if quote is not None:
+            if char == quote:
+                quote = None
+            continue
+        if char in {"'", '"'}:
+            quote = char
+            continue
+        if char == "#":
+            return value[:index].rstrip()
+    return value.strip()
+
+pattern = re.compile(rf"^\s*{re.escape(key)}\s*=\s*(.*?)\s*$")
+for line in text.splitlines():
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#"):
+        continue
+    if stripped.startswith("["):
+        break
+    match = pattern.match(line)
+    if match:
+        print(ast.literal_eval(strip_inline_comment(match.group(1))))
+        break
+else:
+    print("")
+PY
 }
 
 JIG_VERSION="$(read_field jig_version)"

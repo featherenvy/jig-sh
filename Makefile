@@ -53,13 +53,13 @@ test-rust-locked: ## Run Rust workspace tests with --locked
 test: test-rust ## Run the default backend test suite
 
 contract-check: ## Verify the generated jig contract and runtime wiring
-	scripts/check-jig-contract.sh
+	scripts/jig contract-check
 
 check-agent-map: ## Verify agent-map.md coverage and links
-	scripts/check-agent-map.sh
+	scripts/jig agent-map check
 
 check-agent-guides: ## Verify crate-level AGENTS.md guides
-	scripts/check-agent-guides.sh
+	scripts/jig check-agent-guides
 
 check-rust-file-loc: ## Enforce Rust file-size policy against the default branch
 	@set -euo pipefail; \
@@ -71,10 +71,10 @@ check-rust-file-loc: ## Enforce Rust file-size policy against the default branch
 	  base_ref="4b825dc642cb6eb9a060e54bf8d69288fbee4904"; \
 	fi; \
 	echo "Using Rust LOC base ref: $$base_ref"; \
-	scripts/check-rust-file-loc.sh --changed-against "$$base_ref"
+	scripts/jig check-rust-file-loc --changed-against "$$base_ref"
 
 check-no-mod-rs: ## Fail if disallowed mod.rs files exist under configured crate roots
-	scripts/check-no-mod-rs.sh
+	scripts/jig check-no-mod-rs
 
 
 

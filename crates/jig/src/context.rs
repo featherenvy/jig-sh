@@ -17,6 +17,21 @@ pub(crate) const DEFAULT_CODEX_MARKETPLACE_PLUGINS: &[&str] = &[
     "jig-typescript@jig-skills",
     "jig-exec-plans@jig-skills",
 ];
+/// Command-backed contract keys accepted in `.agent/jig-contract.json`.
+/// Keep this aligned with `RepoConfig`, bootstrap answer parsing, and the
+/// rendered `.jig.toml` template.
+pub(crate) const SUPPORTED_COMMAND_KEYS: &[&str] = &[
+    "bootstrap_command",
+    "contract_check_command",
+    "migration_add_command",
+    "rust_clippy_command",
+    "rust_fmt_check_command",
+    "rust_test_command",
+    "rust_test_locked_command",
+    "schema_check_command",
+    "schema_dump_command",
+    "sqlx_check_command",
+];
 
 #[cfg_attr(not(feature = "dev-proxy"), allow(dead_code))]
 #[derive(Clone, Debug, Deserialize)]
@@ -75,7 +90,7 @@ struct RepoConfig {
     #[serde(default)]
     bootstrap_command: String,
     #[allow(dead_code)]
-    #[serde(default = "default_contract_check_command")]
+    #[serde(default)]
     contract_check_command: String,
     #[allow(dead_code)]
     #[serde(default)]
@@ -363,6 +378,18 @@ impl RepoContext {
         &self.manifest.tools
     }
 
+    pub(crate) fn contract_version(&self) -> u32 {
+        self.manifest.contract_version
+    }
+
+    pub(crate) fn required_commands(&self) -> &[String] {
+        &self.manifest.required_commands
+    }
+
+    pub(crate) fn required_make_targets(&self) -> &[String] {
+        &self.manifest.required_make_targets
+    }
+
     pub(crate) fn tool_spec(&self, name: &str) -> Option<&ManifestTool> {
         self.manifest.tools.iter().find(|tool| tool.name == name)
     }
@@ -379,6 +406,34 @@ impl RepoContext {
         &self.config.default_branch
     }
 
+    pub(crate) fn jig_version(&self) -> &str {
+        &self.config.jig_version
+    }
+
+    pub(crate) fn makefile_enabled(&self) -> bool {
+        self.config.makefile_enabled
+    }
+
+    pub(crate) fn sqlx_enabled(&self) -> bool {
+        self.config.sqlx_enabled
+    }
+
+    pub(crate) fn schema_dump_enabled(&self) -> bool {
+        self.config.schema_dump_enabled
+    }
+
+    pub(crate) fn rust_crate_roots(&self) -> &[String] {
+        &self.config.rust_crate_roots
+    }
+
+    pub(crate) fn rust_migration_dir(&self) -> &str {
+        &self.config.rust_migration_dir
+    }
+
+    pub(crate) fn schema_dump_command(&self) -> &str {
+        &self.config.schema_dump_command
+    }
+
     pub(crate) fn source_commit(&self) -> &str {
         &self.config.commit
     }
@@ -388,8 +443,6 @@ impl RepoContext {
     }
 
     pub(crate) fn command_for_key(&self, key: &str) -> Result<&str> {
-        // Keep this whitelist aligned with RepoConfig, bootstrap::AnswerOpts,
-        // bootstrap::answers::RawAnswers, and .jig.toml.jinja.
         let command = match key {
             "bootstrap_command" => &self.config.bootstrap_command,
             "contract_check_command" => &self.config.contract_check_command,
@@ -507,10 +560,6 @@ fn default_dev_app_kind() -> String {
 
 fn default_web_package_manager() -> String {
     "bun".into()
-}
-
-fn default_contract_check_command() -> String {
-    "scripts/check-jig-contract.sh".into()
 }
 
 fn default_codex_marketplaces() -> Vec<CodexMarketplaceConfig> {
