@@ -15,30 +15,56 @@ use super::managed_paths;
 use super::preview_seed::seed_preview_workspace;
 use super::staged_render::StagedRender;
 use super::template_source::PreparedTemplateSource;
+use crate::progress::CliProgress;
 
 const TEMPLATE_SUBDIRECTORY: &str = "templates/project";
 const TEMPLATE_SUFFIX: &str = ".jinja";
 const JIG_BLOCK_BEGIN: &str = "<!-- BEGIN JIG MANAGED BLOCK -->";
 const JIG_BLOCK_END: &str = "<!-- END JIG MANAGED BLOCK -->";
 
-pub(super) fn stage_render(
-    template: &PreparedTemplateSource,
-    answers: &RenderAnswers,
-    seed_repo_path: Option<&Path>,
-) -> Result<StagedRender> {
-    let root = TempDir::new().context("Failed to create staging directory")?;
+pub(super) struct RenderStageRequest<'a> {
+    pub(super) template: &'a PreparedTemplateSource,
+    pub(super) answers: &'a RenderAnswers,
+    pub(super) seed_repo_path: Option<&'a Path>,
+    pub(super) progress: CliProgress,
+}
+
+pub(super) fn stage_render(request: RenderStageRequest<'_>) -> Result<StagedRender> {
+    let root = request
+        .progress
+        .log_blocked_on_err(TempDir::new().context("Failed to create staging directory"))?;
     let destination = root.path().join("render");
-    if let Some(seed_repo_path) = seed_repo_path {
-        seed_preview_workspace(seed_repo_path, &destination)?;
+    if let Some(seed_repo_path) = request.seed_repo_path {
+        request
+            .progress
+            .step("seed agent guides", "scan existing repo for AGENTS.md");
+        request
+            .progress
+            .log_blocked_on_err(seed_preview_workspace(seed_repo_path, &destination))?;
     }
 
-    let mut managed_paths = render_template_files(template, answers, &destination)?;
-    run_post_render_tasks(&destination)?;
-    merge_existing_root_agents(seed_repo_path, &destination)?;
+    request
+        .progress
+        .step("render templates", "managed files, scripts, and workflows");
+    let mut managed_paths = request.progress.log_blocked_on_err(render_template_files(
+        request.template,
+        request.answers,
+        &destination,
+    ))?;
+    request
+        .progress
+        .step("generate agent map", "scripts/generate-agent-map.sh");
+    request
+        .progress
+        .log_blocked_on_err(run_post_render_tasks(&destination))?;
+    merge_existing_root_agents(request.seed_repo_path, &destination, request.progress)?;
     managed_paths.extend(managed_paths::removed_managed_paths());
 
     let answers_path = destination.join(ANSWERS_FILE);
     if !answers_path.exists() {
+        request
+            .progress
+            .blocked(format!("staging render did not produce {}", ANSWERS_FILE));
         bail!(
             "Staging render did not produce {} in {}",
             ANSWERS_FILE,
@@ -111,7 +137,11 @@ fn render_template_files(
     Ok(managed_paths)
 }
 
-fn merge_existing_root_agents(seed_repo_path: Option<&Path>, destination: &Path) -> Result<()> {
+fn merge_existing_root_agents(
+    seed_repo_path: Option<&Path>,
+    destination: &Path,
+    progress: CliProgress,
+) -> Result<()> {
     let Some(seed_repo_path) = seed_repo_path else {
         return Ok(());
     };
@@ -126,14 +156,21 @@ fn merge_existing_root_agents(seed_repo_path: Option<&Path>, destination: &Path)
         return Ok(());
     }
 
-    let existing = fs::read_to_string(&existing_path)
-        .with_context(|| format!("Failed to read {}", existing_path.display()))?;
-    let rendered = fs::read_to_string(&rendered_path)
-        .with_context(|| format!("Failed to read {}", rendered_path.display()))?;
-    let block = extract_jig_block(&rendered, &rendered_path)?;
-    let merged = merge_jig_block(&existing, block, &existing_path)?;
-    fs::write(&rendered_path, merged)
-        .with_context(|| format!("Failed to write {}", rendered_path.display()))
+    progress.step("merge root guide", "preserve repo-owned AGENTS.md content");
+    let existing = progress.log_blocked_on_err(
+        fs::read_to_string(&existing_path)
+            .with_context(|| format!("Failed to read {}", existing_path.display())),
+    )?;
+    let rendered = progress.log_blocked_on_err(
+        fs::read_to_string(&rendered_path)
+            .with_context(|| format!("Failed to read {}", rendered_path.display())),
+    )?;
+    let block = progress.log_blocked_on_err(extract_jig_block(&rendered, &rendered_path))?;
+    let merged = progress.log_blocked_on_err(merge_jig_block(&existing, block, &existing_path))?;
+    progress.log_blocked_on_err(
+        fs::write(&rendered_path, merged)
+            .with_context(|| format!("Failed to write {}", rendered_path.display())),
+    )
 }
 
 fn extract_jig_block<'a>(contents: &'a str, path: &Path) -> Result<&'a str> {

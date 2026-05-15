@@ -13,11 +13,13 @@ use super::managed_paths;
 use super::staged_render::StagedRender;
 #[cfg(test)]
 use super::{ALWAYS_TASK_MUTATED_PATHS, read_optional_answer_bool};
+use crate::progress::CliProgress;
 
 pub(super) struct ApplyRenderOptions<'a> {
     pub(super) force: bool,
     pub(super) allow_answers_overwrite: bool,
     pub(super) conflict_message: &'a str,
+    pub(super) progress: CliProgress,
 }
 
 pub(super) fn apply_staged_render(
@@ -26,20 +28,44 @@ pub(super) fn apply_staged_render(
     options: ApplyRenderOptions<'_>,
 ) -> Result<()> {
     if !options.force {
-        let conflicts =
-            staged_render_conflicts(staged, destination, options.allow_answers_overwrite)?;
+        options
+            .progress
+            .step("check conflicts", "compare rendered managed paths");
+        let conflicts = options
+            .progress
+            .log_blocked_on_err(staged_render_conflicts(
+                staged,
+                destination,
+                options.allow_answers_overwrite,
+            ))?;
         if !conflicts.is_empty() {
+            options
+                .progress
+                .blocked(conflict_count_message(conflicts.len()));
             bail!("{}\n{}", options.conflict_message, conflicts.join("\n"));
         }
+    } else {
+        options.progress.step(
+            "check conflicts",
+            "--force supplied; accepting rendered output",
+        );
     }
 
+    options.progress.step(
+        "apply managed paths",
+        format!("{} path(s)", staged.managed_paths.len()),
+    );
     for relative in &staged.managed_paths {
         let rendered_path = staged.destination.join(relative);
         let destination_path = destination.join(relative);
         if path_exists(&rendered_path) {
-            copy_rendered_path(&rendered_path, &destination_path)?;
+            options
+                .progress
+                .log_blocked_on_err(copy_rendered_path(&rendered_path, &destination_path))?;
         } else if path_exists(&destination_path) {
-            remove_destination_path(&destination_path)?;
+            options
+                .progress
+                .log_blocked_on_err(remove_destination_path(&destination_path))?;
         }
     }
     Ok(())
@@ -81,6 +107,13 @@ fn staged_render_conflicts(
         }
     }
     Ok(conflicts.into_iter().collect())
+}
+
+fn conflict_count_message(count: usize) -> String {
+    if count == 1 {
+        return "1 managed path differs".to_string();
+    }
+    format!("{count} managed paths differ")
 }
 
 fn is_root_agents_path(relative: &Path) -> bool {

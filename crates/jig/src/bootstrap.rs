@@ -13,6 +13,8 @@ use toml::Table;
 #[cfg(test)]
 use toml::Value as TomlValue;
 
+use crate::progress::CliProgress;
+
 use answers::RenderAnswers;
 #[cfg(test)]
 use file_copy::create_symlink;
@@ -24,7 +26,7 @@ use initial_copy::seed_answers_toml;
 use initial_copy::{BootstrapCopyRequest, render_and_copy_bootstrap_template};
 #[cfg(test)]
 use preview_seed::seed_preview_workspace;
-use renderer::stage_render;
+use renderer::{RenderStageRequest, stage_render};
 #[cfg(test)]
 use sync::rendered_conflicts;
 use sync::{ApplyRenderOptions, apply_staged_render};
@@ -239,10 +241,22 @@ impl TemplateMode {
 
 pub fn run_init(opts: InitOpts) -> Result<Value> {
     let destination = absolute_path(&opts.path)?;
-    validate_init_destination(&destination, opts.force)?;
-    let template_request =
-        resolve_initial_template_request(opts.template.as_deref(), &opts.vcs_ref)?;
-    let template = prepare_initial_template_source(&template_request, opts.template_mode)?;
+    let progress = CliProgress::new("init");
+    progress.header_for_path("render harness into new repo", &destination);
+    progress.step("validate destination", "empty directory or --force");
+    progress.log_blocked_on_err(validate_init_destination(&destination, opts.force))?;
+    progress.step(
+        "resolve template",
+        template_progress_label(opts.template.as_deref()),
+    );
+    let template_request = progress.log_blocked_on_err(resolve_initial_template_request(
+        opts.template.as_deref(),
+        &opts.vcs_ref,
+    ))?;
+    let template = progress.log_blocked_on_err(prepare_initial_template_source(
+        &template_request,
+        opts.template_mode,
+    ))?;
 
     let copy_result = render_and_copy_bootstrap_template(BootstrapCopyRequest {
         destination: &destination,
@@ -250,11 +264,15 @@ pub fn run_init(opts: InitOpts) -> Result<Value> {
         answers: &opts.answers,
         force: opts.force,
         seed_repo_path: None,
+        progress,
     })?;
     let default_branch = copy_result
         .default_branch
         .ok_or_else(|| anyhow::anyhow!("Missing default_branch in staged {}", ANSWERS_FILE))?;
-    let git_initialized = init_git_repo(&destination, &default_branch)?;
+    progress.step("initialize git", format!("default branch {default_branch}"));
+    let git_initialized =
+        progress.log_blocked_on_err(init_git_repo(&destination, &default_branch))?;
+    progress.done("init complete");
 
     Ok(json!({
         "ok": true,
@@ -269,10 +287,22 @@ pub fn run_init(opts: InitOpts) -> Result<Value> {
 
 pub fn run_adopt(opts: AdoptOpts) -> Result<Value> {
     let destination = absolute_path(&opts.path)?;
-    validate_adopt_destination(&destination)?;
-    let template_request =
-        resolve_initial_template_request(opts.template.as_deref(), &opts.vcs_ref)?;
-    let template = prepare_initial_template_source(&template_request, opts.template_mode)?;
+    let progress = CliProgress::new("adopt");
+    progress.header_for_path("render harness into existing repo", &destination);
+    progress.step("validate destination", "existing repository directory");
+    progress.log_blocked_on_err(validate_adopt_destination(&destination))?;
+    progress.step(
+        "resolve template",
+        template_progress_label(opts.template.as_deref()),
+    );
+    let template_request = progress.log_blocked_on_err(resolve_initial_template_request(
+        opts.template.as_deref(),
+        &opts.vcs_ref,
+    ))?;
+    let template = progress.log_blocked_on_err(prepare_initial_template_source(
+        &template_request,
+        opts.template_mode,
+    ))?;
 
     render_and_copy_bootstrap_template(BootstrapCopyRequest {
         destination: &destination,
@@ -280,7 +310,9 @@ pub fn run_adopt(opts: AdoptOpts) -> Result<Value> {
         answers: &opts.answers,
         force: opts.force,
         seed_repo_path: Some(&destination),
+        progress,
     })?;
+    progress.done("adopt complete");
 
     Ok(json!({
         "ok": true,
@@ -448,27 +480,41 @@ fn default_template_failure_context(request: &InitialTemplateRequest<'_>) -> Str
 
 pub fn run_update(opts: UpdateOpts) -> Result<Value> {
     let destination = absolute_path(&opts.path)?;
-    validate_update_destination(&destination)?;
+    let progress = CliProgress::new("update");
     let mode = if opts.recopy { "recopy" } else { "update" };
+    progress.header_for_path(format!("refresh harness ({mode})"), &destination);
+    progress.step("validate destination", "adopted repository directory");
+    progress.log_blocked_on_err(validate_update_destination(&destination))?;
     let answers_path = destination.join(ANSWERS_FILE);
-    let stored = read_stored_template_state(&answers_path)?;
-    let update_template = prepare_update_template_source(&opts, &stored)?;
+    progress.step("read answers", answers_path.display());
+    let stored = progress.log_blocked_on_err(read_stored_template_state(&answers_path))?;
+    progress.step("resolve template", "stored source metadata");
+    let update_template =
+        progress.log_blocked_on_err(prepare_update_template_source(&opts, &stored))?;
     let Some(update_template) = update_template else {
+        progress.blocked("stored template source metadata is missing");
         bail!(
             "Missing template source metadata in {ANSWERS_FILE}. Re-adopt the repo before running jig update."
         );
     };
-    let answers = RenderAnswers::from_answers_file(&answers_path)?;
-    let staged = stage_render(&update_template, &answers, Some(&destination))?;
+    let answers = progress.log_blocked_on_err(RenderAnswers::from_answers_file(&answers_path))?;
+    let staged = stage_render(RenderStageRequest {
+        template: &update_template,
+        answers: &answers,
+        seed_repo_path: Some(&destination),
+        progress,
+    })?;
     apply_staged_render(
         &staged,
         &destination,
         ApplyRenderOptions {
             force: opts.force,
             allow_answers_overwrite: true,
-            conflict_message: "Update would overwrite or remove template-managed paths. Re-run with --force to accept the rendered output:",
+            conflict_message: "Update would overwrite or remove template-managed paths. No files were changed. Re-run with --force to accept the rendered output:",
+            progress,
         },
     )?;
+    progress.done("update complete");
 
     Ok(json!({
         "ok": true,
@@ -478,6 +524,10 @@ pub fn run_update(opts: UpdateOpts) -> Result<Value> {
         "answers_file": ANSWERS_FILE,
         "git_initialized": false,
     }))
+}
+
+fn template_progress_label(template: Option<&str>) -> String {
+    template.unwrap_or(OFFICIAL_TEMPLATE_SOURCE).to_string()
 }
 
 #[cfg(test)]

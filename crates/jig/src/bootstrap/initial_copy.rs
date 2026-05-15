@@ -6,13 +6,16 @@ use toml::{Table, Value as TomlValue};
 
 use super::AnswerOpts;
 use super::answers::RenderAnswers;
-use super::renderer::stage_render;
+use super::renderer::{RenderStageRequest, stage_render};
 use super::sync::{ApplyRenderOptions, apply_staged_render};
 use super::template_source::PreparedTemplateSource;
 #[cfg(test)]
 use super::template_source::PrivateAnswerOverrides;
 #[cfg(test)]
 use super::{TEMPLATE_LOCAL_PATH_KEY, TEMPLATE_MODE_KEY};
+use crate::progress::CliProgress;
+
+const ANSWERS_DETAIL: &str = ".jig.toml values and command defaults";
 
 pub(super) struct BootstrapCopyRequest<'a> {
     pub(super) destination: &'a Path,
@@ -20,6 +23,7 @@ pub(super) struct BootstrapCopyRequest<'a> {
     pub(super) answers: &'a AnswerOpts,
     pub(super) force: bool,
     pub(super) seed_repo_path: Option<&'a Path>,
+    pub(super) progress: CliProgress,
 }
 
 pub(super) struct BootstrapCopyResult {
@@ -36,8 +40,16 @@ pub(super) fn render_and_copy_bootstrap_template(
             request.seed_repo_path,
         ));
     }
-    let answers = RenderAnswers::from_opts(&answer_opts, request.destination)?;
-    let staged = stage_render(request.template, &answers, request.seed_repo_path)?;
+    request.progress.step("resolve answers", ANSWERS_DETAIL);
+    let answers = request
+        .progress
+        .log_blocked_on_err(RenderAnswers::from_opts(&answer_opts, request.destination))?;
+    let staged = stage_render(RenderStageRequest {
+        template: request.template,
+        answers: &answers,
+        seed_repo_path: request.seed_repo_path,
+        progress: request.progress,
+    })?;
 
     apply_staged_render(
         &staged,
@@ -45,7 +57,8 @@ pub(super) fn render_and_copy_bootstrap_template(
         ApplyRenderOptions {
             force: request.force,
             allow_answers_overwrite: false,
-            conflict_message: "Adopt would overwrite template-managed paths. Re-run with --force or clear these paths first:",
+            conflict_message: "Adopt would overwrite template-managed paths. No files were changed. Re-run with --force or clear these paths first:",
+            progress: request.progress,
         },
     )?;
 

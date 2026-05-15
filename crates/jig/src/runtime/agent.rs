@@ -8,6 +8,7 @@ use serde_json::{Value as JsonValue, json};
 use crate::cli::{AgentBootstrapOpts, AgentCommand};
 use crate::context::{CodexMarketplaceConfig, RepoContext};
 use crate::process::{format_exit_status, require_success};
+use crate::progress::CliProgress;
 
 const CODEX_BIN_ENV: &str = "JIG_CODEX_BIN";
 const CODEX_HOME_ENV: &str = "CODEX_HOME";
@@ -23,17 +24,39 @@ pub(super) fn dispatch(ctx: &RepoContext, command: AgentCommand) -> Result<JsonV
 }
 
 pub(super) fn doctor(ctx: &RepoContext) -> Result<JsonValue> {
+    let progress = CliProgress::new("agent doctor");
+    progress.header("inspect local Codex tooling");
+    progress.info("repo", ctx.root().display());
     let codex_bin = codex_bin();
+    progress.step("resolve codex", &codex_bin);
     let configured_marketplaces = ctx.codex_marketplaces();
+    progress.step(
+        "read requirements",
+        marketplace_requirement_message(configured_marketplaces.len()),
+    );
     // Empty marketplace config intentionally means this repo has no Codex skill requirement.
     let codex_required = !configured_marketplaces.is_empty();
-    let codex_available = codex_required.then(|| codex_supports_plugin_marketplaces(&codex_bin));
-    let codex_ready = if codex_required {
-        codex_available.unwrap_or(false)
+    let codex_available = if codex_required {
+        // We only probe Codex when this repo declares Codex marketplace requirements.
+        progress.step("probe codex", "plugin marketplace support");
+        Some(codex_supports_plugin_marketplaces(&codex_bin))
+    } else {
+        None
+    };
+    let codex_ready = if let Some(available) = codex_available {
+        progress.info("codex support", codex_probe_message(available));
+        available
     } else {
         true
     };
     let config_path = codex_config_path();
+    progress.step(
+        "read codex config",
+        config_path
+            .as_ref()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "not found".into()),
+    );
     let config = if codex_required {
         config_path
             .as_ref()
@@ -57,6 +80,15 @@ pub(super) fn doctor(ctx: &RepoContext) -> Result<JsonValue> {
     } else {
         true
     };
+    progress.step(
+        "check marketplaces",
+        readiness_message(codex_required, all_marketplaces_ready),
+    );
+    if codex_ready && all_marketplaces_ready {
+        progress.done("agent doctor complete");
+    } else {
+        progress.blocked("Codex marketplace setup is incomplete");
+    }
 
     Ok(json!({
         "ok": codex_ready && all_marketplaces_ready,
@@ -78,9 +110,19 @@ pub(super) fn doctor(ctx: &RepoContext) -> Result<JsonValue> {
 }
 
 fn bootstrap(ctx: &RepoContext, opts: AgentBootstrapOpts) -> Result<JsonValue> {
+    let progress = CliProgress::new("agent bootstrap");
+    progress.header("install Codex marketplace");
+    progress.info("repo", ctx.root().display());
     let codex_bin = codex_bin();
-    let marketplace_source = requested_marketplace_source(ctx, opts.marketplace)?;
-    let output = Command::new(&codex_bin)
+    progress.step("resolve codex", &codex_bin);
+    let marketplace_source =
+        progress.log_blocked_on_err(requested_marketplace_source(ctx, opts.marketplace))?;
+    progress.step("resolve marketplace", &marketplace_source);
+    progress.step(
+        "install marketplace",
+        format!("{codex_bin} plugin marketplace add"),
+    );
+    let command_output = Command::new(&codex_bin)
         .args(["plugin", "marketplace", "add", &marketplace_source])
         .output()
         .with_context(|| {
@@ -88,10 +130,18 @@ fn bootstrap(ctx: &RepoContext, opts: AgentBootstrapOpts) -> Result<JsonValue> {
                 "Failed to run {} plugin marketplace add {}",
                 codex_bin, marketplace_source
             )
-        })?;
+        });
+    let output = progress.log_blocked_on_err(command_output)?;
+    if !output.status.success() {
+        progress.blocked(format!(
+            "Codex exited with {}",
+            format_exit_status(&output.status)
+        ));
+    }
     require_success(&output, |output| {
         codex_marketplace_add_failed_message(&codex_bin, &marketplace_source, output)
     })?;
+    progress.done("agent bootstrap complete");
 
     Ok(json!({
         "ok": true,
@@ -101,6 +151,29 @@ fn bootstrap(ctx: &RepoContext, opts: AgentBootstrapOpts) -> Result<JsonValue> {
         "stdout": String::from_utf8_lossy(&output.stdout),
         "stderr": String::from_utf8_lossy(&output.stderr)
     }))
+}
+
+fn marketplace_requirement_message(count: usize) -> String {
+    match count {
+        0 => "no Codex marketplaces required".into(),
+        1 => "1 Codex marketplace required".into(),
+        count => format!("{count} Codex marketplaces required"),
+    }
+}
+
+fn codex_probe_message(codex_available: bool) -> &'static str {
+    match codex_available {
+        true => "plugin marketplace support available",
+        false => "plugin marketplace support unavailable",
+    }
+}
+
+fn readiness_message(codex_required: bool, ready: bool) -> &'static str {
+    match (codex_required, ready) {
+        (false, _) => "not required",
+        (true, true) => "registered",
+        (true, false) => "missing registration",
+    }
 }
 
 fn requested_marketplace_source(ctx: &RepoContext, explicit: Option<String>) -> Result<String> {

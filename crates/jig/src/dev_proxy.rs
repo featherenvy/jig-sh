@@ -14,16 +14,28 @@ use crate::cli::{
     ProxyStopOpts,
 };
 use crate::context::{DevAppConfig, RepoContext};
+use crate::progress::CliProgress;
 
 pub(crate) mod commands {
     use super::*;
 
     pub(crate) fn dev(ctx: &RepoContext, opts: DevOpts) -> Result<Value> {
-        reject_no_proxy_runtime_flags(opts.no_proxy, &opts.proxy)?;
-        let discover_workspace = workspace_discovery_enabled(ctx, opts.discover_workspace)?;
-        let settings = settings(ctx, &opts.proxy)?;
-        let apps = configured_apps(ctx, &settings)?;
-        jig_dev_proxy::dev(
+        let progress = CliProgress::new("dev");
+        progress.header("launch configured development apps");
+        progress.info("repo", ctx.root().display());
+        progress.step("validate flags", "proxy and workspace discovery options");
+        progress.log_blocked_on_err(reject_no_proxy_runtime_flags(opts.no_proxy, &opts.proxy))?;
+        let discover_workspace = progress
+            .log_blocked_on_err(workspace_discovery_enabled(ctx, opts.discover_workspace))?;
+        progress.step("resolve proxy", "ports, TLS, LAN, and state directory");
+        let settings = progress.log_blocked_on_err(settings(ctx, &opts.proxy))?;
+        progress.step("collect apps", "configured frontend and [dev] entries");
+        let apps = progress.log_blocked_on_err(configured_apps(ctx, &settings))?;
+        progress.step(
+            "start session",
+            dev_session_message(apps.len(), discover_workspace),
+        );
+        let output = progress.log_blocked_on_err(jig_dev_proxy::dev(
             jig_dev_proxy::DevRequest::new(
                 ctx.repo_name(),
                 ctx.root().to_path_buf(),
@@ -34,7 +46,13 @@ pub(crate) mod commands {
             .with_selected_apps(opts.apps)
             .with_discover_workspace(discover_workspace)
             .with_no_proxy(opts.no_proxy),
-        )
+        ))?;
+        if json_ok(&output) {
+            progress.done("dev session complete");
+        } else {
+            progress.blocked("dev session ended with ok=false");
+        }
+        Ok(output)
     }
 
     pub(crate) fn proxy(ctx: &RepoContext, command: ProxyCommand) -> Result<Value> {
@@ -140,14 +158,41 @@ pub(crate) mod commands {
                 })
             }
             ProxyCommand::Service(ProxyServiceCommand::Uninstall(opts)) => {
-                jig_dev_proxy::proxy_service(jig_dev_proxy::ProxyServiceRequest::Uninstall {
-                    settings: settings_without_context(&opts.proxy)?,
-                })
+                let progress = CliProgress::new("proxy service");
+                progress.header("remove user service");
+                progress.step("resolve proxy", "state directory and runtime flags");
+                let settings =
+                    progress.log_blocked_on_err(settings_without_context(&opts.proxy))?;
+                let output = progress.log_blocked_on_err(jig_dev_proxy::proxy_service(
+                    jig_dev_proxy::ProxyServiceRequest::Uninstall { settings },
+                ))?;
+                finish_service_progress(
+                    &progress,
+                    "service uninstall complete",
+                    "service uninstall did not complete",
+                    &output,
+                );
+                Ok(output)
             }
             ProxyCommand::Service(ProxyServiceCommand::Status(opts)) => {
-                jig_dev_proxy::proxy_service(jig_dev_proxy::ProxyServiceRequest::Status {
-                    settings: settings_existing_state_dir_without_context(&opts.proxy)?,
-                })
+                let progress = CliProgress::new("proxy service");
+                progress.header("inspect user service");
+                progress.step(
+                    "resolve proxy",
+                    "existing state directory and runtime flags",
+                );
+                let settings = progress
+                    .log_blocked_on_err(settings_existing_state_dir_without_context(&opts.proxy))?;
+                let output = progress.log_blocked_on_err(jig_dev_proxy::proxy_service(
+                    jig_dev_proxy::ProxyServiceRequest::Status { settings },
+                ))?;
+                finish_service_progress(
+                    &progress,
+                    "service status complete",
+                    "service is not active",
+                    &output,
+                );
+                Ok(output)
             }
             _ => bail!("This proxy command requires an adopted Jig repo."),
         }
@@ -195,22 +240,102 @@ pub(crate) mod commands {
     }
 
     fn proxy_service(ctx: &RepoContext, command: ProxyServiceCommand) -> Result<Value> {
+        let progress = CliProgress::new("proxy service");
+        progress.header(service_action(&command));
+        progress.info("repo", ctx.root().display());
+        progress.step("resolve proxy", "state directory and runtime flags");
+        let runtime_detail = service_runtime_detail(&command);
+        let failure_message = service_failure_message(&command);
         let request = match command {
             ProxyServiceCommand::Install(opts) => jig_dev_proxy::ProxyServiceRequest::Install {
-                settings: settings(ctx, &opts.proxy)?,
-                current_exe: jig_dev_proxy::current_exe()?,
+                settings: progress.log_blocked_on_err(settings(ctx, &opts.proxy))?,
+                current_exe: {
+                    progress.step("resolve binary", "current jig executable");
+                    progress.log_blocked_on_err(jig_dev_proxy::current_exe())?
+                },
                 repo_root: ctx.root().to_path_buf(),
                 accept_service_scope: opts.accept_service_scope,
             },
             ProxyServiceCommand::Uninstall(opts) => jig_dev_proxy::ProxyServiceRequest::Uninstall {
-                settings: settings(ctx, &opts.proxy)?,
+                settings: progress.log_blocked_on_err(settings(ctx, &opts.proxy))?,
             },
-            ProxyServiceCommand::Status(opts) => jig_dev_proxy::ProxyServiceRequest::Status {
-                settings: settings_existing_state_dir(ctx, &opts.proxy)?,
-            },
+            ProxyServiceCommand::Status(opts) => {
+                let settings =
+                    progress.log_blocked_on_err(settings_existing_state_dir(ctx, &opts.proxy))?;
+                jig_dev_proxy::ProxyServiceRequest::Status { settings }
+            }
         };
-        jig_dev_proxy::proxy_service(request)
+        progress.step("run service action", runtime_detail);
+        let output = progress.log_blocked_on_err(jig_dev_proxy::proxy_service(request))?;
+        finish_service_progress(
+            &progress,
+            "service command complete",
+            failure_message,
+            &output,
+        );
+        Ok(output)
     }
+}
+
+fn dev_session_message(configured_app_count: usize, discover_workspace: bool) -> String {
+    let configured = match configured_app_count {
+        1 => "1 configured app".to_string(),
+        count => format!("{count} configured apps"),
+    };
+    if discover_workspace {
+        format!("{configured}; workspace discovery enabled")
+    } else {
+        configured
+    }
+}
+
+fn service_action(command: &ProxyServiceCommand) -> &'static str {
+    match command {
+        ProxyServiceCommand::Install(_) => "install user service",
+        ProxyServiceCommand::Uninstall(_) => "remove user service",
+        ProxyServiceCommand::Status(_) => "inspect user service",
+    }
+}
+
+fn service_runtime_detail(command: &ProxyServiceCommand) -> &'static str {
+    match command {
+        ProxyServiceCommand::Install(_) => "write and load service file",
+        ProxyServiceCommand::Uninstall(_) => "unload and remove service file",
+        ProxyServiceCommand::Status(_) => "query service manager",
+    }
+}
+
+fn service_failure_message(command: &ProxyServiceCommand) -> &'static str {
+    match command {
+        ProxyServiceCommand::Install(_) => "service install did not complete",
+        ProxyServiceCommand::Uninstall(_) => "service uninstall did not complete",
+        ProxyServiceCommand::Status(_) => "service is not active",
+    }
+}
+
+fn finish_service_progress(
+    progress: &CliProgress,
+    success_message: &str,
+    failure_message: &str,
+    output: &Value,
+) {
+    if json_ok(output) {
+        progress.done(success_message);
+    } else {
+        progress.blocked(service_blocked_detail(output, failure_message));
+    }
+}
+
+fn json_ok(output: &Value) -> bool {
+    output.get("ok").and_then(Value::as_bool).unwrap_or(false)
+}
+
+fn service_blocked_detail(output: &Value, fallback: &str) -> String {
+    output
+        .get("error")
+        .and_then(Value::as_str)
+        .unwrap_or(fallback)
+        .to_string()
 }
 
 fn workspace_discovery_enabled(ctx: &RepoContext, cli_requested: bool) -> Result<bool> {
