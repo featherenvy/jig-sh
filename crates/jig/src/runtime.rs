@@ -16,28 +16,29 @@ mod work;
 
 pub(crate) fn dispatch(ctx: &RepoContext, command: CommandKind) -> Result<Value> {
     match command {
+        CommandKind::Bootstrap(opts) => {
+            execute_manifest_tool(ctx, tool::BOOTSTRAP, json!({}), opts.plan_id)
+        }
         CommandKind::FmtCheck(opts) => {
-            execute_manifest_make_tool(ctx, tool::FMT_CHECK, json!({}), opts.plan_id)
+            execute_manifest_tool(ctx, tool::FMT_CHECK, json!({}), opts.plan_id)
         }
         CommandKind::Clippy(opts) => {
-            execute_manifest_make_tool(ctx, tool::CLIPPY, json!({}), opts.plan_id)
+            execute_manifest_tool(ctx, tool::CLIPPY, json!({}), opts.plan_id)
         }
-        CommandKind::Test(opts) => {
-            execute_manifest_make_tool(ctx, tool::TEST, json!({}), opts.plan_id)
-        }
+        CommandKind::Test(opts) => execute_manifest_tool(ctx, tool::TEST, json!({}), opts.plan_id),
         CommandKind::TestLocked(opts) => {
-            execute_manifest_make_tool(ctx, tool::TEST_LOCKED, json!({}), opts.plan_id)
+            execute_manifest_tool(ctx, tool::TEST_LOCKED, json!({}), opts.plan_id)
         }
         CommandKind::SqlxCheck(opts) => {
-            execute_manifest_make_tool(ctx, tool::SQLX_CHECK, json!({}), opts.plan_id)
+            execute_manifest_tool(ctx, tool::SQLX_CHECK, json!({}), opts.plan_id)
         }
         CommandKind::SchemaCheck(opts) => {
-            execute_manifest_make_tool(ctx, tool::SCHEMA_CHECK, json!({}), opts.plan_id)
+            execute_manifest_tool(ctx, tool::SCHEMA_CHECK, json!({}), opts.plan_id)
         }
         CommandKind::SchemaDump(opts) => {
-            execute_manifest_make_tool(ctx, tool::SCHEMA_DUMP, json!({}), opts.plan_id)
+            execute_manifest_tool(ctx, tool::SCHEMA_DUMP, json!({}), opts.plan_id)
         }
-        CommandKind::MigrationAdd(opts) => execute_manifest_make_tool(
+        CommandKind::MigrationAdd(opts) => execute_manifest_tool(
             ctx,
             tool::MIGRATION_ADD,
             json!({ args::NAME: opts.name }),
@@ -54,10 +55,10 @@ pub(crate) fn dispatch(ctx: &RepoContext, command: CommandKind) -> Result<Value>
             })
         }),
         CommandKind::ContractCheck(opts) => {
-            execute_manifest_make_tool(ctx, tool::CONTRACT_CHECK, json!({}), opts.plan_id)
+            execute_manifest_tool(ctx, tool::CONTRACT_CHECK, json!({}), opts.plan_id)
         }
         CommandKind::Dev(opts) => crate::dev_proxy::commands::dev(ctx, opts),
-        CommandKind::RunTarget(opts) => execute_manifest_make_tool(
+        CommandKind::RunTarget(opts) => execute_manifest_tool(
             ctx,
             tool::RUN_TARGET,
             json!({ args::NAME: opts.name }),
@@ -75,8 +76,8 @@ pub(crate) fn call_tool(ctx: &RepoContext, name: &str, args: Value) -> Result<Va
     let args_obj = args.as_object().cloned().unwrap_or_default();
 
     match ctx.tool_spec(name) {
-        Some(tool) if tool_defs::is_make_tool(tool) => {
-            return call_manifest_make_tool(ctx, tool, &args_obj);
+        Some(tool) if tool_defs::is_execution_tool(tool) => {
+            return call_manifest_tool(ctx, tool, &args_obj);
         }
         _ => {}
     }
@@ -99,36 +100,36 @@ pub(crate) fn call_tool(ctx: &RepoContext, name: &str, args: Value) -> Result<Va
     }
 }
 
-fn call_manifest_make_tool(
+fn call_manifest_tool(
     ctx: &RepoContext,
     tool: &ManifestTool,
     args_obj: &JsonObject,
 ) -> Result<Value> {
     let plan_id = string_arg(args_obj, args::PLAN_ID);
-    let args = tool_defs::make_tool_args(tool, args_obj)?;
+    let args = tool_defs::execution_tool_args(tool, args_obj)?;
 
-    execute_manifest_make_tool(ctx, &tool.name, args, plan_id)
+    execute_manifest_tool(ctx, &tool.name, args, plan_id)
 }
 
-fn execute_manifest_make_tool(
+fn execute_manifest_tool(
     ctx: &RepoContext,
     tool_name: &str,
     args: Value,
     plan_id: Option<String>,
 ) -> Result<Value> {
-    execute_manifest_make_tool_with_options(ctx, tool_name, args, plan_id, true)
+    execute_manifest_tool_with_options(ctx, tool_name, args, plan_id, true)
 }
 
-fn execute_manifest_make_tool_without_worktree_fingerprint(
+fn execute_manifest_tool_without_worktree_fingerprint(
     ctx: &RepoContext,
     tool_name: &str,
     args: Value,
     plan_id: Option<String>,
 ) -> Result<Value> {
-    execute_manifest_make_tool_with_options(ctx, tool_name, args, plan_id, false)
+    execute_manifest_tool_with_options(ctx, tool_name, args, plan_id, false)
 }
 
-fn execute_manifest_make_tool_with_options(
+fn execute_manifest_tool_with_options(
     ctx: &RepoContext,
     tool_name: &str,
     args: Value,
@@ -138,28 +139,45 @@ fn execute_manifest_make_tool_with_options(
     let tool = ctx
         .tool_spec(tool_name)
         .ok_or_else(|| anyhow!("Tool is not declared in .agent/jig-contract.json: {tool_name}"))?;
-    if !tool_defs::is_make_tool(tool) {
-        bail!("Tool is not a make-backed tool: {tool_name}");
+    if tool_defs::is_make_tool(tool) {
+        let target = match tool.target.as_deref() {
+            Some(target) => Cow::Borrowed(target),
+            None => args
+                .get(args::NAME)
+                .and_then(Value::as_str)
+                .ok_or_else(|| anyhow!("{tool_name} requires a name argument"))?
+                .to_string()
+                .into(),
+        };
+
+        return execute_make_tool(
+            ctx,
+            &tool.name,
+            target.as_ref(),
+            args,
+            plan_id,
+            collect_worktree_fingerprint,
+        );
     }
 
-    let target = match tool.target.as_deref() {
-        Some(target) => Cow::Borrowed(target),
-        None => args
-            .get(args::NAME)
-            .and_then(Value::as_str)
-            .ok_or_else(|| anyhow!("{tool_name} requires a name argument"))?
-            .to_string()
-            .into(),
-    };
+    if tool_defs::is_command_tool(tool) {
+        let command_key = tool
+            .command
+            .as_deref()
+            .ok_or_else(|| anyhow!("Command-backed tool is missing command: {tool_name}"))?;
+        let command = ctx.command_for_key(command_key)?;
+        return execute_command_tool(
+            ctx,
+            &tool.name,
+            command_key,
+            command,
+            args,
+            plan_id,
+            collect_worktree_fingerprint,
+        );
+    }
 
-    execute_make_tool(
-        ctx,
-        &tool.name,
-        target.as_ref(),
-        args,
-        plan_id,
-        collect_worktree_fingerprint,
-    )
+    bail!("Unsupported tool kind '{}' for {tool_name}", tool.kind)
 }
 
 fn execute_make_tool(
@@ -183,6 +201,7 @@ fn execute_make_tool(
             tool_name,
             args: args.clone(),
             invoked_make_target: Some(target.to_string()),
+            invoked_command_key: None,
             plan_id,
             started_at_ms: started,
             ended_at_ms: ended,
@@ -216,6 +235,62 @@ fn execute_make_tool(
     }))
 }
 
+fn execute_command_tool(
+    ctx: &RepoContext,
+    tool_name: &str,
+    command_key: &str,
+    command_text: &str,
+    args: Value,
+    plan_id: Option<String>,
+    collect_worktree_fingerprint: bool,
+) -> Result<Value> {
+    let started = now_ms();
+    let output = run_configured_command(ctx, tool_name, command_text, &args)?;
+    let ended = now_ms();
+    let exit_status = output.status.code().unwrap_or(1);
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+
+    let receipt_id = record_receipt(
+        ctx,
+        ReceiptInput {
+            tool_name,
+            args: args.clone(),
+            invoked_make_target: None,
+            invoked_command_key: Some(command_key.to_string()),
+            plan_id,
+            started_at_ms: started,
+            ended_at_ms: ended,
+            exit_status,
+            stdout: &stdout,
+            stderr: &stderr,
+            session_override: None,
+            collect_git_metadata: true,
+            collect_worktree_fingerprint,
+            worktree_fingerprint_override: None,
+        },
+    )?;
+
+    require_success(&output, |_| {
+        format!(
+            "{tool_name} failed with status {exit_status}\ncommand key: {command_key}\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        )
+    })?;
+
+    Ok(json!({
+        "ok": true,
+        "tool": tool_name,
+        "command_key": command_key,
+        "args": args,
+        "result": {
+            "exit_status": exit_status,
+            "stdout": stdout,
+            "stderr": stderr,
+        },
+        "receipt_id": receipt_id,
+    }))
+}
+
 fn run_make(ctx: &RepoContext, target: &str, args: &Value) -> Result<Output> {
     let mut command = Command::new("make");
     command.current_dir(ctx.root()).arg(target);
@@ -236,6 +311,28 @@ fn run_make(ctx: &RepoContext, target: &str, args: &Value) -> Result<Output> {
     command
         .output()
         .with_context(|| format!("Failed to run make {target}"))
+}
+
+fn run_configured_command(
+    ctx: &RepoContext,
+    tool_name: &str,
+    command_text: &str,
+    args: &Value,
+) -> Result<Output> {
+    let mut command = Command::new("bash");
+    command.current_dir(ctx.root()).arg("-c").arg(command_text);
+
+    if tool_name == tool::MIGRATION_ADD {
+        let name = args
+            .get(args::NAME)
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow!("{} requires a name argument", tool::MIGRATION_ADD))?;
+        command.env("NAME", name);
+    }
+
+    command
+        .output()
+        .with_context(|| format!("Failed to run configured command for {tool_name}"))
 }
 
 #[cfg(test)]

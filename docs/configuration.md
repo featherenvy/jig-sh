@@ -50,11 +50,15 @@ When `sqlx_enabled` is `true`, these additional keys are required:
 
 ## Optional Keys
 
-- `schema_dump_enabled`: when `true` and `sqlx_enabled` is also `true`, `make schema-check` executes `schema_dump_command`
-- `schema_dump_command`: command that regenerates schema docs for SQLx-enabled repos
-- `migration_add_command`: command behind `make migration-add` when `sqlx_enabled` is `true`
-- `bootstrap_command`: implementation behind `make bootstrap`
-- `dev_command`: implementation behind `make dev`
+- `makefile_enabled`: when `true`, Jig renders a root Makefile adapter; adoption defaults it to `false` if a root `Makefile` already exists
+- `schema_dump_enabled`: when `true` and `sqlx_enabled` is also `true`, the template renders schema dump and schema freshness commands
+- `schema_dump_command`: command behind `scripts/jig schema-dump` when `sqlx_enabled` and `schema_dump_enabled` are both `true`
+- `schema_check_command`: command behind `scripts/jig schema-check` when `sqlx_enabled` and `schema_dump_enabled` are both `true`
+- `sqlx_check_command`: command behind `scripts/jig sqlx-check` when `sqlx_enabled` is `true`
+- `migration_add_command`: command behind `scripts/jig migration-add` when `sqlx_enabled` is `true`
+- `bootstrap_command`: implementation behind `scripts/jig bootstrap`; set this explicitly when bootstrap must install web dependencies or run project-specific setup beyond the default `cargo fetch`
+- `contract_check_command`: implementation behind `scripts/jig contract-check`
+- `dev_command`: legacy project-owned dev command used by the optional Makefile adapter's `make dev`; Makefile-less v2 renders omit it, and older repos that retain it do not use it for `scripts/jig dev`
 - `rust_fmt_check_command`
 - `rust_clippy_command`
 - `rust_test_command`
@@ -63,9 +67,11 @@ When `sqlx_enabled` is `true`, these additional keys are required:
 - `frontend_apps`: list of app definitions
 - `dev`: Jig-native local development proxy settings and app definitions
 
+All top-level `*_command` values are committed repo configuration and run through non-login `bash -c` from the repo root with the user's normal process environment. Treat changes to these keys like changes to project-owned shell scripts or Makefile recipes. `scripts/jig migration-add NAME` passes the requested migration name to `migration_add_command` as the `NAME` environment variable; other path-like settings should be embedded in the configured command string or handled by the called script.
+
 ## Accepted Key Summary
 
-Jig rejects unknown `.jig.toml` keys so stale template answers fail early. The accepted top-level keys are `_src_path`, `_commit`, `_template_mode`, `_template_local_path`, `repo_name`, `default_branch`, `ci_github_runner`, `jig_version`, `template_source_url`, `sqlx_enabled`, `rust_crate_roots`, `rust_migration_dir`, `rust_sqlx_metadata_dir`, `schema_dump_enabled`, `schema_dump_command`, `migration_add_command`, `bootstrap_command`, `dev_command`, `rust_fmt_check_command`, `rust_clippy_command`, `rust_test_command`, `rust_test_locked_command`, `web_package_manager`, `frontend_apps`, `dev`, `work`, and `agent_tooling`.
+Jig rejects unknown `.jig.toml` keys so stale template answers fail early. The accepted top-level keys are `_src_path`, `_commit`, `_template_mode`, `_template_local_path`, `repo_name`, `default_branch`, `ci_github_runner`, `jig_version`, `template_source_url`, `makefile_enabled`, `sqlx_enabled`, `rust_crate_roots`, `rust_migration_dir`, `rust_sqlx_metadata_dir`, `schema_dump_enabled`, `schema_dump_command`, `schema_check_command`, `sqlx_check_command`, `migration_add_command`, `bootstrap_command`, `contract_check_command`, `dev_command`, `rust_fmt_check_command`, `rust_clippy_command`, `rust_test_command`, `rust_test_locked_command`, `web_package_manager`, `frontend_apps`, `dev`, `work`, and `agent_tooling`.
 
 Nested accepted keys are:
 
@@ -123,7 +129,7 @@ kind = "check"
 tool = "jig.test"
 ```
 
-`kind: check` gates must reference make-backed jig tool names declared in `.agent/jig-contract.json`. `scripts/jig work check --plan-id ...` runs configured check gates in order unless one or more `--tool` values are passed explicitly.
+`kind: check` gates must reference execution tool names declared in `.agent/jig-contract.json`. `scripts/jig work check --plan-id ...` runs configured check gates in order unless one or more `--tool` values are passed explicitly.
 
 `scripts/jig work gates --plan-id ...` reports each configured gate as `passed`, `missing`, `failed`, `stale`, `unknown`, or `unsupported`. `scripts/jig work finish --plan-id ...` refuses to close work while required gates are missing, failed, stale, unknown, or unsupported. Check gate freshness is based on the non-`.agent/` worktree fingerprint from the latest check or check-batch receipt that proves the gate.
 
@@ -133,7 +139,7 @@ After upgrading an in-flight repo from a Jig version that recorded receipts with
 
 For compatibility, older repos may still use `work.checks`; Jig backfills entries that are not already declared in `work.gates` as required `kind: check` gates with generated IDs. When a tool is declared in both places, the explicit `work.gates` entry is authoritative. New repos should use `work.gates`.
 
-Generated SQLx-enabled repos also include check gates for `jig.sqlx_check` and `jig.schema_check`. Repos with schema dumps enabled also include `jig.schema_dump`.
+Generated SQLx-enabled repos include a check gate for `jig.sqlx_check`. Repos with schema dumps enabled also include `jig.schema_check` and `jig.schema_dump`.
 
 Review procedures are intentionally separate from native check gates:
 
@@ -175,7 +181,7 @@ Each configured app directory is expected to support:
 
 ## `dev` Shape
 
-The `dev` table configures `scripts/jig dev` and `scripts/jig proxy`. This is runtime-owned local machine behavior, not a make-backed contract tool. Generated repos include a `[dev]` table with conservative defaults; repos that remove it use the runtime defaults from the pinned `jig_version`.
+The `dev` table configures `scripts/jig dev` and `scripts/jig proxy`. This is runtime-owned local machine behavior, not a generated contract tool. Generated repos include a `[dev]` table with conservative defaults; repos that remove it use the runtime defaults from the pinned `jig_version`.
 
 ```toml
 [dev]
@@ -231,13 +237,13 @@ The Vite integration also sets Vite's `__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS` e
 
 Do not configure both `[[dev.apps]]` and legacy `[[frontend_apps]]` in the same repo. Legacy `[[frontend_apps]]` entries are still supported as a fallback when no `dev.apps` are configured, so older generated repos can use the proxy without duplicate app names.
 
-To migrate a legacy frontend entry, create a matching `[[dev.apps]]` entry with the same `name` and `dir`, set `kind = "vite"` for Vite-style frontends, and set `argv` to the package-manager dev command such as `["bun", "run", "dev"]`. `coverage_threshold` stays with the older frontend check workflow and is not used by `scripts/jig dev`; keep any build, lint, typecheck, or coverage commands in project-owned make targets.
+To migrate a legacy frontend entry, create a matching `[[dev.apps]]` entry with the same `name` and `dir`, set `kind = "vite"` for Vite-style frontends, and set `argv` to the package-manager dev command such as `["bun", "run", "dev"]`. `coverage_threshold` stays with the older frontend check workflow and is not used by `scripts/jig dev`; keep any build, lint, typecheck, or coverage commands in project-owned scripts or Make targets.
 
 Jig rejects unknown top-level `.jig.toml` keys and unknown keys inside known tables. During upgrades, remove experimental keys or move repo-local notes outside `.jig.toml`; template-owned compatibility keys are listed in the required and optional sections above.
 
 When `workspace_discovery = true`, Jig discovers common JavaScript workspace package globs under the repo root after `JIG_DEV_ALLOW_WORKSPACE_DISCOVERY=1` is present in the environment, because discovered package `dev` scripts are executable repo code. The matching one-shot CLI override is `scripts/jig dev --discover-workspace`. Discovery supports `*`, `**`, and leading `!` exclusions, but not brace expansion such as `apps/{web,admin}`. Discovery skips `node_modules`, dot-directories, symlinked package directories, and canonical paths outside the repo root. Glob expansion fails closed after 10,000 matches; narrow workspace globs in very large monorepos.
 
-`scripts/jig dev` only launches configured `[[dev.apps]]`, legacy `[[frontend_apps]]`, or workspace-discovered apps. It does not run the generic top-level `dev_command`; keep `make dev` for repo-wide commands that do not bind a supervised app port.
+`scripts/jig dev` only launches configured `[[dev.apps]]`, legacy `[[frontend_apps]]`, or workspace-discovered apps. It does not run the generic top-level `dev_command`; keep repo-wide commands that do not bind a supervised app port in project-owned scripts or Make targets.
 
 Each dev app defaults to `host = "127.0.0.1"` and `proxy = true` unless a `[[dev.apps]]` entry overrides them. This is the backend target host that Jig forwards to, not the proxy listener address. Proxied dev apps, including legacy `[[frontend_apps]]` entries, must target loopback IP literals such as `127.0.0.1` or `::1`; use `scripts/jig proxy alias` for deliberate proxied non-loopback local tunnels. A `proxy = false` app is launched directly without publishing any Jig proxy route, so its `host` value is only passed to the child process as the app bind target. Set `port` only when an app must use a fixed backend port; otherwise Jig assigns a free port in the local app range.
 
@@ -317,9 +323,28 @@ If the local CA key may be compromised, run `scripts/jig proxy cert untrust --ac
 
 ## Generated Contract
 
-The compatibility policy for generated make-backed CLI commands, MCP tools, and `.agent/jig-contract.json` is defined in [Public Contract](./public-contract.md).
+The compatibility policy for generated CLI commands, MCP tools, and `.agent/jig-contract.json` is defined in [Public Contract](./public-contract.md).
 
-The generated `Makefile` exposes these stable targets:
+`scripts/jig` is the stable command surface for generated repos. It exposes configured project checks as:
+
+- `scripts/jig bootstrap`
+- `scripts/jig fmt-check`
+- `scripts/jig clippy`
+- `scripts/jig test`
+- `scripts/jig test-locked`
+- `scripts/jig contract-check`
+
+When `sqlx_enabled` is `true`, it also exposes:
+
+- `scripts/jig sqlx-check`
+- `scripts/jig migration-add NAME`
+
+When both `sqlx_enabled` and `schema_dump_enabled` are `true`, it also exposes:
+
+- `scripts/jig schema-check`
+- `scripts/jig schema-dump`
+
+When `makefile_enabled = true`, the generated `Makefile` exposes these convenience adapter targets:
 
 - `bootstrap`
 - `deps`
@@ -340,15 +365,15 @@ When `sqlx_enabled` is `true`, generated repos also expose:
 
 - `sqlx-db-setup`
 - `sqlx-check`
-- `schema-check`
 - `migration-add`
 - `check-sqlx-unchecked-non-test`
 
 When both `sqlx_enabled` and `schema_dump_enabled` are `true`, generated repos also expose:
 
+- `schema-check`
 - `schema-dump`
 
-Downstream repos may add more targets, but these names should remain stable for agent tooling.
+Downstream repos may add more targets, but agents should prefer `scripts/jig` because adoption can leave an existing project Makefile unmanaged.
 
 Generated repos also get these runtime-owned files:
 
@@ -357,7 +382,7 @@ Generated repos also get these runtime-owned files:
 - `scripts/jig`
 - `scripts/install-jig.sh`
 
-The generated `scripts/jig` launcher enforces the exact `jig_version` pinned in `.jig.toml`. On first use it installs that version into a repo-local cache and then exposes the make-backed contract as:
+The generated `scripts/jig` launcher enforces the exact `jig_version` pinned in `.jig.toml`. On first use it installs that version into a repo-local cache and then exposes the configured command contract as:
 
 - CLI commands such as `scripts/jig fmt-check`
 - MCP tools such as `jig.fmt_check`

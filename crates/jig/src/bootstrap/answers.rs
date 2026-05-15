@@ -17,14 +17,18 @@ pub(super) struct RenderAnswers {
     ci_github_runner: String,
     jig_version: String,
     template_source_url: String,
+    makefile_enabled: bool,
     sqlx_enabled: bool,
     rust_crate_roots: Vec<String>,
     rust_migration_dir: Option<String>,
     rust_sqlx_metadata_dir: Option<String>,
     schema_dump_enabled: bool,
     schema_dump_command: String,
+    schema_check_command: String,
+    sqlx_check_command: String,
     migration_add_command: Option<String>,
     bootstrap_command: String,
+    contract_check_command: String,
     dev_command: String,
     rust_fmt_check_command: String,
     rust_clippy_command: String,
@@ -58,6 +62,10 @@ impl RenderAnswers {
         &self.template_source_url
     }
 
+    pub(super) fn makefile_enabled(&self) -> bool {
+        self.makefile_enabled
+    }
+
     pub(super) fn sqlx_enabled(&self) -> bool {
         self.sqlx_enabled
     }
@@ -70,14 +78,18 @@ struct RawAnswers {
     ci_github_runner: Option<String>,
     jig_version: Option<String>,
     template_source_url: Option<String>,
+    makefile_enabled: Option<bool>,
     sqlx_enabled: Option<bool>,
     rust_crate_roots: Option<Vec<String>>,
     rust_migration_dir: Option<String>,
     rust_sqlx_metadata_dir: Option<String>,
     schema_dump_enabled: Option<bool>,
     schema_dump_command: Option<String>,
+    schema_check_command: Option<String>,
+    sqlx_check_command: Option<String>,
     migration_add_command: Option<String>,
     bootstrap_command: Option<String>,
+    contract_check_command: Option<String>,
     dev_command: Option<String>,
     rust_fmt_check_command: Option<String>,
     rust_clippy_command: Option<String>,
@@ -132,6 +144,7 @@ impl RawAnswers {
             &mut self.template_source_url,
             opts.template_source_url.clone(),
         );
+        merge_option(&mut self.makefile_enabled, opts.makefile_enabled);
         merge_option(&mut self.sqlx_enabled, opts.sqlx_enabled);
         if !opts.rust_crate_roots.is_empty() {
             self.rust_crate_roots = Some(opts.rust_crate_roots.clone());
@@ -150,10 +163,22 @@ impl RawAnswers {
             opts.schema_dump_command.clone(),
         );
         merge_option(
+            &mut self.schema_check_command,
+            opts.schema_check_command.clone(),
+        );
+        merge_option(
+            &mut self.sqlx_check_command,
+            opts.sqlx_check_command.clone(),
+        );
+        merge_option(
             &mut self.migration_add_command,
             opts.migration_add_command.clone(),
         );
         merge_option(&mut self.bootstrap_command, opts.bootstrap_command.clone());
+        merge_option(
+            &mut self.contract_check_command,
+            opts.contract_check_command.clone(),
+        );
         merge_option(&mut self.dev_command, opts.dev_command.clone());
         merge_option(
             &mut self.rust_fmt_check_command,
@@ -193,6 +218,26 @@ impl RawAnswers {
         if web_package_manager != "bun" {
             bail!("Unsupported web_package_manager '{web_package_manager}'. Supported values: bun");
         }
+        let schema_dump_enabled = self.schema_dump_enabled.unwrap_or(true);
+        let schema_dump_command = self
+            .schema_dump_command
+            .unwrap_or_else(|| "scripts/dump-schema.sh".into());
+        let rust_sqlx_metadata_dir = self.rust_sqlx_metadata_dir.or_else(|| Some(".sqlx".into()));
+        let sqlx_check_command = self.sqlx_check_command.unwrap_or_else(|| {
+            let metadata_dir = rust_sqlx_metadata_dir.as_deref().unwrap_or(".sqlx");
+            format!(
+                "SQLX_OFFLINE=false SQLX_OFFLINE_DIR={} cargo sqlx prepare --check --workspace -- --workspace --all-targets",
+                shell_quote(metadata_dir)
+            )
+        });
+        let migration_add_command = self.migration_add_command.or_else(|| {
+            rust_migration_dir.as_deref().map(|dir| {
+                format!(
+                    "RUST_MIGRATION_DIR={} scripts/add-migration.sh",
+                    shell_quote(dir)
+                )
+            })
+        });
 
         Ok(RenderAnswers {
             repo_name,
@@ -204,20 +249,26 @@ impl RawAnswers {
                 .jig_version
                 .unwrap_or_else(|| env!("CARGO_PKG_VERSION").into()),
             template_source_url: self.template_source_url.unwrap_or_default(),
+            makefile_enabled: self.makefile_enabled.unwrap_or(true),
             sqlx_enabled,
             rust_crate_roots: self
                 .rust_crate_roots
                 .unwrap_or_else(|| vec!["crates".into()]),
             rust_migration_dir,
-            rust_sqlx_metadata_dir: self.rust_sqlx_metadata_dir.or_else(|| Some(".sqlx".into())),
-            schema_dump_enabled: self.schema_dump_enabled.unwrap_or(true),
-            schema_dump_command: self
-                .schema_dump_command
-                .unwrap_or_else(|| "scripts/dump-schema.sh".into()),
-            migration_add_command: self
-                .migration_add_command
-                .or_else(|| Some("scripts/add-migration.sh".into())),
-            bootstrap_command: self.bootstrap_command.unwrap_or_else(|| "make deps".into()),
+            rust_sqlx_metadata_dir,
+            schema_dump_enabled,
+            schema_dump_command,
+            schema_check_command: self
+                .schema_check_command
+                .unwrap_or_else(|| "scripts/check-schema-dump.sh".into()),
+            sqlx_check_command,
+            migration_add_command,
+            bootstrap_command: self
+                .bootstrap_command
+                .unwrap_or_else(|| "cargo fetch".into()),
+            contract_check_command: self
+                .contract_check_command
+                .unwrap_or_else(|| "scripts/check-jig-contract.sh".into()),
             dev_command: self.dev_command.unwrap_or_else(|| {
                 r#"echo "Define dev_command in .jig.toml" >&2 && exit 1"#.into()
             }),
@@ -238,6 +289,10 @@ impl RawAnswers {
             agent_tooling: self.agent_tooling.unwrap_or_default(),
         })
     }
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 fn default_codex_marketplaces() -> Vec<CodexMarketplaceAnswers> {

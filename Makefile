@@ -74,20 +74,7 @@ check-rust-file-loc: ## Enforce Rust file-size policy against the default branch
 	scripts/check-rust-file-loc.sh --changed-against "$$base_ref"
 
 check-no-mod-rs: ## Fail if disallowed mod.rs files exist under configured crate roots
-	@set -euo pipefail; \
-	violations=""; \
-	for root in $(RUST_CRATE_ROOTS); do \
-	  matches="$$(git ls-files "$$root/**/mod.rs" 2>/dev/null || true)"; \
-	  if [ -n "$$matches" ]; then \
-	    violations="$$violations $$matches"; \
-	  fi; \
-	done; \
-	if [ -n "$$violations" ]; then \
-	  echo "Disallowed Rust module file(s) found. Use named module files instead of mod.rs."; \
-	  printf '%s\n' $$violations; \
-	  exit 1; \
-	fi; \
-	echo "No disallowed mod.rs files found under configured crate roots."
+	scripts/check-no-mod-rs.sh
 
 
 

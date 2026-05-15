@@ -71,6 +71,11 @@ pub struct AnswerOpts {
     pub jig_version: Option<String>,
     #[arg(long)]
     pub template_source_url: Option<String>,
+    #[arg(
+        long,
+        help = "Render and manage Jig's Makefile adapter; defaults to false when adopting a repo that already has Makefile"
+    )]
+    pub makefile_enabled: Option<bool>,
     #[arg(long)]
     pub sqlx_enabled: Option<bool>,
     #[arg(long = "rust-crate-root")]
@@ -84,9 +89,15 @@ pub struct AnswerOpts {
     #[arg(long)]
     pub schema_dump_command: Option<String>,
     #[arg(long)]
+    pub schema_check_command: Option<String>,
+    #[arg(long)]
+    pub sqlx_check_command: Option<String>,
+    #[arg(long)]
     pub migration_add_command: Option<String>,
     #[arg(long)]
     pub bootstrap_command: Option<String>,
+    #[arg(long)]
+    pub contract_check_command: Option<String>,
     #[arg(long)]
     pub dev_command: Option<String>,
     #[arg(long)]

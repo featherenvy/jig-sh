@@ -7,11 +7,13 @@ default_branch = "master"
 ci_github_runner = "ubuntu-latest"
 jig_version = "0.1.0"
 template_source_url = "https://github.com/bpcakes/jig-sh.git"
+makefile_enabled = true
 sqlx_enabled = false
 rust_crate_roots = ["crates"]
 schema_dump_enabled = false
-schema_dump_command = "scripts/dump-schema.sh"
 bootstrap_command = "cargo fetch"
+contract_check_command = "scripts/check-jig-contract.sh"
+# Legacy Makefile-adapter dev command; scripts/jig dev uses [dev] below.
 dev_command = "cargo test --workspace"
 rust_fmt_check_command = "cargo fmt --all -- --check"
 rust_clippy_command = "cargo clippy --workspace --all-targets --locked -- -D warnings"

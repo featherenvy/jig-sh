@@ -14,6 +14,67 @@ fn mcp_call_dispatches_make_tool_declared_only_in_manifest() {
 }
 
 #[test]
+fn mcp_call_dispatches_command_tool_without_makefile() {
+    let temp = tempdir().unwrap();
+    write_command_fixture_repo(temp.path());
+    let ctx = RepoContext::load_from(temp.path()).unwrap();
+
+    let output = call_tool(&ctx, "jig.custom_check", json!({})).unwrap();
+
+    assert_eq!(output["ok"], true);
+    assert_eq!(output["command_key"], "rust_test_command");
+    assert_eq!(output["result"]["stdout"], "command tool ran\n");
+    assert!(!temp.path().join("Makefile").exists());
+
+    let receipts = fs::read_to_string(temp.path().join(".agent/state/receipts.jsonl")).unwrap();
+    let receipt = receipts.lines().last().unwrap();
+    assert!(receipt.contains(r#""invoked_command_key":"rust_test_command""#));
+}
+
+#[test]
+fn mcp_command_migration_add_passes_name_env() {
+    let temp = tempdir().unwrap();
+    fs::create_dir_all(temp.path().join(".agent")).unwrap();
+    fs::write(
+        temp.path().join(".jig.toml"),
+        r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.1.0"
+migration_add_command = 'printf "migration:%s\n" "$NAME"'
+"#,
+    )
+    .unwrap();
+    fs::write(
+        temp.path().join(".agent/jig-contract.json"),
+        serde_json::to_string_pretty(&json!({
+            "contract_version": 2,
+            "tool_namespace": "jig",
+            "jig_version": "0.1.0",
+            "required_commands": ["migration_add_command"],
+            "tools": [
+                {
+                    "name": "jig.migration_add",
+                    "kind": "command",
+                    "description": "Add migration.",
+                    "command": "migration_add_command"
+                }
+            ],
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let ctx = RepoContext::load_from(temp.path()).unwrap();
+
+    let output = call_tool(&ctx, "jig.migration_add", json!({ "name": "create_users" })).unwrap();
+
+    assert_eq!(output["ok"], true);
+    assert_eq!(output["command_key"], "migration_add_command");
+    assert_eq!(output["result"]["stdout"], "migration:create_users\n");
+}
+
+#[test]
 fn mcp_exposes_read_only_agent_doctor_tool() {
     let _guard = lock_env();
     let temp = tempdir().unwrap();

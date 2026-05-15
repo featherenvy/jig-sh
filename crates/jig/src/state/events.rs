@@ -395,6 +395,8 @@ pub(super) struct ReceiptRecord {
     pub(super) tool_name: String,
     pub(super) args: Value,
     pub(super) invoked_make_target: Option<String>,
+    #[serde(default)]
+    pub(super) invoked_command_key: Option<String>,
     pub(super) started_at_ms: u64,
     pub(super) ended_at_ms: u64,
     pub(super) exit_status: i32,

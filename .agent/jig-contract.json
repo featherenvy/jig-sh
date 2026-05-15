@@ -1,45 +1,51 @@
 {
-  "contract_version": 1,
+  "contract_version": 2,
   "tool_namespace": "jig",
   "jig_version": "0.1.0",
-  "required_make_targets": [
-    "fmt-check",
-    "clippy",
-    "test",
-    "test-rust-locked",
-    "contract-check"
+  "required_commands": [
+    "bootstrap_command",
+    "rust_fmt_check_command",
+    "rust_clippy_command",
+    "rust_test_command",
+    "rust_test_locked_command",
+    "contract_check_command"
   ],
-  "optional_make_targets": [],
   "tools": [
     {
+      "name": "jig.bootstrap",
+      "kind": "command",
+      "description": "Run the configured project bootstrap command.",
+      "command": "bootstrap_command"
+    },
+    {
       "name": "jig.fmt_check",
-      "kind": "make",
-      "description": "Run make fmt-check.",
-      "target": "fmt-check"
+      "kind": "command",
+      "description": "Run the configured format check command.",
+      "command": "rust_fmt_check_command"
     },
     {
       "name": "jig.clippy",
-      "kind": "make",
-      "description": "Run make clippy.",
-      "target": "clippy"
+      "kind": "command",
+      "description": "Run the configured clippy command.",
+      "command": "rust_clippy_command"
     },
     {
       "name": "jig.test",
-      "kind": "make",
-      "description": "Run make test.",
-      "target": "test"
+      "kind": "command",
+      "description": "Run the configured default test command.",
+      "command": "rust_test_command"
     },
     {
       "name": "jig.test_locked",
-      "kind": "make",
-      "description": "Run make test-rust-locked.",
-      "target": "test-rust-locked"
+      "kind": "command",
+      "description": "Run the configured locked test command.",
+      "command": "rust_test_locked_command"
     },
     {
       "name": "jig.contract_check",
-      "kind": "make",
-      "description": "Run make contract-check.",
-      "target": "contract-check"
+      "kind": "command",
+      "description": "Run the configured Jig contract check command.",
+      "command": "contract_check_command"
     },
     {
       "name": "jig.run_target",

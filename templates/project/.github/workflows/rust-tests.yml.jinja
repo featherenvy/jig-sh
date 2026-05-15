@@ -11,7 +11,13 @@ on:
       - "rust-toolchain.toml"
       - ".clippy.toml"
       - "clippy.toml"
+      - ".jig.toml"
+      - ".agent/jig-contract.json"
+      - "scripts/jig"
+      - "scripts/install-jig.sh"
+[% if makefile_enabled %]
       - "Makefile"
+[% endif %]
       - ".cargo/**"
       - ".github/workflows/rust-tests.yml"
   push:
@@ -26,7 +32,13 @@ on:
       - "rust-toolchain.toml"
       - ".clippy.toml"
       - "clippy.toml"
+      - ".jig.toml"
+      - ".agent/jig-contract.json"
+      - "scripts/jig"
+      - "scripts/install-jig.sh"
+[% if makefile_enabled %]
       - "Makefile"
+[% endif %]
       - ".cargo/**"
       - ".github/workflows/rust-tests.yml"
   merge_group:
@@ -43,7 +55,7 @@ concurrency:
 
 jobs:
   fmt:
-    name: make fmt-check
+    name: scripts/jig fmt-check
     runs-on: <<[ ci_github_runner ]>>
     steps:
       - name: Checkout
@@ -55,10 +67,10 @@ jobs:
           rustflags: ""
           components: rustfmt
       - name: Run rustfmt check
-        run: make fmt-check
+        run: scripts/jig fmt-check
 
   clippy:
-    name: make clippy
+    name: scripts/jig clippy
     runs-on: <<[ ci_github_runner ]>>
 [% if sqlx_enabled %]
     env:
@@ -76,10 +88,10 @@ jobs:
       - name: Cache Rust artifacts
         uses: Swatinem/rust-cache@v2
       - name: Run clippy
-        run: make clippy
+        run: scripts/jig clippy
 
   test:
-    name: make test-rust-locked
+    name: scripts/jig test-locked
     runs-on: <<[ ci_github_runner ]>>
 [% if sqlx_enabled %]
     env:
@@ -96,4 +108,4 @@ jobs:
       - name: Cache Rust artifacts
         uses: Swatinem/rust-cache@v2
       - name: Run locked Rust tests
-        run: make test-rust-locked
+        run: scripts/jig test-locked

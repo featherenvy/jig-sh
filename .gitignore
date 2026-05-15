@@ -1,4 +1,5 @@
 .DS_Store
+.codex/
 .venv/
 .pytest_cache/
 dist/

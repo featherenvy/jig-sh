@@ -1,45 +1,45 @@
 # Public Contract
 
-`jig` exposes a make-backed repo contract through three surfaces:
+`jig` exposes a repo command contract through three surfaces:
 
 - CLI commands from `scripts/jig`
-- make-backed MCP tools from `scripts/jig mcp`
+- MCP tools from `scripts/jig mcp`
 - `.agent/jig-contract.json`
 
 Generated repositories may rely on the contract described here when they pin a `jig_version` in `.jig.toml` and keep `scripts/jig`, `.mcp.json`, and `.agent/jig-contract.json` in sync with that version.
 
-Structured work commands and agent tooling checks are runtime-owned conveniences. They are available through commands such as `scripts/jig work ...` and `scripts/jig agent doctor`, and MCP tools named `jig.work_*` and `jig.agent_doctor`, but they are not part of contract version `1` and are not declared in `.agent/jig-contract.json`.
+Structured work commands and agent tooling checks are runtime-owned conveniences. They are available through commands such as `scripts/jig work ...` and `scripts/jig agent doctor`, and MCP tools named `jig.work_*` and `jig.agent_doctor`, but they are not part of the generated command contract and are not declared in `.agent/jig-contract.json`.
 
-The structured work namespace includes native check gates. Gates are configured in `.jig.toml`, evaluated from receipts, and enforced by `scripts/jig work finish`. They remain runtime-owned because they compose stable make-backed tools with append-only work state rather than adding new make-backed contract tools.
+The structured work namespace includes native check gates. Gates are configured in `.jig.toml`, evaluated from receipts, and enforced by `scripts/jig work finish`. They remain runtime-owned because they compose stable execution tools with append-only work state rather than adding new generated contract tools.
 
-Local development proxy commands are also runtime-owned. `scripts/jig dev` and `scripts/jig proxy ...` manage machine-local processes, ports, routes, certificates, and optional user services. They are configured from `.jig.toml` but are intentionally absent from `.agent/jig-contract.json` because they do not represent make-backed repository checks.
+Local development proxy commands are also runtime-owned. `scripts/jig dev` and `scripts/jig proxy ...` manage machine-local processes, ports, routes, certificates, and optional user services. They are configured from `.jig.toml` but are intentionally absent from `.agent/jig-contract.json` because they do not represent repository checks.
 
 Runtime-owned local development commands include `dev`, `proxy start`, `proxy stop`, `proxy list`, `proxy prune`, `proxy run`, `proxy alias`, `proxy cert generate`, `proxy cert status`, `proxy cert trust --accept-trust-scope`, `proxy cert untrust --accept-trust-scope`, `proxy service install --accept-service-scope`, `proxy service status`, and `proxy service uninstall`. Builds made with `--no-default-features` keep the contract, MCP, and work-receipt runtime but return clear errors for `dev` and `proxy`; use that build mode for MCP/contract-only consumers that do not need the TLS/HTTP dev-proxy stack.
 
 LAN mode exposes the Jig proxy listener to the local network, not child app listeners directly. Process routes may be reached from other devices only through the proxy, with the original routed hostname in DNS, a hosts file, or the HTTP `Host` header. Alias routes stay loopback-client-only so LAN clients cannot use Jig as an open forward proxy.
 
-The `tool_defs::cli_command` names for these runtime-owned commands are parser labels only. They do not add make-backed tools to `.agent/jig-contract.json` and do not expose MCP tools for proxy process or service management.
+The `tool_defs::cli_command` names for these runtime-owned commands are parser labels only. They do not add generated tools to `.agent/jig-contract.json` and do not expose MCP tools for proxy process or service management.
 
-Because the local development proxy is runtime-owned, its JSON response fields, machine-local state layout under `JIG_PROXY_STATE_DIR` or `~/.jig/proxy`, service-file contents, certificate files, route hostname format, and nonzero error exit statuses are not part of `.agent/jig-contract.json` contract version `1`. Generated repos should pin `jig_version` for proxy behavior and treat those details as same-version runtime behavior rather than as make-backed public contract fields.
+Because the local development proxy is runtime-owned, its JSON response fields, machine-local state layout under `JIG_PROXY_STATE_DIR` or `~/.jig/proxy`, service-file contents, certificate files, route hostname format, and nonzero error exit statuses are not part of `.agent/jig-contract.json`. Generated repos should pin `jig_version` for proxy behavior and treat those details as same-version runtime behavior rather than as public contract fields.
 
-The current explicit acknowledgement flags, including `--accept-trust-scope` and `--accept-service-scope`, are runtime safety gates rather than make-backed contract fields. Automation should keep using the pinned `jig_version` CLI help and behavior instead of assuming those opt-in prompts are stable across runtime upgrades.
+The current explicit acknowledgement flags, including `--accept-trust-scope` and `--accept-service-scope`, are runtime safety gates rather than generated contract fields. Automation should keep using the pinned `jig_version` CLI help and behavior instead of assuming those opt-in prompts are stable across runtime upgrades.
 
-Runtime-owned `.jig.toml` sections are intentionally strict: unknown keys are rejected so local typos fail fast. New keys in `[work]`, `[agent_tooling]`, `[agent_tooling.codex]`, `[dev]`, or app tables require a Jig runtime/template update and a documented migration note; they do not require a `.agent/jig-contract.json` version bump unless they also change make-backed CLI or MCP contract behavior.
+Runtime-owned `.jig.toml` sections are intentionally strict: unknown keys are rejected so local typos fail fast. New keys in `[work]`, `[agent_tooling]`, `[agent_tooling.codex]`, `[dev]`, or app tables require a Jig runtime/template update and a documented migration note; they do not require a `.agent/jig-contract.json` version bump unless they also change generated CLI or MCP contract behavior.
 
 ## Contract Version
 
-`.agent/jig-contract.json` has one schema version:
+`.agent/jig-contract.json` has these schema versions:
 
-- `contract_version`: version of the generated tool manifest, make-target wiring, and make-backed command surface
+- `contract_version`: version of the generated tool manifest and command surface
 
-Version `1` is the current stable make-backed contract. A compatible change may add optional fields, optional tools, optional make targets, or new make-backed CLI/MCP commands. A breaking change must increment `contract_version` before generated repos depend on it.
+Version `1` is the legacy make-backed contract. Version `2` is the current command-backed contract. A compatible change may add optional fields, optional tools, optional commands, optional make targets, or new CLI/MCP commands. A breaking change must increment `contract_version` before generated repos depend on it.
 
 Breaking `contract_version` changes include:
 
-- removing or renaming a stable make-backed tool
-- removing or renaming a stable generated make target
-- changing a stable make-backed command argument from optional to required
-- changing the meaning or type of a stable make-backed JSON request or response field
+- removing or renaming a stable generated tool
+- removing or renaming a stable generated command key
+- changing a stable command argument from optional to required
+- changing the meaning or type of a stable JSON request or response field
 - changing `.agent/jig-contract.json` in a way older runtimes cannot ignore
 
 ## Stable Manifest Fields
@@ -49,8 +49,8 @@ Generated repos and MCP clients may rely on these top-level fields in `.agent/ji
 - `contract_version`
 - `tool_namespace`
 - `jig_version`
-- `required_make_targets`
-- `optional_make_targets`
+- `required_commands` for contract version `2`
+- `required_make_targets` and `optional_make_targets` for legacy contract version `1`
 - `tools`
 
 Each tool entry has these stable fields:
@@ -58,15 +58,34 @@ Each tool entry has these stable fields:
 - `name`
 - `kind`
 - `description`
-- `target`
+- `command` for `kind: "command"` tools
+- `target` for `kind: "make"` tools
 
-For `kind: "make"` tools, `target` is either the generated make target to invoke or `null` for tools that accept a target-like argument, such as `jig.run_target`.
+For `kind: "command"` tools, `command` is the top-level `.jig.toml` command key the runtime executes from the repo root. For `kind: "make"` tools, `target` is either the generated make target to invoke or `null` for tools that accept a target-like argument, such as `jig.run_target`.
+
+Contract version `2` intentionally has no `optional_commands` field. A command-backed tool is valid only when its command key is listed in `required_commands`; optional capability is represented by omitting the tool entirely when the rendered repo profile does not support it.
 
 Consumers should ignore unknown top-level manifest fields and unknown fields inside tool entries.
 
 ## Stable Tools
 
-The following make-backed tool names are stable in contract version `1` when declared in the manifest:
+The following tool names are stable in contract version `2` when declared in the manifest:
+
+- `jig.bootstrap`
+- `jig.fmt_check`
+- `jig.clippy`
+- `jig.test`
+- `jig.test_locked`
+- `jig.contract_check`
+
+SQLx-specific tools are stable when the rendered repo profile includes them:
+
+- `jig.sqlx_check`
+- `jig.migration_add`
+- `jig.schema_check` when schema dumps are enabled
+- `jig.schema_dump` when schema dumps are enabled
+
+Contract version `1` exposed these legacy make-backed tool names:
 
 - `jig.fmt_check`
 - `jig.clippy`
@@ -82,7 +101,7 @@ SQLx-specific tools are stable when `sqlx_enabled` rendered them into the manife
 - `jig.schema_dump`
 - `jig.migration_add`
 
-A generated repo may omit optional tools that do not apply to its configuration. Clients must discover available make-backed tools from `.agent/jig-contract.json` or MCP tool listing instead of assuming SQLx or schema-dump support.
+A generated repo may omit optional tools that do not apply to its configuration. Clients must discover available tools from `.agent/jig-contract.json` or MCP tool listing instead of assuming SQLx or schema-dump support.
 
 ## Stable JSON Behavior
 
@@ -102,6 +121,8 @@ Make-backed tools return:
 - `result.stdout`
 - `result.stderr`
 - `receipt_id`
+
+Command-backed tools return the same common fields plus `command_key`, which identifies the `.jig.toml` command key that was executed.
 
 ## Runtime State
 
@@ -129,7 +150,7 @@ Structured work commands use the `jig.work_*` CLI and MCP namespace, but state-o
 
 ## Work Gates
 
-`work.gates` in `.jig.toml` declares required evidence before structured work can finish. `kind: check` gates reference make-backed tools from `.agent/jig-contract.json`; `scripts/jig work check --plan-id ...` runs them and records normal receipts. `scripts/jig work gates --plan-id ...` reports gate status from the latest fresh receipt for each gate tool on that plan.
+`work.gates` in `.jig.toml` declares required evidence before structured work can finish. `kind: check` gates reference execution tools from `.agent/jig-contract.json`; `scripts/jig work check --plan-id ...` runs them and records normal receipts. `scripts/jig work gates --plan-id ...` reports gate status from the latest fresh receipt for each gate tool on that plan.
 
 `scripts/jig work finish --plan-id ...` fails when any required gate is missing, failed, stale, unknown, or unsupported. Older `work.checks` entries are still accepted for compatibility and backfill missing required check gates during migration. If the same tool is declared in `work.gates`, that explicit gate entry is authoritative.
 
@@ -148,21 +169,21 @@ Use this sequence for public contract changes:
 1. Add the new field, tool, or command in a backward-compatible way.
 2. Update `.agent/jig-contract.json.jinja`, runtime dispatch, MCP exposure, and docs in the same change.
 3. Keep old fields and commands working for the current contract version.
-4. Run `make release-check` before release.
+4. Run the configured release checks before release.
 5. Only remove or redefine stable behavior after incrementing `contract_version`.
 
 Generated repos can rely on:
 
 - `scripts/jig` enforcing the exact `jig_version` from `.jig.toml`
-- `make contract-check` detecting missing generated runtime wiring
-- stable make target names listed in `required_make_targets`
-- make-backed tool availability being discoverable from `.agent/jig-contract.json` and MCP
+- `scripts/jig contract-check` detecting missing generated runtime wiring
+- stable command keys listed in `required_commands` for contract version `2`
+- tool availability being discoverable from `.agent/jig-contract.json` and MCP
 - state files being runtime-owned append-only records
 
 Generated repos should not rely on:
 
 - private Rust module layout inside `crates/jig`
-- unlisted make targets
+- unlisted Make targets or project scripts
 - undocumented JSON fields
 - physical ordering of fields in JSON objects
 - SQLx or schema-dump tools unless present in the manifest

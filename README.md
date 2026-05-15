@@ -8,8 +8,8 @@ Jig turns a Rust application repo into an operating environment for coding agent
 It makes agentic software work repeatable, inspectable, and reviewable by generating:
 
 - **Agent context files** (`AGENTS.md`, `agent-map.md`) so coding agents know the repo layout and conventions without reading source
-- **A `Makefile` contract** with a fixed set of top-level targets so every machine, CI run, and agent executes the same commands
-- **A typed `jig` runtime** wrapping that contract so agents call validated commands and leave an append-only receipt under `.agent/state/`
+- **A typed `jig` runtime contract** so every machine, CI run, and agent executes the same configured commands and leaves append-only receipts under `.agent/state/`
+- **An optional `Makefile` adapter** for repos that want familiar make targets without making Make the agent-facing contract
 - **A local dev proxy** so app hostnames stay stable across port changes and machine restarts
 - **Work gates backed by receipts** so a task cannot be marked done without a verifiable output artifact
 - **Repo policy scripts and CI workflows** so linting, tests, and coverage enforcement run consistently from day one
@@ -17,7 +17,7 @@ It makes agentic software work repeatable, inspectable, and reviewable by genera
 
 ## How It Works
 
-Jig's template lives in the `jig-sh` repository. Running `jig init` or `jig adopt` renders it into your project, producing a `Makefile`, agent context files, CI workflows, and MCP configuration. After that first render, `jig update` keeps those files current as the template evolves — files you have customized are never overwritten without `--force`.
+Jig's template lives in the `jig-sh` repository. Running `jig init` or `jig adopt` renders it into your project, producing `scripts/jig`, agent context files, CI workflows, and MCP configuration. New repos also get a Makefile adapter by default; adoption skips that adapter when the destination already has a root `Makefile`. After that first render, `jig update` keeps managed files current as the template evolves — files you have customized are never overwritten without `--force`.
 
 ## Quick Start
 
@@ -57,6 +57,8 @@ jig adopt . \
 ```
 
 For a tooling-only repo, replace the migration flag with `--sqlx-enabled false`.
+
+If the destination already has a root `Makefile`, `jig adopt` keeps it project-owned and records `makefile_enabled = false` in `.jig.toml`. Pass `--makefile-enabled true` only when you intentionally want Jig to manage the root Makefile adapter.
 
 **Update an adopted repo:**
 
@@ -107,12 +109,12 @@ The template renders these repo-owned assets into a consumer repository:
 - `agent-map.md`
 - `.agent/PLANS.md`
 - `.agent/jig-contract.json`
-- `Makefile`
+- `Makefile` when `makefile_enabled = true`
 - `scripts/*.sh`
 - `scripts/enforce-coverage.js`
 - `.github/workflows/*.yml`
 
-Generated repos keep `make` as the execution backend, but they also get a `scripts/jig` launcher, MCP wiring, and append-only repo memory under `.agent/state/*.jsonl`.
+Generated repos use `scripts/jig` as the execution backend. The generated `Makefile`, when enabled, is only a convenience adapter over `scripts/jig` and project-owned helper scripts.
 
 On fresh machines, generated repos can check and bootstrap expected agent skills through the launcher:
 
@@ -123,7 +125,7 @@ scripts/jig agent bootstrap
 
 For local dogfooding with an existing sibling `jig-skills` checkout, pass `--marketplace ../jig-skills` to `agent bootstrap`.
 
-The template does not generate application code, crate-level `AGENTS.md` files, or a schema dump implementation — those remain project-owned. SQLx, migration, and schema-check contract pieces are optional via `sqlx_enabled`.
+The template does not generate application code, crate-level `AGENTS.md` files, or a schema dump implementation — those remain project-owned. SQLx and migration contract pieces are optional via `sqlx_enabled`; schema-check pieces are rendered only when schema dumps are enabled.
 
 For existing repositories, root `AGENTS.md` remains repo-owned. `jig adopt` inserts or updates only the marked Jig-managed block and preserves the rest of the file.
 
@@ -153,7 +155,7 @@ scripts/jig proxy alias api --port 8080
 scripts/jig proxy list
 ```
 
-`scripts/jig dev` runs configured `[[dev.apps]]`, legacy `[[frontend_apps]]`, or discovered workspace apps. It does not run the generic `dev_command`; keep `make dev` for repo-wide commands that do not bind a supervised app port. Prefer `argv` for `[[dev.apps]]`; shell-form `command` runs through the platform shell from committed repo configuration and should be treated as trusted code execution. Apps with `proxy = false` run directly and do not publish Jig proxy routes.
+`scripts/jig dev` runs configured `[[dev.apps]]`, legacy `[[frontend_apps]]`, or discovered workspace apps. It does not run the generic `dev_command`; keep repo-wide non-proxy dev orchestration in project-owned scripts or Make targets. Prefer `argv` for `[[dev.apps]]`; shell-form `command` runs through the platform shell from committed repo configuration and should be treated as trusted code execution. Apps with `proxy = false` run directly and do not publish Jig proxy routes.
 
 ### HTTPS setup
 

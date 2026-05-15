@@ -42,6 +42,9 @@ struct RepoConfig {
     #[serde(default)]
     template_source_url: String,
     #[allow(dead_code)]
+    #[serde(default = "default_true")]
+    makefile_enabled: bool,
+    #[allow(dead_code)]
     #[serde(default)]
     sqlx_enabled: bool,
     #[allow(dead_code)]
@@ -61,10 +64,19 @@ struct RepoConfig {
     schema_dump_command: String,
     #[allow(dead_code)]
     #[serde(default)]
+    schema_check_command: String,
+    #[allow(dead_code)]
+    #[serde(default)]
+    sqlx_check_command: String,
+    #[allow(dead_code)]
+    #[serde(default)]
     migration_add_command: String,
     #[allow(dead_code)]
     #[serde(default)]
     bootstrap_command: String,
+    #[allow(dead_code)]
+    #[serde(default = "default_contract_check_command")]
+    contract_check_command: String,
     #[allow(dead_code)]
     #[serde(default)]
     dev_command: String,
@@ -233,9 +245,14 @@ struct ContractManifest {
     contract_version: u32,
     tool_namespace: String,
     jig_version: String,
+    #[serde(default)]
     required_make_targets: Vec<String>,
     #[allow(dead_code)]
+    #[serde(default)]
     optional_make_targets: Vec<String>,
+    #[allow(dead_code)]
+    #[serde(default)]
+    required_commands: Vec<String>,
     tools: Vec<ManifestTool>,
 }
 
@@ -244,7 +261,10 @@ pub(crate) struct ManifestTool {
     pub(crate) name: String,
     pub(crate) kind: String,
     pub(crate) description: String,
+    #[serde(default)]
     pub(crate) target: Option<String>,
+    #[serde(default)]
+    pub(crate) command: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -306,7 +326,7 @@ impl RepoContext {
         let manifest: ContractManifest = serde_json::from_str(&manifest_text)
             .with_context(|| format!("Failed to parse {}", manifest_path.display()))?;
 
-        if manifest.contract_version != 1 {
+        if !matches!(manifest.contract_version, 1 | 2) {
             bail!(
                 "Unsupported jig contract version: {}",
                 manifest.contract_version
@@ -315,8 +335,11 @@ impl RepoContext {
         if manifest.tool_namespace != "jig" {
             bail!("Unsupported tool namespace: {}", manifest.tool_namespace);
         }
-        if manifest.required_make_targets.is_empty() {
+        if manifest.contract_version == 1 && manifest.required_make_targets.is_empty() {
             bail!("jig contract manifest does not declare required make targets");
+        }
+        if manifest.contract_version == 2 && manifest.required_commands.is_empty() {
+            bail!("jig contract manifest does not declare required commands");
         }
         if config.jig_version != manifest.jig_version {
             bail!(
@@ -362,6 +385,28 @@ impl RepoContext {
 
     pub(crate) fn source_path(&self) -> &str {
         &self.config.src_path
+    }
+
+    pub(crate) fn command_for_key(&self, key: &str) -> Result<&str> {
+        // Keep this whitelist aligned with RepoConfig, bootstrap::AnswerOpts,
+        // bootstrap::answers::RawAnswers, and .jig.toml.jinja.
+        let command = match key {
+            "bootstrap_command" => &self.config.bootstrap_command,
+            "contract_check_command" => &self.config.contract_check_command,
+            "migration_add_command" => &self.config.migration_add_command,
+            "rust_clippy_command" => &self.config.rust_clippy_command,
+            "rust_fmt_check_command" => &self.config.rust_fmt_check_command,
+            "rust_test_command" => &self.config.rust_test_command,
+            "rust_test_locked_command" => &self.config.rust_test_locked_command,
+            "schema_check_command" => &self.config.schema_check_command,
+            "schema_dump_command" => &self.config.schema_dump_command,
+            "sqlx_check_command" => &self.config.sqlx_check_command,
+            _ => bail!("Unsupported command key in jig contract: {key}"),
+        };
+        if command.trim().is_empty() {
+            bail!("Command key {key} is empty in .jig.toml");
+        }
+        Ok(command)
     }
 
     #[cfg_attr(not(feature = "dev-proxy"), allow(dead_code))]
@@ -462,6 +507,10 @@ fn default_dev_app_kind() -> String {
 
 fn default_web_package_manager() -> String {
     "bun".into()
+}
+
+fn default_contract_check_command() -> String {
+    "scripts/check-jig-contract.sh".into()
 }
 
 fn default_codex_marketplaces() -> Vec<CodexMarketplaceConfig> {

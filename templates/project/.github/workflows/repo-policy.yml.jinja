@@ -6,13 +6,20 @@ on:
 [% for root in rust_crate_roots %]
       - "<<[ root ]>>/**"
 [% endfor %]
+      - ".jig.toml"
+      - ".agent/jig-contract.json"
+      - "scripts/jig"
+      - "scripts/install-jig.sh"
+[% if makefile_enabled %]
       - "Makefile"
+[% endif %]
 [% if sqlx_enabled %]
       - "scripts/check-migration-immutability.sh"
       - "scripts/check-sqlx-unchecked-non-test.sh"
       - "scripts/generate-sqlx-unchecked-queries-todo.sh"
 [% endif %]
       - "scripts/check-rust-file-loc.sh"
+      - "scripts/check-no-mod-rs.sh"
       - ".github/workflows/repo-policy.yml"
   push:
     branches:
@@ -21,13 +28,20 @@ on:
 [% for root in rust_crate_roots %]
       - "<<[ root ]>>/**"
 [% endfor %]
+      - ".jig.toml"
+      - ".agent/jig-contract.json"
+      - "scripts/jig"
+      - "scripts/install-jig.sh"
+[% if makefile_enabled %]
       - "Makefile"
+[% endif %]
 [% if sqlx_enabled %]
       - "scripts/check-migration-immutability.sh"
       - "scripts/check-sqlx-unchecked-non-test.sh"
       - "scripts/generate-sqlx-unchecked-queries-todo.sh"
 [% endif %]
       - "scripts/check-rust-file-loc.sh"
+      - "scripts/check-no-mod-rs.sh"
       - ".github/workflows/repo-policy.yml"
   merge_group:
     types:
@@ -50,7 +64,7 @@ jobs:
         uses: actions/checkout@v6
       - name: Detect disallowed mod.rs files
         run: |
-          make check-no-mod-rs
+          scripts/check-no-mod-rs.sh
 
   rust-file-loc:
     name: Enforce agentic-first Rust file size policy
@@ -62,7 +76,16 @@ jobs:
           fetch-depth: 0
       - name: Check Rust file LOC policy
         run: |
-          make check-rust-file-loc
+          set -euo pipefail
+          if git rev-parse --verify "origin/<<[ default_branch ]>>" >/dev/null 2>&1; then
+            base_ref="$(git merge-base HEAD "origin/<<[ default_branch ]>>")"
+          elif git rev-parse --verify HEAD^ >/dev/null 2>&1; then
+            base_ref="HEAD^"
+          else
+            base_ref="4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+          fi
+          echo "Using Rust LOC base ref: $base_ref"
+          scripts/check-rust-file-loc.sh --changed-against "$base_ref"
 
 [% if sqlx_enabled %]
   sqlx-unchecked-queries:
@@ -81,7 +104,7 @@ jobs:
           sudo apt-get install -y ripgrep
       - name: Check unchecked SQLx query usage in non-test code
         run: |
-          make check-sqlx-unchecked-non-test
+          scripts/check-sqlx-unchecked-non-test.sh
 
   migration-immutability:
     name: Enforce migration immutability

@@ -90,6 +90,9 @@ fn render_template_files(
                 )
             })?;
         let relative = output_relative_path(relative_template)?;
+        if managed_paths::should_omit_unmanaged_rendered_path(&relative, answers) {
+            continue;
+        }
         managed_paths.insert(relative.clone());
         if managed_paths::should_prune_rendered_path(&relative, answers) {
             continue;

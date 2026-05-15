@@ -33,6 +33,9 @@ pub(crate) mod cli_command {
     pub(crate) const AGENT: &str = "agent";
     pub(crate) const AGENT_BOOTSTRAP: &str = "bootstrap";
     pub(crate) const AGENT_DOCTOR: &str = "doctor";
+    // Top-level `jig bootstrap` and nested `jig agent bootstrap` intentionally
+    // share the same parser label in different Clap command scopes.
+    pub(crate) const BOOTSTRAP: &str = "bootstrap";
     pub(crate) const CLIPPY: &str = "clippy";
     pub(crate) const CONTRACT_CHECK: &str = "contract-check";
     pub(crate) const DEV: &str = "dev";
@@ -76,10 +79,12 @@ pub(crate) mod cli_command {
 }
 
 pub(crate) mod kind {
+    pub(crate) const COMMAND: &str = "command";
     pub(crate) const MAKE: &str = "make";
 }
 
 pub(crate) mod tool {
+    pub(crate) const BOOTSTRAP: &str = "jig.bootstrap";
     pub(crate) const AGENT_DOCTOR: &str = "jig.agent_doctor";
     pub(crate) const CLIPPY: &str = "jig.clippy";
     pub(crate) const CONTRACT_CHECK: &str = "jig.contract_check";
@@ -291,7 +296,7 @@ impl MemoryTool {
 pub(crate) fn tool_descriptors(manifest_tools: &[ManifestTool]) -> Vec<Value> {
     manifest_tools
         .iter()
-        .filter(|tool| is_make_tool(tool))
+        .filter(|tool| is_execution_tool(tool))
         .map(manifest_tool_descriptor)
         .chain(MemoryTool::ALL.into_iter().map(memory_tool_descriptor))
         .collect()
@@ -301,7 +306,7 @@ fn manifest_tool_descriptor(tool: &ManifestTool) -> Value {
     json!({
         "name": tool.name,
         "description": tool.description,
-        "inputSchema": make_input_schema(tool)
+        "inputSchema": execution_input_schema(tool)
     })
 }
 
@@ -317,8 +322,16 @@ pub(crate) fn is_make_tool(tool: &ManifestTool) -> bool {
     tool.kind == kind::MAKE
 }
 
-pub(crate) fn make_tool_args(tool: &ManifestTool, args_obj: &JsonObject) -> Result<Value> {
-    if make_tool_requires_name(tool) {
+pub(crate) fn is_command_tool(tool: &ManifestTool) -> bool {
+    tool.kind == kind::COMMAND
+}
+
+pub(crate) fn is_execution_tool(tool: &ManifestTool) -> bool {
+    is_make_tool(tool) || is_command_tool(tool)
+}
+
+pub(crate) fn execution_tool_args(tool: &ManifestTool, args_obj: &JsonObject) -> Result<Value> {
+    if execution_tool_requires_name(tool) {
         let name = required_string_arg(args_obj, args::NAME)?;
         return Ok(object_value([(args::NAME, Value::String(name))]));
     }
@@ -326,12 +339,12 @@ pub(crate) fn make_tool_args(tool: &ManifestTool, args_obj: &JsonObject) -> Resu
     Ok(json!({}))
 }
 
-pub(crate) fn make_tool_requires_name(tool: &ManifestTool) -> bool {
-    tool.name == tool::MIGRATION_ADD || tool.target.is_none()
+pub(crate) fn execution_tool_requires_name(tool: &ManifestTool) -> bool {
+    tool.name == tool::MIGRATION_ADD || (is_make_tool(tool) && tool.target.is_none())
 }
 
-fn make_input_schema(tool: &ManifestTool) -> Value {
-    if make_tool_requires_name(tool) {
+fn execution_input_schema(tool: &ManifestTool) -> Value {
+    if execution_tool_requires_name(tool) {
         return object_schema(
             &[
                 (args::NAME, string_schema()),

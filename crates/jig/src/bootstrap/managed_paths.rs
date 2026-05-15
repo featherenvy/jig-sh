@@ -26,10 +26,21 @@ pub(super) fn should_prune_rendered_path(relative: &Path, answers: &RenderAnswer
     !answers.sqlx_enabled() && is_sqlx_pruned_task_path(relative)
 }
 
+pub(super) fn should_omit_unmanaged_rendered_path(
+    relative: &Path,
+    answers: &RenderAnswers,
+) -> bool {
+    !answers.makefile_enabled() && is_makefile_path(relative)
+}
+
 pub(super) fn is_sqlx_pruned_task_path(relative: &Path) -> bool {
     SQLX_PRUNED_TASK_PATHS
         .iter()
         .any(|path| relative == Path::new(path))
+}
+
+fn is_makefile_path(relative: &Path) -> bool {
+    relative == Path::new("Makefile")
 }
 
 pub(super) fn is_root_agents_path(relative: &Path) -> bool {

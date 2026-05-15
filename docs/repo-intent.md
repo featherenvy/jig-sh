@@ -23,22 +23,22 @@ In short: `jig.sh` is a harness for making agentic software work repeatable, ins
 
 The README says this repo is a "Reusable harness for making Rust application repos operable by coding agents, including SQLx/Postgres backends and tooling-only Rust repos, with optional web apps."
 
-The harness was extracted from the durable parts of an existing application workflow. The extracted pieces are generic agent guidance, a stable `make` contract, repo policy scripts, GitHub Actions workflows, a template sync flow, and the Rust `jig` runtime.
+The harness was extracted from the durable parts of an existing application workflow. The extracted pieces are generic agent guidance, a stable command contract, repo policy scripts, GitHub Actions workflows, a template sync flow, and the Rust `jig` runtime.
 
-Generated or adopted repos receive assets such as `.jig.toml`, `.mcp.json`, `AGENTS.md`, `agent-map.md`, `.agent/PLANS.md`, `.agent/jig-contract.json`, `Makefile`, scripts, and workflows.
+Generated or adopted repos receive assets such as `.jig.toml`, `.mcp.json`, `AGENTS.md`, `agent-map.md`, `.agent/PLANS.md`, `.agent/jig-contract.json`, scripts, workflows, and optionally a Makefile adapter.
 
-Generated repos keep `make` as the execution backend. `scripts/jig` is a typed launcher/runtime over the make-backed contract, and `scripts/jig mcp` exposes the contract to MCP clients.
+Generated repos use `scripts/jig` as the execution backend. `scripts/jig mcp` exposes the same declared command contract to MCP clients. The generated Makefile, when enabled, is a convenience adapter rather than the source of truth.
 
 The runtime is implemented in `crates/jig`. Its main responsibilities are:
 
 - bootstrap flows: `jig init`, `jig adopt`, and `jig update`
-- make-backed tool execution
+- command-backed and legacy make-backed tool execution
 - MCP protocol handling over stdio
 - append-only runtime state for sessions, plans, receipts, and decisions
 - agent tooling doctor/bootstrap commands for Codex-side Jig skills
 - receipt metadata collection, including git changed paths and diff stats
 
-The stable generated contract is `.agent/jig-contract.json` with `contract_version: 1`. That contract is intentionally limited to make-backed tools such as `jig.fmt_check`, `jig.clippy`, `jig.test`, `jig.test_locked`, `jig.contract_check`, `jig.run_target`, and optional SQLx/schema/migration tools.
+The stable generated contract is `.agent/jig-contract.json`. Current renders use `contract_version: 2`, with command-backed tools such as `jig.bootstrap`, `jig.fmt_check`, `jig.clippy`, `jig.test`, `jig.test_locked`, `jig.contract_check`, and optional SQLx/schema/migration tools. Legacy `contract_version: 1` make-backed repos remain supported.
 
 Runtime memory tools are intentionally not part of `.agent/jig-contract.json`. They are runtime-owned conveniences exposed by the CLI and MCP server.
 
@@ -72,7 +72,7 @@ A shorter product phrasing is:
 
 ## Architecture In One Pass
 
-`templates/project/` is the source for generated repository assets. It renders `.jig.toml`, `AGENTS.md`, `.agent/jig-contract.json`, the `Makefile`, scripts, workflows, and agent support files.
+`templates/project/` is the source for generated repository assets. It renders `.jig.toml`, `AGENTS.md`, `.agent/jig-contract.json`, scripts, workflows, agent support files, and the optional Makefile adapter.
 
 `.jig.toml` is both public configuration and the renderer answer file. It records repo settings such as `repo_name`, `default_branch`, `jig_version`, crate roots, SQLx settings, web app settings, and template source metadata.
 
@@ -84,13 +84,13 @@ The template source metadata is a trust boundary. In generated or adopted repos,
 - `adopt` renders the harness into an existing repo while preserving repo-owned root `AGENTS.md` content.
 - `update` re-renders managed paths from stored template metadata and refuses to overwrite changed managed files unless forced.
 
-`crates/jig/src/runtime.rs` dispatches CLI and MCP tool calls. For make-backed tools, it resolves the tool from `.agent/jig-contract.json`, runs the matching `make` target, records a receipt, and returns structured JSON.
+`crates/jig/src/runtime.rs` dispatches CLI and MCP tool calls. For command-backed tools, it resolves the command key from `.agent/jig-contract.json`, executes the configured `.jig.toml` command from the repo root, records a receipt, and returns structured JSON. It keeps legacy make-backed execution for already-adopted repos.
 
 `crates/jig-dev-proxy` implements the Jig local development proxy used by `scripts/jig dev` and `scripts/jig proxy ...`. It is split from `crates/jig` so route storage, HTTP/HTTPS forwarding, certificates, service files, LAN mode, workspace discovery, and process supervision remain testable without depending on the broader CLI, MCP, receipt, or template runtime.
 
 `crates/jig` enables the `dev-proxy` Cargo feature by default so normal installs include the local proxy. Minimal consumers that only need the contract, MCP, and work-receipt runtime can build `jig-sh` with `--no-default-features` to omit the proxy dependency tree.
 
-`crates/jig/src/mcp.rs` is a minimal MCP stdio server. It lists make-backed tools from the manifest and runtime memory tools from code, then dispatches `tools/call` through the same runtime path as the CLI.
+`crates/jig/src/mcp.rs` is a minimal MCP stdio server. It lists execution tools from the manifest and runtime memory tools from code, then dispatches `tools/call` through the same runtime path as the CLI.
 
 `crates/jig/src/state/` stores append-only JSONL records:
 
@@ -105,11 +105,11 @@ The current session pointer is cache state, not part of the durable JSONL record
 
 **Agent-first discoverability.** `agent-map.md`, root `AGENTS.md`, crate `AGENTS.md`, MCP tool descriptors, and `.agent/jig-contract.json` all reduce the need for an agent to guess where to start.
 
-**Make remains the portable backend.** The generated `Makefile` is the stable human- and CI-friendly execution layer. The Rust runtime wraps it rather than replacing it.
+**The Jig binary is the portable backend.** `scripts/jig` is the stable human-, CI-, agent-, and MCP-friendly execution layer. The generated `Makefile`, when enabled, wraps it for users who still want make targets.
 
 **Typed surfaces over shell conventions.** `scripts/jig` returns JSON, validates tool names against a manifest, records receipts, and exposes MCP schemas. Agents get structured results instead of scraping terminal output.
 
-**Compatibility is explicit.** Public make-backed tools are governed by `contract_version`. Breaking changes require a contract version bump, and downstream clients are expected to discover available tools instead of assuming optional SQLx/schema support.
+**Compatibility is explicit.** Public execution tools are governed by `contract_version`. Breaking changes require a contract version bump, and downstream clients are expected to discover available tools instead of assuming optional SQLx/schema support.
 
 **Runtime memory is append-only.** State files are written as JSONL, readers tolerate missing files, and docs say application code should not edit records in place.
 
@@ -125,7 +125,7 @@ The current session pointer is cache state, not part of the durable JSONL record
 
 It is not an application framework. It does not generate app code or domain models.
 
-It is not a replacement for `make`. It standardizes and wraps make targets.
+It is not a project task runner monopoly. Existing project Makefiles and scripts remain project-owned; Jig standardizes the agent-facing command surface.
 
 It is not a global agent memory system. The state is repo-local and runtime-owned.
 

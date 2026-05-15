@@ -46,6 +46,8 @@ pub(crate) enum CommandKind {
     Adopt(bootstrap::AdoptOpts),
     #[command(name = tool_defs::cli_command::UPDATE)]
     Update(bootstrap::UpdateOpts),
+    #[command(name = tool_defs::cli_command::BOOTSTRAP)]
+    Bootstrap(ToolOpts),
     #[command(name = tool_defs::cli_command::FMT_CHECK)]
     FmtCheck(ToolOpts),
     #[command(name = tool_defs::cli_command::CLIPPY)]

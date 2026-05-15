@@ -44,6 +44,49 @@ tool = "jig.custom_check"
     .unwrap();
 }
 
+pub(super) fn write_command_fixture_repo(root: &Path) {
+    fs::create_dir_all(root.join(".agent")).unwrap();
+    fs::write(
+        root.join(".jig.toml"),
+        r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.1.0"
+rust_migration_dir = "migrations"
+rust_sqlx_metadata_dir = ".sqlx"
+schema_dump_command = "printf 'schema dump\n'"
+rust_test_command = "printf 'command tool ran\n'"
+contract_check_command = "printf 'contract ok\n'"
+
+[[work.gates]]
+id = "custom"
+kind = "check"
+tool = "jig.custom_check"
+"#,
+    )
+    .unwrap();
+    fs::write(
+        root.join(".agent/jig-contract.json"),
+        serde_json::to_string_pretty(&json!({
+            "contract_version": 2,
+            "tool_namespace": "jig",
+            "jig_version": "0.1.0",
+            "required_commands": ["rust_test_command"],
+            "tools": [
+                {
+                    "name": "jig.custom_check",
+                    "kind": "command",
+                    "description": "Run configured custom check.",
+                    "command": "rust_test_command"
+                }
+            ],
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+}
+
 pub(super) fn write_mutating_check_fixture_repo(root: &Path) {
     fs::create_dir_all(root.join(".agent")).unwrap();
     fs::write(
@@ -173,6 +216,7 @@ pub(super) fn record_test_receipt(ctx: &RepoContext, receipt: TestReceipt<'_>) -
             tool_name: receipt.tool_name,
             args: receipt.args,
             invoked_make_target: None,
+            invoked_command_key: None,
             plan_id: Some(receipt.plan_id.to_string()),
             started_at_ms: receipt.started_at_ms,
             ended_at_ms: receipt.ended_at_ms,

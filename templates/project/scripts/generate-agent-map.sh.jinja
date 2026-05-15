@@ -29,7 +29,10 @@ list_agent_guides() {
   echo "- [Repository AGENTS.md](./AGENTS.md)"
   echo
 
-  mapfile -t guide_paths < <(list_agent_guides)
+  guide_paths=()
+  while IFS= read -r guide_path; do
+    guide_paths+=("$guide_path")
+  done < <(list_agent_guides)
   nested_count=0
   for guide_path in "${guide_paths[@]}"; do
     if [[ "$guide_path" == "AGENTS.md" ]]; then

@@ -30,6 +30,12 @@ No web apps are configured in `.jig.toml`.
 
 ## Preferred Commands
 
+- `scripts/jig bootstrap`
+- `scripts/jig dev`
+- `scripts/jig test`
+- `scripts/jig fmt-check`
+- `scripts/jig clippy`
+- `scripts/jig contract-check`
 - `make bootstrap`
 - `make dev`
 - `make test`
@@ -44,7 +50,7 @@ No web apps are configured in `.jig.toml`.
 ## Done Means
 
 - Run the relevant local verification for the area you changed.
-- For backend changes, finish with `make test`.
+- For backend changes, finish with `scripts/jig test` and `make test`.
 - Review the generated diff for stale docs, policy drift, or missing dependent updates.
 
 ## Crate Guide Requirements

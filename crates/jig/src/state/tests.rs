@@ -402,6 +402,7 @@ fn receipt_record(
         tool_name: tool_name.into(),
         args: json!({}),
         invoked_make_target: None,
+        invoked_command_key: None,
         started_at_ms: 1,
         ended_at_ms: 2,
         exit_status,

@@ -2,14 +2,14 @@
 
 ## Purpose
 
-`crates/jig` contains the repo-local `jig` CLI and MCP runtime used by generated repositories. It wraps the generated Makefile contract, manages append-only `.agent/state` memory, and handles template init/adopt/update flows.
+`crates/jig` contains the repo-local `jig` CLI and MCP runtime used by generated repositories. It executes the generated command contract, keeps legacy Makefile-backed repos working, manages append-only `.agent/state` memory, and handles template init/adopt/update flows.
 
 ## Key entrypoints
 
 - `src/main.rs`: binary entrypoint.
 - `src/lib.rs`: library entrypoint and module wiring.
 - `src/cli.rs`: clap command definitions and top-level command dispatch.
-- `src/runtime.rs`: make-backed tool execution and MCP tool call dispatch.
+- `src/runtime.rs`: command-backed and legacy make-backed tool execution plus MCP tool call dispatch.
 - `src/mcp.rs`: JSON-RPC/MCP stdio server.
 - `src/state.rs`: sessions, plans, receipts, and decisions stored under `.agent/state`.
 - `src/bootstrap.rs`: init/adopt/update command surface.
@@ -29,7 +29,7 @@
 - Keep transport layers thin; shared behavior should live in runtime, state, or bootstrap helpers.
 - Preserve generated-repo compatibility for `.jig.toml`, `.agent/jig-contract.json`, and `.agent/state/*.jsonl`.
 - Treat `.agent/state/*.jsonl` as append-only unless a migration path is explicit.
-- Keep make-backed tools aligned with the generated contract manifest and template outputs.
+- Keep execution tools aligned with the generated contract manifest and template outputs.
 - Do not make template update flows switch source identity implicitly.
 - When editing the runtime, build `target/debug/jig` and dogfood through `JIG_DEV_BIN=target/debug/jig scripts/jig ...` so the cached repo-local binary cannot mask current code.
 

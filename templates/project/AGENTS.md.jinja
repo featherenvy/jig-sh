@@ -50,19 +50,25 @@ No web apps are configured in `.jig.toml`.
 
 ## Preferred Commands
 
+- `scripts/jig bootstrap`
+- `scripts/jig dev`
+- `scripts/jig test`
+- `scripts/jig fmt-check`
+- `scripts/jig clippy`
+[% if sqlx_enabled %]
+- `scripts/jig sqlx-check`
+[% if schema_dump_enabled %]
+- `scripts/jig schema-check`
+- `scripts/jig schema-dump`
+[% endif %]
+- `scripts/jig migration-add NAME`
+[% endif %]
+- `scripts/jig contract-check`
+[% if makefile_enabled %]
 - `make bootstrap`
-- `make dev`
 - `make test`
 - `make fmt-check`
 - `make clippy`
-[% if sqlx_enabled %]
-- `make sqlx-check`
-- `make schema-check`
-[% if schema_dump_enabled %]
-- `make schema-dump`
-[% endif %]
-- `make migration-add NAME=...`
-[% endif %]
 - `make contract-check`
 - `make check-agent-map`
 - `make check-agent-guides`
@@ -71,14 +77,17 @@ No web apps are configured in `.jig.toml`.
 - `make check-sqlx-unchecked-non-test`
 [% endif %]
 - `make ci`
+[% endif %]
 
 ## Done Means
 
 - Run the relevant local verification for the area you changed.
-- For backend changes, finish with `make test`.
+- For backend changes, finish with `scripts/jig test`.
 [% if sqlx_enabled %]
-- For SQLx or migration changes, run `make sqlx-check`.
-- For schema-doc-enabled repos, run `make schema-check`.
+- For SQLx or migration changes, run `scripts/jig sqlx-check`.
+[% if schema_dump_enabled %]
+- For schema-doc-enabled repos, run `scripts/jig schema-check`.
+[% endif %]
 [% endif %]
 - Review the generated diff for stale docs, policy drift, or missing dependent updates.
 

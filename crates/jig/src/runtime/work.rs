@@ -11,7 +11,7 @@ use crate::state::{
 };
 use crate::tool_defs::{self, tool};
 
-use super::{execute_manifest_make_tool_without_worktree_fingerprint, requests};
+use super::{execute_manifest_tool_without_worktree_fingerprint, requests};
 
 pub(super) fn dispatch(ctx: &RepoContext, command: WorkCommand) -> Result<Value> {
     match command {
@@ -364,7 +364,7 @@ fn check_tools(ctx: &RepoContext, plan_id: &str, tools: Vec<String>) -> Result<V
     for name in &tools {
         validate_check_tool(ctx, name, "Work check")?;
 
-        results.push(execute_manifest_make_tool_without_worktree_fingerprint(
+        results.push(execute_manifest_tool_without_worktree_fingerprint(
             ctx,
             name,
             json!({}),
@@ -388,6 +388,7 @@ fn check_tools(ctx: &RepoContext, plan_id: &str, tools: Vec<String>) -> Result<V
                 "receipt_ids": receipt_ids,
             }),
             invoked_make_target: None,
+            invoked_command_key: None,
             plan_id: Some(plan_id.to_string()),
             started_at_ms: started,
             ended_at_ms: now_ms(),
@@ -668,10 +669,10 @@ fn validate_check_tool(ctx: &RepoContext, name: &str, label: &str) -> Result<()>
     let tool = ctx
         .tool_spec(name)
         .ok_or_else(|| anyhow!("{label} is not declared in .agent/jig-contract.json: {name}"))?;
-    if !tool_defs::is_make_tool(tool) {
-        bail!("{label} is not a make-backed tool: {name}");
+    if !tool_defs::is_execution_tool(tool) {
+        bail!("{label} is not an execution tool: {name}");
     }
-    if tool_defs::make_tool_requires_name(tool) {
+    if tool_defs::execution_tool_requires_name(tool) {
         bail!("{label} requires an argument and cannot run as a configured gate: {name}");
     }
     Ok(())

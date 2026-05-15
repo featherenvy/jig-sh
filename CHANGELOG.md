@@ -10,6 +10,10 @@
 
 ### Changed
 - Default release builds of `jig init` and `jig adopt` to the official `jig-sh` template source pinned to the installed Jig version's release tag; unreleased or dirty local builds now refuse that implicit release pin and require `--template /path/to/jig-sh` or `--vcs-ref <ref>` so local binaries do not render stale release templates.
+- Make the generated `scripts/jig` runtime the primary command contract with `contract_version = 2`; `jig adopt` now leaves an existing project `Makefile` unmanaged by default and records `makefile_enabled = false`, while new repos still render an optional Makefile adapter.
+- Change the default generated `bootstrap_command` from `make deps` to `cargo fetch` so default command-backed repos do not require a generated Makefile. Repos with web apps should set an explicit `bootstrap_command` when bootstrap must install web dependencies.
+- Render schema-check commands, tools, gates, and Makefile adapter targets only when both SQLx and schema dumps are enabled; SQLx-only repos keep `sqlx-check` and migration support without a disabled placeholder schema gate.
+- Command-backed `.jig.toml` `*_command` values now run through non-login `bash -c`; put any required toolchain setup in the configured command or project-owned scripts. `scripts/jig bootstrap` is available in contract version 2 repos; legacy contract version 1 repos should continue using their generated Makefile bootstrap target until updated.
 - Release automation that builds Jig from a git checkout should fetch tags before building, or set `JIG_ASSUME_RELEASE_BUILD=1` after validating the workspace version and release tag.
 - BREAKING for local dogfooding: resolve `JIG_DEV_BIN` directly instead of copying it into the Jig cache, so local runtime changes use the current development binary after version validation.
 - Hard-fail `scripts/install-jig.sh` when `JIG_DEV_BIN` is set but missing, non-executable, or resolves to a binary whose version does not match the generated repo instead of falling back to cached runtime selection. Direct callers of `scripts/install-jig.sh` should use `scripts/jig`, set a matching `JIG_DEV_BIN`, unset it, or run the normal cached installer path.
@@ -36,7 +40,7 @@
 - Treat template source metadata as a runtime-install trust boundary: recorded hex `_commit` values pin the exact remote Jig revision used by `scripts/install-jig.sh`, and contract checks now keep the installer script and template mirror in sync.
 - Bound the Jig Dev Proxy local CA lifetime to two years, avoid broad bare-TLD CA constraints for non-`.localhost` TLDs, and verify macOS trust installation before recording Jig's trusted-CA marker.
 - Reject backend response headers with whitespace before the colon, retry transient TLS leaf cert/key rotation mismatches, escape `$` in systemd `ExecStart` values, fail closed on oversized workspace glob expansion, and extend proxy state lock waits.
-- Document that shell-form `[[dev.apps]].command` is trusted repo-configured shell execution; prefer `argv` when arguments should be passed literally.
+- Document that shell-form `[[dev.apps]].command` and top-level `.jig.toml` `*_command` values are trusted repo-configured shell execution; prefer `argv` when app arguments should be passed literally.
 
 ## v0.1.0 - 2026-05-12
 

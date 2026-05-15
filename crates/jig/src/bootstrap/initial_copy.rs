@@ -29,7 +29,14 @@ pub(super) struct BootstrapCopyResult {
 pub(super) fn render_and_copy_bootstrap_template(
     request: BootstrapCopyRequest<'_>,
 ) -> Result<BootstrapCopyResult> {
-    let answers = RenderAnswers::from_opts(request.answers, request.destination)?;
+    let mut answer_opts = request.answers.clone();
+    if answer_opts.makefile_enabled.is_none() {
+        answer_opts.makefile_enabled = Some(default_makefile_enabled(
+            request.destination,
+            request.seed_repo_path,
+        ));
+    }
+    let answers = RenderAnswers::from_opts(&answer_opts, request.destination)?;
     let staged = stage_render(request.template, &answers, request.seed_repo_path)?;
 
     apply_staged_render(
@@ -45,6 +52,14 @@ pub(super) fn render_and_copy_bootstrap_template(
     Ok(BootstrapCopyResult {
         default_branch: Some(answers.default_branch().to_string()),
     })
+}
+
+fn default_makefile_enabled(destination: &Path, seed_repo_path: Option<&Path>) -> bool {
+    // Init renders into a new or explicitly forced destination, so keep the
+    // human-friendly Makefile adapter. Adoption is different: an existing
+    // project Makefile is repo-owned and should not become a Jig conflict by
+    // default.
+    seed_repo_path.is_none() || !destination.join("Makefile").exists()
 }
 
 #[cfg(test)]
@@ -70,6 +85,7 @@ pub(super) fn seed_answers_toml(
         "template_source_url",
         opts.template_source_url.as_deref(),
     );
+    insert_bool(&mut mapping, "makefile_enabled", opts.makefile_enabled);
     insert_bool(&mut mapping, "sqlx_enabled", opts.sqlx_enabled);
     insert_string(
         &mut mapping,
@@ -93,6 +109,16 @@ pub(super) fn seed_answers_toml(
     );
     insert_string(
         &mut mapping,
+        "schema_check_command",
+        opts.schema_check_command.as_deref(),
+    );
+    insert_string(
+        &mut mapping,
+        "sqlx_check_command",
+        opts.sqlx_check_command.as_deref(),
+    );
+    insert_string(
+        &mut mapping,
         "migration_add_command",
         opts.migration_add_command.as_deref(),
     );
@@ -100,6 +126,11 @@ pub(super) fn seed_answers_toml(
         &mut mapping,
         "bootstrap_command",
         opts.bootstrap_command.as_deref(),
+    );
+    insert_string(
+        &mut mapping,
+        "contract_check_command",
+        opts.contract_check_command.as_deref(),
     );
     insert_string(&mut mapping, "dev_command", opts.dev_command.as_deref());
     insert_string(
