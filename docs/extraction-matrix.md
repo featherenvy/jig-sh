@@ -15,7 +15,7 @@ This matrix captures what was extracted from the source application workflow and
 | `crates/jig` | Added | Publishable runtime that exposes the typed CLI/MCP surface over the generated command contract and runtime-owned state. |
 | Agent map, guide, Rust LOC, `mod.rs`, migration immutability, and SQLx unchecked-query checks | Runtime-owned | Implemented natively in `crates/jig`; generated repos call `scripts/jig ...` instead of rendered helper scripts. |
 | `scripts/jig migration-add` | Runtime-owned | Adds timestamped forward-only migration stubs when `sqlx_enabled` is `true`. |
-| `scripts/jig contract-check` | Runtime-owned | Validates runtime wiring and manifest drift. |
+| `scripts/jig check contract` | Runtime-owned | Validates runtime wiring and manifest drift. |
 | `scripts/install-jig.sh` + `scripts/jig` | Templated | Exact-version runtime launcher and installer for generated repos. |
 | `scripts/enforce-coverage.js` | Extracted | Kept generic. |
 | `scripts/new-checkout.sh` | Extracted + generalized | Uses current repo basename instead of source-specific naming. |

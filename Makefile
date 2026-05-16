@@ -45,27 +45,27 @@ dev: ## Run the configured dev command
 	@bash -lc '$(DEV_COMMAND)'
 
 fmt-check: ## Check Rust formatting
-	scripts/jig fmt-check
+	scripts/jig check fmt
 
 clippy: ## Run clippy for the Rust workspace
-	scripts/jig clippy
+	scripts/jig check clippy
 
 test-rust: ## Run Rust workspace tests
-	scripts/jig test
+	scripts/jig check test
 
 test-rust-locked: ## Run Rust workspace tests with --locked
-	scripts/jig test-locked
+	scripts/jig check test-locked
 
 test: test-rust ## Run the default backend test suite
 
 contract-check: ## Verify the generated jig contract and runtime wiring
-	scripts/jig contract-check
+	scripts/jig check contract
 
 check-agent-map: ## Verify agent-map.md coverage and links
-	scripts/jig agent-map check
+	scripts/jig check agent-map
 
 check-agent-guides: ## Verify crate-level AGENTS.md guides
-	scripts/jig check-agent-guides
+	scripts/jig check agent-guides
 
 check-rust-file-loc: ## Enforce Rust file-size policy against the default branch
 	@set -euo pipefail; \
@@ -77,10 +77,10 @@ check-rust-file-loc: ## Enforce Rust file-size policy against the default branch
 	  base_ref="4b825dc642cb6eb9a060e54bf8d69288fbee4904"; \
 	fi; \
 	echo "Using Rust LOC base ref: $$base_ref"; \
-	scripts/jig check-rust-file-loc --changed-against "$$base_ref"
+	scripts/jig check rust-file-loc --changed-against "$$base_ref"
 
 check-no-mod-rs: ## Fail if disallowed mod.rs files exist under configured crate roots
-	scripts/jig check-no-mod-rs
+	scripts/jig check no-mod-rs
 
 
 

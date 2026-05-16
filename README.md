@@ -116,7 +116,7 @@ Use this path when you want the fastest successful loop on a new or adopted repo
    ```sh
    cd /path/to/new-repo
    scripts/jig bootstrap
-   scripts/jig contract-check
+   scripts/jig check contract
    ```
 
 3. Check local agent readiness. The JSON form is the stable automation output; `--summary` is the human scan path. `agent doctor` exits nonzero until required setup is complete.
@@ -142,9 +142,9 @@ Use this path when you want the fastest successful loop on a new or adopted repo
 5. For normal local validation, use the repo contract commands directly.
 
    ```sh
-   scripts/jig fmt-check
-   scripts/jig clippy
-   scripts/jig test
+   scripts/jig check fmt
+   scripts/jig check clippy
+   scripts/jig check test
    ```
 
 Contract and gate commands intentionally append receipts under `.agent/state/`.

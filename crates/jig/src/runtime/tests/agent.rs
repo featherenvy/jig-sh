@@ -212,7 +212,7 @@ fn agent_doctor_matches_relative_config_to_absolute_codex_source() {
 _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
-jig_version = "0.1.0"
+jig_version = "0.2.0-beta.1"
 
 [[agent_tooling.codex.marketplaces]]
 id = "local-skills"
@@ -271,7 +271,7 @@ fn agent_doctor_accepts_empty_marketplace_config_without_codex() {
 _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
-jig_version = "0.1.0"
+jig_version = "0.2.0-beta.1"
 
 [agent_tooling.codex]
 marketplaces = []
@@ -359,7 +359,7 @@ fn agent_doctor_reports_marketplace_specific_bootstrap_commands() {
 _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
-jig_version = "0.1.0"
+jig_version = "0.2.0-beta.1"
 
 [[agent_tooling.codex.marketplaces]]
 id = "first-skills"
@@ -461,7 +461,7 @@ fn agent_bootstrap_uses_single_configured_marketplace_source() {
 _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
-jig_version = "0.1.0"
+jig_version = "0.2.0-beta.1"
 
 [[agent_tooling.codex.marketplaces]]
 id = "local-skills"
@@ -671,7 +671,7 @@ fn agent_bootstrap_rejects_ambiguous_configured_marketplaces() {
 _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
-jig_version = "0.1.0"
+jig_version = "0.2.0-beta.1"
 
 [[agent_tooling.codex.marketplaces]]
 id = "first-skills"

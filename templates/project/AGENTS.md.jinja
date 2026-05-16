@@ -52,19 +52,19 @@ No web apps are configured in `.jig.toml`.
 
 - `scripts/jig bootstrap`
 - `scripts/jig dev`
-- `scripts/jig test`
-- `scripts/jig fmt-check`
-- `scripts/jig clippy`
+- `scripts/jig check test`
+- `scripts/jig check fmt`
+- `scripts/jig check clippy`
 - `scripts/jig work status --summary`
 [% if sqlx_enabled %]
-- `scripts/jig sqlx-check`
+- `scripts/jig check sqlx`
 [% if schema_dump_enabled %]
-- `scripts/jig schema-check`
+- `scripts/jig check schema`
 - `scripts/jig schema-dump`
 [% endif %]
 - `scripts/jig migration-add NAME`
 [% endif %]
-- `scripts/jig contract-check`
+- `scripts/jig check contract`
 [% if makefile_enabled %]
 - `make bootstrap`
 - `make test`
@@ -83,11 +83,11 @@ No web apps are configured in `.jig.toml`.
 ## Done Means
 
 - Run the relevant local verification for the area you changed.
-- For backend changes, finish with `scripts/jig test`.
+- For backend changes, finish with `scripts/jig check test`.
 [% if sqlx_enabled %]
-- For SQLx or migration changes, run `scripts/jig sqlx-check`.
+- For SQLx or migration changes, run `scripts/jig check sqlx`.
 [% if schema_dump_enabled %]
-- For schema-doc-enabled repos, run `scripts/jig schema-check`.
+- For schema-doc-enabled repos, run `scripts/jig check schema`.
 [% endif %]
 [% endif %]
 - Review the generated diff for stale docs, policy drift, or missing dependent updates.

@@ -341,7 +341,7 @@ impl RepoContext {
         let manifest: ContractManifest = serde_json::from_str(&manifest_text)
             .with_context(|| format!("Failed to parse {}", manifest_path.display()))?;
 
-        if !matches!(manifest.contract_version, 1 | 2) {
+        if !matches!(manifest.contract_version, 1 | 2 | 3) {
             bail!(
                 "Unsupported jig contract version: {}",
                 manifest.contract_version
@@ -353,7 +353,9 @@ impl RepoContext {
         if manifest.contract_version == 1 && manifest.required_make_targets.is_empty() {
             bail!("jig contract manifest does not declare required make targets");
         }
-        if manifest.contract_version == 2 && manifest.required_commands.is_empty() {
+        // Versions 2 and 3 share the command-backed manifest schema; v3 changes
+        // the CLI command surface, not the required_commands contract shape.
+        if manifest.contract_version >= 2 && manifest.required_commands.is_empty() {
             bail!("jig contract manifest does not declare required commands");
         }
         if config.jig_version != manifest.jig_version {

@@ -8,10 +8,10 @@ fn make_cli_dispatch_requires_manifest_tool_declaration() {
 
     let error = dispatch(
         &ctx,
-        CommandKind::FmtCheck(crate::cli::ToolOpts {
+        CommandKind::Check(crate::cli::CheckCommand::Fmt(crate::cli::ToolOpts {
             plan_id: None,
             no_receipt: false,
-        }),
+        })),
     )
     .unwrap_err()
     .to_string();

@@ -6,16 +6,16 @@ use anyhow::{Context, Result};
 use serde_json::{Value, json};
 
 use crate::agent_guides::is_ignored_guide_component;
-use crate::cli::AgentMapOpts;
 use crate::context::RepoContext;
+use crate::policy::AgentMapInput;
 
-pub(super) fn generate(ctx: &RepoContext, opts: &AgentMapOpts) -> Result<Value> {
+pub(super) fn generate(ctx: &RepoContext, opts: &AgentMapInput) -> Result<Value> {
     let map_path = normalize_map_path(&opts.map_path)?;
     write(ctx.root(), &map_path)?;
     Ok(json!({ "ok": true, "path": map_path }))
 }
 
-pub(super) fn check(ctx: &RepoContext, opts: &AgentMapOpts) -> Result<Value> {
+pub(super) fn check(ctx: &RepoContext, opts: &AgentMapInput) -> Result<Value> {
     let map_path = normalize_map_path(&opts.map_path)?;
     let result = validate(ctx.root(), &map_path)?;
     Ok(json!({
@@ -396,7 +396,7 @@ mod tests {
 _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
-jig_version = "0.1.0"
+jig_version = "0.2.0-beta.1"
 rust_crate_roots = ["crates"]
 rust_test_command = "cargo test"
 "#,
@@ -407,7 +407,7 @@ rust_test_command = "cargo test"
             serde_json::to_string_pretty(&json!({
                 "contract_version": 2,
                 "tool_namespace": "jig",
-                "jig_version": "0.1.0",
+                "jig_version": "0.2.0-beta.1",
                 "required_commands": ["rust_test_command"],
                 "tools": [],
             }))

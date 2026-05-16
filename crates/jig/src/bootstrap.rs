@@ -101,7 +101,7 @@ pub struct AnswerOpts {
     pub schema_dump_command: Option<String>,
     #[arg(long, help = "Command used by legacy schema-check manifests")]
     pub schema_check_command: Option<String>,
-    #[arg(long, help = "Command used by scripts/jig sqlx-check")]
+    #[arg(long, help = "Command used by scripts/jig check sqlx")]
     pub sqlx_check_command: Option<String>,
     #[arg(long, help = "Command used by legacy migration-add manifests")]
     pub migration_add_command: Option<String>,
@@ -111,13 +111,13 @@ pub struct AnswerOpts {
     pub contract_check_command: Option<String>,
     #[arg(long, help = "Makefile adapter command used by make dev")]
     pub dev_command: Option<String>,
-    #[arg(long, help = "Command used by scripts/jig fmt-check")]
+    #[arg(long, help = "Command used by scripts/jig check fmt")]
     pub rust_fmt_check_command: Option<String>,
-    #[arg(long, help = "Command used by scripts/jig clippy")]
+    #[arg(long, help = "Command used by scripts/jig check clippy")]
     pub rust_clippy_command: Option<String>,
-    #[arg(long, help = "Command used by scripts/jig test")]
+    #[arg(long, help = "Command used by scripts/jig check test")]
     pub rust_test_command: Option<String>,
-    #[arg(long, help = "Command used by scripts/jig test-locked")]
+    #[arg(long, help = "Command used by scripts/jig check test-locked")]
     pub rust_test_locked_command: Option<String>,
     #[arg(long, help = "Web package manager for generated web app checks")]
     pub web_package_manager: Option<String>,

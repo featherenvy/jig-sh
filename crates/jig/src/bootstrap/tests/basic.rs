@@ -979,7 +979,7 @@ fn adopt_skips_makefile_by_default_when_destination_already_has_one() {
     let answers = fs::read_to_string(repo.join(".jig.toml")).unwrap();
     assert!(answers.contains("makefile_enabled = false"));
     let contract = fs::read_to_string(repo.join(".agent/jig-contract.json")).unwrap();
-    assert!(contract.contains(r#""contract_version": 2"#));
+    assert!(contract.contains(r#""contract_version": 3"#));
     assert!(contract.contains(r#""kind": "command""#));
     assert!(!contract.contains("jig.run_target"));
 }

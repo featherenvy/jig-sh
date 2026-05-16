@@ -5,15 +5,12 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use serde_json::{Value, json};
 
-use crate::cli::GenerateSqlxUncheckedQueriesTodoOpts;
 use crate::context::RepoContext;
+use crate::policy::SqlxTodoInput;
 
 const DEFAULT_SQLX_TODO_PATH: &str = "docs/sqlx-unchecked-queries-todo.md";
 
-pub(super) fn generate_todo(
-    ctx: &RepoContext,
-    opts: &GenerateSqlxUncheckedQueriesTodoOpts,
-) -> Result<Value> {
+pub(super) fn generate_todo(ctx: &RepoContext, opts: &SqlxTodoInput) -> Result<Value> {
     let output = super::normalize_repo_relative_path(
         &opts
             .output

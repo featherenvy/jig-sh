@@ -30,11 +30,11 @@ validate_backend_fixture() {
     git add .
     git commit -m "fixture" >/dev/null
     make help >/dev/null
-    scripts/jig agent-map check >/dev/null
-    scripts/jig check-agent-guides >/dev/null
-    scripts/jig check-rust-file-loc --all >/dev/null
-    scripts/jig check-migration-immutability --changed-against HEAD >/dev/null
-    scripts/jig check-sqlx-unchecked-non-test >/dev/null
+    scripts/jig check agent-map >/dev/null
+    scripts/jig check agent-guides >/dev/null
+    scripts/jig check rust-file-loc --all >/dev/null
+    scripts/jig check migration-immutability --changed-against HEAD >/dev/null
+    scripts/jig check sqlx-unchecked-non-test >/dev/null
     coverage_dir="$(mktemp -d)"
     COVERAGE_DIR="$coverage_dir" COVERAGE_THRESHOLD=0 node scripts/enforce-coverage.js >/dev/null
     rm -rf "$coverage_dir"
@@ -66,12 +66,12 @@ validate_full_stack_fixture() {
     git add .
     git commit -m "fixture" >/dev/null
     make help >/dev/null
-    scripts/jig agent-map check >/dev/null
-    scripts/jig check-agent-guides >/dev/null
-    scripts/jig check-rust-file-loc --all >/dev/null
-    scripts/jig check-migration-immutability --changed-against HEAD >/dev/null
-    scripts/jig check-sqlx-unchecked-non-test >/dev/null
-    scripts/jig schema-check >/dev/null
+    scripts/jig check agent-map >/dev/null
+    scripts/jig check agent-guides >/dev/null
+    scripts/jig check rust-file-loc --all >/dev/null
+    scripts/jig check migration-immutability --changed-against HEAD >/dev/null
+    scripts/jig check sqlx-unchecked-non-test >/dev/null
+    scripts/jig check schema >/dev/null
     scripts/jig update --recopy --force >/dev/null
     rg -q "frontend" .github/workflows/webapp-checks.yml
     rg -q "admin-panel" .github/workflows/webapp-checks.yml
@@ -95,9 +95,9 @@ validate_tooling_only_fixture() {
     git add .
     git commit -m "fixture" >/dev/null
     make help >/dev/null
-    scripts/jig agent-map check >/dev/null
-    scripts/jig check-agent-guides >/dev/null
-    scripts/jig check-rust-file-loc --all >/dev/null
+    scripts/jig check agent-map >/dev/null
+    scripts/jig check agent-guides >/dev/null
+    scripts/jig check rust-file-loc --all >/dev/null
     coverage_dir="$(mktemp -d)"
     COVERAGE_DIR="$coverage_dir" COVERAGE_THRESHOLD=0 node scripts/enforce-coverage.js >/dev/null
     rm -rf "$coverage_dir"

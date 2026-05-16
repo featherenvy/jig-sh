@@ -202,8 +202,8 @@ PY
 
     rm -rf .git/jig-tools .agent/.cache
     assert_jig_mcp_requires_prebuilt_binary "$repo_dir"
-    # MCP startup must use a prebuilt binary; contract-check populates the runtime cache.
-    env -u JIG_DEV_BIN scripts/jig contract-check >/dev/null
+    # MCP startup must use a prebuilt binary; check contract populates the runtime cache.
+    env -u JIG_DEV_BIN scripts/jig check contract >/dev/null
     validate_jig_mcp_smoke "$repo_dir" "$expect_schema_dump" "$expect_sqlx"
     [[ -x "$install_base/$jig_version-runtime/bin/jig" ]]
     [[ ! -e "$install_base/$jig_version/bin/jig" ]]
@@ -212,7 +212,7 @@ PY
       exit 1
     fi
     [[ ! -e "$install_base/$jig_version/bin/jig" ]]
-    env -u JIG_DEV_BIN JIG_INSTALL_PROFILE=default scripts/jig contract-check >/dev/null
+    env -u JIG_DEV_BIN JIG_INSTALL_PROFILE=default scripts/jig check contract >/dev/null
     [[ ! -e "$install_base/$jig_version/bin/jig" ]]
     env -u JIG_DEV_BIN scripts/jig dev --help >/dev/null
     env -u JIG_DEV_BIN scripts/jig proxy --help >/dev/null

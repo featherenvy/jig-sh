@@ -45,6 +45,8 @@ fn top_level_help_describes_common_commands() {
 
     assert_help_contains(&help, "init");
     assert_help_contains(&help, "Create a new repository");
+    assert_help_contains(&help, "check");
+    assert_help_contains(&help, "Run configured project checks");
     assert_help_contains(&help, "Manage structured work plans");
     assert_help_contains(&help, "Inspect or bootstrap local agent tooling");
 }
@@ -95,6 +97,94 @@ fn work_finish_help_includes_examples() {
     let work_finish_help = rendered_help(&["work", "finish"]);
     assert_help_contains(&work_finish_help, "jig work finish --plan-id plan_abc123");
     assert_help_contains(&work_finish_help, "--outcome success");
+}
+
+#[test]
+fn check_help_includes_examples() {
+    let check_help = rendered_help(&["check"]);
+    assert_help_contains(&check_help, "jig check fmt");
+    assert_help_contains(&check_help, "jig check contract");
+    assert_help_contains(&check_help, "jig check rust-file-loc --changed-against");
+}
+
+#[test]
+fn parses_check_namespace_commands() {
+    let fmt = Cli::try_parse_from(["jig", "check", "fmt", "--plan-id", "plan_1"]).unwrap();
+    match fmt.command {
+        CommandKind::Check(CheckCommand::Fmt(opts)) => {
+            assert_eq!(opts.plan_id.as_deref(), Some("plan_1"));
+        }
+        other => panic!("expected check fmt command, got {other:?}"),
+    }
+
+    let rust_file_loc = Cli::try_parse_from(["jig", "check", "rust-file-loc", "--all"]).unwrap();
+    match rust_file_loc.command {
+        CommandKind::Check(CheckCommand::RustFileLoc(opts)) => {
+            assert!(opts.all);
+        }
+        other => panic!("expected check rust-file-loc command, got {other:?}"),
+    }
+
+    for (legacy, replacement) in [
+        ("fmt-check", "jig check fmt"),
+        ("clippy", "jig check clippy"),
+        ("test", "jig check test"),
+        ("test-locked", "jig check test-locked"),
+        ("sqlx-check", "jig check sqlx"),
+        ("schema-check", "jig check schema"),
+        ("contract-check", "jig check contract"),
+        ("check-agent-guides", "jig check agent-guides"),
+        ("check-rust-file-loc", "jig check rust-file-loc"),
+        ("check-no-mod-rs", "jig check no-mod-rs"),
+        (
+            "check-migration-immutability",
+            "jig check migration-immutability",
+        ),
+        (
+            "check-sqlx-unchecked-non-test",
+            "jig check sqlx-unchecked-non-test",
+        ),
+    ] {
+        let error = Cli::try_parse_from(["jig", legacy]).unwrap_err();
+        assert_eq!(error.kind(), clap::error::ErrorKind::InvalidSubcommand);
+        let message = error.to_string();
+        assert!(
+            message.contains("Usage: jig <COMMAND>"),
+            "legacy top-level hint depends on Clap usage text for {legacy}: {message}"
+        );
+        assert!(
+            message.contains(&format!("'{legacy}'")),
+            "legacy top-level hint depends on Clap quoting the invalid command for {legacy}: {message}"
+        );
+        assert_eq!(
+            moved_check_command_hint(&error),
+            Some(format!("This check command moved. Use:\n  {replacement}")),
+            "wrong moved-command hint for {legacy}"
+        );
+    }
+
+    let error = Cli::try_parse_from(["jig", "agent-map", "check"]).unwrap_err();
+    assert_eq!(error.kind(), clap::error::ErrorKind::InvalidSubcommand);
+    let message = error.to_string();
+    assert!(
+        message.contains("unrecognized subcommand 'check'"),
+        "agent-map hint depends on Clap quoting the nested invalid command: {message}"
+    );
+    assert!(
+        message.contains("Usage: jig agent-map <COMMAND>"),
+        "agent-map hint depends on Clap nested usage text: {message}"
+    );
+    assert_eq!(
+        moved_check_command_hint(&error),
+        Some("This check command moved. Use:\n  jig check agent-map".to_string())
+    );
+
+    let unrelated_nested = Cli::try_parse_from(["jig", "agent-map", "test"]).unwrap_err();
+    assert_eq!(
+        unrelated_nested.kind(),
+        clap::error::ErrorKind::InvalidSubcommand
+    );
+    assert!(moved_check_command_hint(&unrelated_nested).is_none());
 }
 
 #[test]
@@ -294,19 +384,20 @@ fn parses_work_receipts_filters() {
 
 #[test]
 fn parses_tool_no_receipt_flag() {
-    let cli = Cli::try_parse_from(["jig", "contract-check", "--no-receipt"]).unwrap();
+    let cli = Cli::try_parse_from(["jig", "check", "contract", "--no-receipt"]).unwrap();
 
     match cli.command {
-        CommandKind::ContractCheck(opts) => {
+        CommandKind::Check(CheckCommand::Contract(opts)) => {
             assert!(opts.no_receipt);
             assert_eq!(opts.plan_id, None);
         }
-        other => panic!("expected contract-check command, got {other:?}"),
+        other => panic!("expected check contract command, got {other:?}"),
     }
 
     let error = Cli::try_parse_from([
         "jig",
-        "contract-check",
+        "check",
+        "contract",
         "--plan-id",
         "plan_1",
         "--no-receipt",

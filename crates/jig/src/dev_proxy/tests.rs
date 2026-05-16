@@ -13,7 +13,7 @@ fn write_contract(root: &std::path::Path) {
         serde_json::to_string_pretty(&json!({
             "contract_version": 1,
             "tool_namespace": "jig",
-            "jig_version": "0.1.0",
+            "jig_version": "0.2.0-beta.1",
             "required_make_targets": ["contract-check"],
             "optional_make_targets": [],
             "tools": [],
@@ -32,7 +32,7 @@ fn write_config(root: &std::path::Path, extra: &str) {
 _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
-jig_version = "0.1.0"
+jig_version = "0.2.0-beta.1"
 {extra}
 "#
         ),
@@ -61,7 +61,7 @@ fn dev_apps_cannot_be_combined_with_legacy_frontend_apps() {
 _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
-jig_version = "0.1.0"
+jig_version = "0.2.0-beta.1"
 web_package_manager = "bun"
 
 [[frontend_apps]]
@@ -97,7 +97,7 @@ fn legacy_frontend_apps_are_used_when_dev_apps_are_absent() {
 _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
-jig_version = "0.1.0"
+jig_version = "0.2.0-beta.1"
 web_package_manager = "pnpm"
 
 [[frontend_apps]]
@@ -135,7 +135,7 @@ fn unknown_dev_app_kind_is_rejected() {
 _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
-jig_version = "0.1.0"
+jig_version = "0.2.0-beta.1"
 web_package_manager = "bun"
 
 [dev]
@@ -166,7 +166,7 @@ fn dev_app_host_must_be_ip_literal() {
 _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
-jig_version = "0.1.0"
+jig_version = "0.2.0-beta.1"
 web_package_manager = "bun"
 
 [dev]
@@ -197,7 +197,7 @@ fn proxied_dev_app_host_must_be_loopback() {
 _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
-jig_version = "0.1.0"
+jig_version = "0.2.0-beta.1"
 web_package_manager = "bun"
 
 [[dev.apps]]
@@ -225,7 +225,7 @@ fn non_proxied_dev_app_may_use_non_loopback_direct_host() {
 _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
-jig_version = "0.1.0"
+jig_version = "0.2.0-beta.1"
 web_package_manager = "bun"
 
 [[dev.apps]]
@@ -255,7 +255,7 @@ fn dev_app_name_rejects_surrounding_whitespace() {
 _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
-jig_version = "0.1.0"
+jig_version = "0.2.0-beta.1"
 web_package_manager = "bun"
 
 [[dev.apps]]
@@ -284,7 +284,7 @@ fn dev_app_dirs_must_stay_under_repo_root() {
 _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
-jig_version = "0.1.0"
+jig_version = "0.2.0-beta.1"
 
 [[dev.apps]]
 name = "web"
@@ -313,7 +313,7 @@ fn settings_do_not_require_configured_app_dirs_to_exist() {
 _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
-jig_version = "0.1.0"
+jig_version = "0.2.0-beta.1"
 
 [[dev.apps]]
 name = "web"
@@ -342,7 +342,7 @@ fn vite_dev_app_requires_argv() {
 _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
-jig_version = "0.1.0"
+jig_version = "0.2.0-beta.1"
 web_package_manager = "bun"
 
 [dev]
@@ -373,7 +373,7 @@ fn invalid_dev_tld_is_rejected() {
 _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
-jig_version = "0.1.0"
+jig_version = "0.2.0-beta.1"
 
 [dev]
 tld = "bad,tld"
@@ -399,7 +399,7 @@ fn public_dev_tld_is_rejected() {
 _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
-jig_version = "0.1.0"
+jig_version = "0.2.0-beta.1"
 
 [dev]
 tld = "dev"
@@ -425,7 +425,7 @@ fn zero_proxy_ports_are_rejected() {
 _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
-jig_version = "0.1.0"
+jig_version = "0.2.0-beta.1"
 
 [dev]
 proxy_port = 0
@@ -451,7 +451,7 @@ fn explicit_read_only_state_dir_must_exist() {
 _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
-jig_version = "0.1.0"
+jig_version = "0.2.0-beta.1"
 "#,
     )
     .unwrap();
@@ -478,7 +478,7 @@ fn settings_does_not_create_missing_state_dir() {
 _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
-jig_version = "0.1.0"
+jig_version = "0.2.0-beta.1"
 "#,
     )
     .unwrap();
@@ -708,7 +708,7 @@ fn proxy_http_and_https_ports_must_differ() {
 _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
-jig_version = "0.1.0"
+jig_version = "0.2.0-beta.1"
 
 [dev]
 proxy_port = 1555

@@ -56,7 +56,7 @@ fn tool_no_receipt_skips_receipt_append() {
 _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
-jig_version = "0.1.0"
+jig_version = "0.2.0-beta.1"
 rust_test_command = "printf 'command tool ran\n'"
 "#,
     )
@@ -66,7 +66,7 @@ rust_test_command = "printf 'command tool ran\n'"
         serde_json::to_string_pretty(&json!({
             "contract_version": 2,
             "tool_namespace": "jig",
-            "jig_version": "0.1.0",
+            "jig_version": "0.2.0-beta.1",
             "required_commands": ["rust_test_command"],
             "tools": [
                 {
@@ -84,10 +84,10 @@ rust_test_command = "printf 'command tool ran\n'"
     let ctx = RepoContext::load_from(temp.path()).unwrap();
     let output = dispatch(
         &ctx,
-        CommandKind::Test(crate::cli::ToolOpts {
+        CommandKind::Check(crate::cli::CheckCommand::Test(crate::cli::ToolOpts {
             plan_id: None,
             no_receipt: true,
-        }),
+        })),
     )
     .unwrap();
 
@@ -106,7 +106,7 @@ fn make_tool_no_receipt_skips_receipt_append() {
 _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
-jig_version = "0.1.0"
+jig_version = "0.2.0-beta.1"
 "#,
     )
     .unwrap();
@@ -120,7 +120,7 @@ jig_version = "0.1.0"
         serde_json::to_string_pretty(&json!({
             "contract_version": 1,
             "tool_namespace": "jig",
-            "jig_version": "0.1.0",
+            "jig_version": "0.2.0-beta.1",
             "required_make_targets": ["custom-check"],
             "optional_make_targets": [],
             "tools": [
@@ -168,7 +168,7 @@ fn native_tool_no_receipt_skips_receipt_append() {
 _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
-jig_version = "0.1.0"
+jig_version = "0.2.0-beta.1"
 makefile_enabled = true
 "#,
     )
@@ -183,7 +183,7 @@ makefile_enabled = true
         serde_json::to_string_pretty(&json!({
             "contract_version": 1,
             "tool_namespace": "jig",
-            "jig_version": "0.1.0",
+            "jig_version": "0.2.0-beta.1",
             "required_make_targets": ["fmt-check", "clippy", "test", "contract-check"],
             "optional_make_targets": [],
             "tools": [
@@ -219,10 +219,10 @@ makefile_enabled = true
     let ctx = RepoContext::load_from(temp.path()).unwrap();
     let output = dispatch(
         &ctx,
-        CommandKind::ContractCheck(crate::cli::ToolOpts {
+        CommandKind::Check(crate::cli::CheckCommand::Contract(crate::cli::ToolOpts {
             plan_id: None,
             no_receipt: true,
-        }),
+        })),
     )
     .unwrap();
 
@@ -247,7 +247,7 @@ fn failed_tool_error_remains_primary_when_receipt_append_fails() {
 _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
-jig_version = "0.1.0"
+jig_version = "0.2.0-beta.1"
 rust_test_command = "printf 'tool failed stdout\n'; printf 'tool failed stderr\n' >&2; exit 7"
 "#,
     )
@@ -257,7 +257,7 @@ rust_test_command = "printf 'tool failed stdout\n'; printf 'tool failed stderr\n
         serde_json::to_string_pretty(&json!({
             "contract_version": 2,
             "tool_namespace": "jig",
-            "jig_version": "0.1.0",
+            "jig_version": "0.2.0-beta.1",
             "required_commands": ["rust_test_command"],
             "tools": [
                 {
@@ -276,10 +276,10 @@ rust_test_command = "printf 'tool failed stdout\n'; printf 'tool failed stderr\n
     let ctx = RepoContext::load_from(temp.path()).unwrap();
     let error = dispatch(
         &ctx,
-        CommandKind::Test(crate::cli::ToolOpts {
+        CommandKind::Check(crate::cli::CheckCommand::Test(crate::cli::ToolOpts {
             plan_id: None,
             no_receipt: false,
-        }),
+        })),
     )
     .unwrap_err()
     .to_string();

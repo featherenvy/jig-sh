@@ -53,9 +53,9 @@ When `sqlx_enabled` is `true`, these additional keys are required:
 - `makefile_enabled`: when `true`, Jig renders a root Makefile adapter; adoption defaults it to `false` if a root `Makefile` already exists
 - `schema_dump_enabled`: when `true` and `sqlx_enabled` is also `true`, the template renders schema dump and schema freshness commands
 - `schema_dump_command`: command behind `scripts/jig schema-dump` when `sqlx_enabled` and `schema_dump_enabled` are both `true`
-- `sqlx_check_command`: command behind `scripts/jig sqlx-check` when `sqlx_enabled` is `true`
+- `sqlx_check_command`: command behind `scripts/jig check sqlx` when `sqlx_enabled` is `true`
 - `bootstrap_command`: implementation behind `scripts/jig bootstrap`; set this explicitly when bootstrap must install web dependencies or run project-specific setup beyond the default `cargo fetch`
-- `dev_command`: legacy project-owned dev command used by the optional Makefile adapter's `make dev`; Makefile-less v2 renders omit it, and older repos that retain it do not use it for `scripts/jig dev`
+- `dev_command`: legacy project-owned dev command used by the optional Makefile adapter's `make dev`; Makefile-less command-backed renders omit it, and older repos that retain it do not use it for `scripts/jig dev`
 - `rust_fmt_check_command`
 - `rust_clippy_command`
 - `rust_test_command`
@@ -64,7 +64,7 @@ When `sqlx_enabled` is `true`, these additional keys are required:
 - `frontend_apps`: list of app definitions
 - `dev`: Jig-native local development proxy settings and app definitions
 
-Top-level `*_command` values are committed repo configuration and run through non-login `bash -c` from the repo root with the user's normal process environment. Treat changes to these keys like changes to project-owned shell scripts or Makefile recipes. Jig-owned checks such as `scripts/jig contract-check`, `scripts/jig migration-add NAME`, `scripts/jig schema-check`, and repo policy checks run natively inside the binary.
+Top-level `*_command` values are committed repo configuration and run through non-login `bash -c` from the repo root with the user's normal process environment. Treat changes to these keys like changes to project-owned shell scripts or Makefile recipes. Jig-owned checks such as `scripts/jig check contract`, `scripts/jig migration-add NAME`, `scripts/jig check schema`, and repo policy checks run natively inside the binary.
 
 Contracts that declare `"kind": "native"` tools require the repo's pinned `scripts/jig` runtime version. Do not run an older cached `jig` binary against a repo after updating its `.agent/jig-contract.json`; use the launcher so the `jig_version` pin is enforced.
 
@@ -327,23 +327,23 @@ The compatibility policy for generated CLI commands, MCP tools, and `.agent/jig-
 `scripts/jig` is the stable command surface for generated repos. It exposes configured project checks as:
 
 - `scripts/jig bootstrap`
-- `scripts/jig fmt-check`
-- `scripts/jig clippy`
-- `scripts/jig test`
-- `scripts/jig test-locked`
-- `scripts/jig contract-check`
+- `scripts/jig check fmt`
+- `scripts/jig check clippy`
+- `scripts/jig check test`
+- `scripts/jig check test-locked`
+- `scripts/jig check contract`
 
 When `sqlx_enabled` is `true`, it also exposes:
 
-- `scripts/jig sqlx-check`
+- `scripts/jig check sqlx`
 - `scripts/jig migration-add NAME`
 
 When both `sqlx_enabled` and `schema_dump_enabled` are `true`, it also exposes:
 
-- `scripts/jig schema-check`
+- `scripts/jig check schema`
 - `scripts/jig schema-dump`
 
-`scripts/jig schema-check` reruns `schema_dump_command`, then checks `SCHEMA_DOCS_DIR` for drift. `SCHEMA_DOCS_DIR` defaults to `docs/schema` when the environment variable is unset.
+`scripts/jig check schema` reruns `schema_dump_command`, then checks `SCHEMA_DOCS_DIR` for drift. `SCHEMA_DOCS_DIR` defaults to `docs/schema` when the environment variable is unset.
 
 When `makefile_enabled = true`, the generated `Makefile` exposes these convenience adapter targets:
 
@@ -385,7 +385,7 @@ Generated repos also get these runtime-owned files:
 
 The generated `scripts/jig` launcher enforces the exact `jig_version` pinned in `.jig.toml`. On first use it installs that version into a repo-local cache and then exposes the configured command contract as:
 
-- CLI commands such as `scripts/jig fmt-check`
+- CLI commands such as `scripts/jig check fmt`
 - MCP tools such as `jig.fmt_check`
 
 It also provides runtime-owned append-only memory under `.agent/state/*.jsonl` through the structured work namespace:

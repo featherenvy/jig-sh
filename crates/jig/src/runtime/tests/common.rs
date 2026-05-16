@@ -8,7 +8,7 @@ pub(super) fn write_fixture_repo(root: &Path) {
 _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
-jig_version = "0.1.0"
+jig_version = "0.2.0-beta.1"
 
 [[work.gates]]
 id = "custom"
@@ -27,7 +27,7 @@ tool = "jig.custom_check"
         serde_json::to_string_pretty(&json!({
             "contract_version": 1,
             "tool_namespace": "jig",
-            "jig_version": "0.1.0",
+            "jig_version": "0.2.0-beta.1",
             "required_make_targets": ["custom-check"],
             "optional_make_targets": [],
             "tools": [
@@ -52,7 +52,7 @@ pub(super) fn write_command_fixture_repo(root: &Path) {
 _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
-jig_version = "0.1.0"
+jig_version = "0.2.0-beta.1"
 rust_migration_dir = "migrations"
 rust_sqlx_metadata_dir = ".sqlx"
 schema_dump_command = "printf 'schema dump\n'"
@@ -71,7 +71,7 @@ tool = "jig.custom_check"
         serde_json::to_string_pretty(&json!({
             "contract_version": 2,
             "tool_namespace": "jig",
-            "jig_version": "0.1.0",
+            "jig_version": "0.2.0-beta.1",
             "required_commands": ["rust_test_command"],
             "tools": [
                 {
@@ -95,7 +95,7 @@ pub(super) fn write_mutating_check_fixture_repo(root: &Path) {
 _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
-jig_version = "0.1.0"
+jig_version = "0.2.0-beta.1"
 
 [[work.gates]]
 id = "first"
@@ -119,7 +119,7 @@ tool = "jig.mutating_check"
         serde_json::to_string_pretty(&json!({
             "contract_version": 1,
             "tool_namespace": "jig",
-            "jig_version": "0.1.0",
+            "jig_version": "0.2.0-beta.1",
             "required_make_targets": ["first-check", "mutating-check"],
             "optional_make_targets": [],
             "tools": [
@@ -150,7 +150,7 @@ pub(super) fn write_failing_check_fixture_repo(root: &Path) {
 _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
-jig_version = "0.1.0"
+jig_version = "0.2.0-beta.1"
 
 [[work.gates]]
 id = "custom"
@@ -169,7 +169,7 @@ tool = "jig.custom_check"
         serde_json::to_string_pretty(&json!({
             "contract_version": 1,
             "tool_namespace": "jig",
-            "jig_version": "0.1.0",
+            "jig_version": "0.2.0-beta.1",
             "required_make_targets": ["custom-check"],
             "optional_make_targets": [],
             "tools": [

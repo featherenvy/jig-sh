@@ -17,7 +17,7 @@ fn write_fixture_repo(root: &Path) {
 _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
-jig_version = "0.1.0"
+jig_version = "0.2.0-beta.1"
 "#,
     )
     .unwrap();
@@ -26,7 +26,7 @@ jig_version = "0.1.0"
         serde_json::to_string_pretty(&json!({
             "contract_version": 1,
             "tool_namespace": "jig",
-            "jig_version": "0.1.0",
+            "jig_version": "0.2.0-beta.1",
             "required_make_targets": ["fmt-check"],
             "optional_make_targets": [],
             "tools": [],

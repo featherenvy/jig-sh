@@ -10,7 +10,7 @@
 5. Review the root `AGENTS.md`. Existing repo guidance is preserved; Jig inserts or updates only the `<!-- BEGIN JIG MANAGED BLOCK -->` section.
 6. Add or adapt crate-level `AGENTS.md` files for each backend crate.
 7. Run `scripts/jig agent doctor --summary`. If Jig Codex skills are missing and you want this client to use them, run `scripts/jig agent bootstrap`.
-8. Run the generated local checks and `scripts/jig contract-check`. If web app dependencies or other project setup must happen during bootstrap, set `bootstrap_command` explicitly; the default is `cargo fetch`.
+8. Run the generated local checks and `scripts/jig check contract`. If web app dependencies or other project setup must happen during bootstrap, set `bootstrap_command` explicitly; the default is `cargo fetch`.
 9. Wire any missing project-owned scripts such as `scripts/dump-schema.sh` if schema dumps are enabled.
 10. Commit the generated files and then switch CI to use the new workflows.
 
@@ -40,6 +40,8 @@ jig update --recopy
 
 When updating SQLx repos that have `schema_dump_enabled = false`, remove stale `jig.schema_check` entries from `work.gates`; current templates render schema-check commands, tools, and gates only when schema dumps are enabled.
 
+When moving a command-backed repo from contract v2 to v3, grep CI, scripts, docs, and agent instructions for old root check commands such as `scripts/jig fmt-check`, `scripts/jig contract-check`, and `scripts/jig agent-map check`; update them to `scripts/jig check ...` before relying on the new contract.
+
 ## What To Keep Project-Owned
 
 - application code
@@ -56,22 +58,22 @@ After rendering, validate at minimum:
 
 ```sh
 scripts/jig bootstrap
-scripts/jig contract-check
-scripts/jig fmt-check
-scripts/jig clippy
-scripts/jig test
+scripts/jig check contract
+scripts/jig check fmt
+scripts/jig check clippy
+scripts/jig check test
 ```
 
 If `sqlx_enabled` is `true`, also validate:
 
 ```sh
-scripts/jig sqlx-check
+scripts/jig check sqlx
 ```
 
 If SQLx and schema dumps are enabled:
 
 ```sh
-scripts/jig schema-check
+scripts/jig check schema
 ```
 
 When `makefile_enabled = true`, the generated Makefile adapter also exposes policy-helper targets such as `make check-agent-map`, `make check-agent-guides`, and `make check-rust-file-loc`.

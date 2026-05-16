@@ -4,8 +4,12 @@ use std::process::{Command, Output};
 use anyhow::{Context, Result, anyhow, bail};
 use serde_json::{Value, json};
 
-use crate::cli::CommandKind;
+use crate::cli::{AgentMapCommand, CheckCommand, CommandKind};
 use crate::context::{ManifestTool, RepoContext};
+use crate::policy::{
+    AgentMapInput, MigrationImmutabilityInput, PolicyCheckCommand, PolicyDirectCommand,
+    RustFileLocInput, SqlxTodoInput,
+};
 use crate::state::{ReceiptInput, now_ms, record_receipt};
 use crate::tool_defs::{self, JsonObject, MemoryTool, args, string_arg, tool};
 
@@ -25,54 +29,7 @@ pub(crate) fn dispatch(ctx: &RepoContext, command: CommandKind) -> Result<Value>
                 record_receipt,
             )
         }
-        CommandKind::FmtCheck(opts) => {
-            let record_receipt = opts.record_receipt();
-            execute_manifest_tool(
-                ctx,
-                tool::FMT_CHECK,
-                json!({}),
-                opts.plan_id,
-                record_receipt,
-            )
-        }
-        CommandKind::Clippy(opts) => {
-            let record_receipt = opts.record_receipt();
-            execute_manifest_tool(ctx, tool::CLIPPY, json!({}), opts.plan_id, record_receipt)
-        }
-        CommandKind::Test(opts) => {
-            let record_receipt = opts.record_receipt();
-            execute_manifest_tool(ctx, tool::TEST, json!({}), opts.plan_id, record_receipt)
-        }
-        CommandKind::TestLocked(opts) => {
-            let record_receipt = opts.record_receipt();
-            execute_manifest_tool(
-                ctx,
-                tool::TEST_LOCKED,
-                json!({}),
-                opts.plan_id,
-                record_receipt,
-            )
-        }
-        CommandKind::SqlxCheck(opts) => {
-            let record_receipt = opts.record_receipt();
-            execute_manifest_tool(
-                ctx,
-                tool::SQLX_CHECK,
-                json!({}),
-                opts.plan_id,
-                record_receipt,
-            )
-        }
-        CommandKind::SchemaCheck(opts) => {
-            let record_receipt = opts.record_receipt();
-            execute_manifest_tool(
-                ctx,
-                tool::SCHEMA_CHECK,
-                json!({}),
-                opts.plan_id,
-                record_receipt,
-            )
-        }
+        CommandKind::Check(command) => dispatch_check(ctx, command),
         CommandKind::SchemaDump(opts) => {
             let record_receipt = opts.record_receipt();
             execute_manifest_tool(
@@ -103,23 +60,18 @@ pub(crate) fn dispatch(ctx: &RepoContext, command: CommandKind) -> Result<Value>
                 })
             })
         }
-        CommandKind::ContractCheck(opts) => {
-            let record_receipt = opts.record_receipt();
-            execute_manifest_tool(
-                ctx,
-                tool::CONTRACT_CHECK,
-                json!({}),
-                opts.plan_id,
-                record_receipt,
-            )
-        }
-        other @ (CommandKind::AgentMap(_)
-        | CommandKind::CheckAgentGuides
-        | CommandKind::CheckRustFileLoc(_)
-        | CommandKind::CheckNoModRs
-        | CommandKind::CheckMigrationImmutability(_)
-        | CommandKind::GenerateSqlxUncheckedQueriesTodo(_)
-        | CommandKind::CheckSqlxUncheckedNonTest) => crate::policy::run_direct(ctx, other),
+        CommandKind::AgentMap(AgentMapCommand::Generate(opts)) => crate::policy::run_direct(
+            ctx,
+            PolicyDirectCommand::AgentMapGenerate(AgentMapInput {
+                map_path: opts.map_path,
+            }),
+        ),
+        CommandKind::GenerateSqlxUncheckedQueriesTodo(opts) => crate::policy::run_direct(
+            ctx,
+            PolicyDirectCommand::GenerateSqlxUncheckedQueriesTodo(SqlxTodoInput {
+                output: opts.output,
+            }),
+        ),
         CommandKind::Dev(opts) => crate::dev_proxy::commands::dev(ctx, opts),
         CommandKind::RunTarget(opts) => {
             let record_receipt = opts.tool.record_receipt();
@@ -136,6 +88,94 @@ pub(crate) fn dispatch(ctx: &RepoContext, command: CommandKind) -> Result<Value>
         CommandKind::Work(command) => work::dispatch(ctx, command),
         CommandKind::Init(_) | CommandKind::Adopt(_) | CommandKind::Update(_) => unreachable!(),
         CommandKind::Mcp => unreachable!(),
+    }
+}
+
+fn dispatch_check(ctx: &RepoContext, command: CheckCommand) -> Result<Value> {
+    match command {
+        CheckCommand::Fmt(opts) => {
+            let record_receipt = opts.record_receipt();
+            execute_manifest_tool(
+                ctx,
+                tool::FMT_CHECK,
+                json!({}),
+                opts.plan_id,
+                record_receipt,
+            )
+        }
+        CheckCommand::Clippy(opts) => {
+            let record_receipt = opts.record_receipt();
+            execute_manifest_tool(ctx, tool::CLIPPY, json!({}), opts.plan_id, record_receipt)
+        }
+        CheckCommand::Test(opts) => {
+            let record_receipt = opts.record_receipt();
+            execute_manifest_tool(ctx, tool::TEST, json!({}), opts.plan_id, record_receipt)
+        }
+        CheckCommand::TestLocked(opts) => {
+            let record_receipt = opts.record_receipt();
+            execute_manifest_tool(
+                ctx,
+                tool::TEST_LOCKED,
+                json!({}),
+                opts.plan_id,
+                record_receipt,
+            )
+        }
+        CheckCommand::Sqlx(opts) => {
+            let record_receipt = opts.record_receipt();
+            execute_manifest_tool(
+                ctx,
+                tool::SQLX_CHECK,
+                json!({}),
+                opts.plan_id,
+                record_receipt,
+            )
+        }
+        CheckCommand::Schema(opts) => {
+            let record_receipt = opts.record_receipt();
+            execute_manifest_tool(
+                ctx,
+                tool::SCHEMA_CHECK,
+                json!({}),
+                opts.plan_id,
+                record_receipt,
+            )
+        }
+        CheckCommand::Contract(opts) => {
+            let record_receipt = opts.record_receipt();
+            execute_manifest_tool(
+                ctx,
+                tool::CONTRACT_CHECK,
+                json!({}),
+                opts.plan_id,
+                record_receipt,
+            )
+        }
+        CheckCommand::AgentMap(opts) => crate::policy::run_check(
+            ctx,
+            PolicyCheckCommand::AgentMap(AgentMapInput {
+                map_path: opts.map_path,
+            }),
+        ),
+        CheckCommand::AgentGuides => crate::policy::run_check(ctx, PolicyCheckCommand::AgentGuides),
+        CheckCommand::RustFileLoc(opts) => crate::policy::run_check(
+            ctx,
+            PolicyCheckCommand::RustFileLoc(RustFileLocInput {
+                staged: opts.staged,
+                changed_against: opts.changed_against,
+                all: opts.all,
+            }),
+        ),
+        CheckCommand::NoModRs => crate::policy::run_check(ctx, PolicyCheckCommand::NoModRs),
+        CheckCommand::MigrationImmutability(opts) => crate::policy::run_check(
+            ctx,
+            PolicyCheckCommand::MigrationImmutability(MigrationImmutabilityInput {
+                changed_against: opts.changed_against,
+            }),
+        ),
+        CheckCommand::SqlxUncheckedNonTest => {
+            crate::policy::run_check(ctx, PolicyCheckCommand::SqlxUncheckedNonTest)
+        }
     }
 }
 

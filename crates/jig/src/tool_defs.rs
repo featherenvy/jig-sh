@@ -32,22 +32,27 @@ pub(crate) mod cli_command {
     pub(crate) const ADOPT: &str = "adopt";
     pub(crate) const AGENT: &str = "agent";
     pub(crate) const AGENT_MAP: &str = "agent-map";
-    pub(crate) const AGENT_MAP_CHECK: &str = "check";
     pub(crate) const AGENT_MAP_GENERATE: &str = "generate";
     pub(crate) const AGENT_BOOTSTRAP: &str = "bootstrap";
     pub(crate) const AGENT_DOCTOR: &str = "doctor";
     // Top-level `jig bootstrap` and nested `jig agent bootstrap` intentionally
     // share the same parser label in different Clap command scopes.
     pub(crate) const BOOTSTRAP: &str = "bootstrap";
-    pub(crate) const CLIPPY: &str = "clippy";
-    pub(crate) const CHECK_AGENT_GUIDES: &str = "check-agent-guides";
-    pub(crate) const CHECK_MIGRATION_IMMUTABILITY: &str = "check-migration-immutability";
-    pub(crate) const CHECK_NO_MOD_RS: &str = "check-no-mod-rs";
-    pub(crate) const CHECK_RUST_FILE_LOC: &str = "check-rust-file-loc";
-    pub(crate) const CHECK_SQLX_UNCHECKED_NON_TEST: &str = "check-sqlx-unchecked-non-test";
-    pub(crate) const CONTRACT_CHECK: &str = "contract-check";
+    pub(crate) const CHECK: &str = "check";
+    pub(crate) const CHECK_AGENT_MAP: &str = "agent-map";
+    pub(crate) const CHECK_AGENT_GUIDES: &str = "agent-guides";
+    pub(crate) const CHECK_CLIPPY: &str = "clippy";
+    pub(crate) const CHECK_CONTRACT: &str = "contract";
+    pub(crate) const CHECK_FMT: &str = "fmt";
+    pub(crate) const CHECK_MIGRATION_IMMUTABILITY: &str = "migration-immutability";
+    pub(crate) const CHECK_NO_MOD_RS: &str = "no-mod-rs";
+    pub(crate) const CHECK_RUST_FILE_LOC: &str = "rust-file-loc";
+    pub(crate) const CHECK_SCHEMA: &str = "schema";
+    pub(crate) const CHECK_SQLX: &str = "sqlx";
+    pub(crate) const CHECK_SQLX_UNCHECKED_NON_TEST: &str = "sqlx-unchecked-non-test";
+    pub(crate) const CHECK_TEST: &str = "test";
+    pub(crate) const CHECK_TEST_LOCKED: &str = "test-locked";
     pub(crate) const DEV: &str = "dev";
-    pub(crate) const FMT_CHECK: &str = "fmt-check";
     pub(crate) const GENERATE_SQLX_UNCHECKED_QUERIES_TODO: &str =
         "generate-sqlx-unchecked-queries-todo";
     pub(crate) const INIT: &str = "init";
@@ -70,11 +75,7 @@ pub(crate) mod cli_command {
     pub(crate) const PROXY_START: &str = "start";
     pub(crate) const PROXY_STOP: &str = "stop";
     pub(crate) const RUN_TARGET: &str = "run-target";
-    pub(crate) const SCHEMA_CHECK: &str = "schema-check";
     pub(crate) const SCHEMA_DUMP: &str = "schema-dump";
-    pub(crate) const SQLX_CHECK: &str = "sqlx-check";
-    pub(crate) const TEST: &str = "test";
-    pub(crate) const TEST_LOCKED: &str = "test-locked";
     pub(crate) const UPDATE: &str = "update";
     pub(crate) const WORK: &str = "work";
     pub(crate) const WORK_APPEND: &str = "append";
@@ -86,6 +87,15 @@ pub(crate) mod cli_command {
     pub(crate) const WORK_RECEIPTS: &str = "receipts";
     pub(crate) const WORK_START: &str = "start";
     pub(crate) const WORK_STATUS: &str = "status";
+}
+
+pub(crate) mod legacy_make_target {
+    pub(crate) const SCHEMA_CHECK: &str = "schema-check";
+    pub(crate) const SQLX_CHECK: &str = "sqlx-check";
+    // Historical generated repos used both names for the locked Rust test
+    // capability; keep both as manifest compatibility targets, not CLI labels.
+    pub(crate) const TEST_LOCKED: &str = "test-locked";
+    pub(crate) const TEST_RUST_LOCKED: &str = "test-rust-locked";
 }
 
 pub(crate) mod kind {

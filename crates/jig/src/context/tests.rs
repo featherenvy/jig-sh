@@ -50,15 +50,15 @@ fn supported_command_keys_are_backed_by_repo_config() {
 _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
-jig_version = "0.1.0"
+jig_version = "0.2.0-beta.1"
 bootstrap_command = "cargo fetch"
-contract_check_command = "scripts/jig contract-check"
+contract_check_command = "scripts/jig check contract"
 migration_add_command = "scripts/jig migration-add \"$NAME\""
 rust_clippy_command = "cargo clippy"
 rust_fmt_check_command = "cargo fmt --check"
 rust_test_command = "cargo test"
 rust_test_locked_command = "cargo test --locked"
-schema_check_command = "scripts/jig schema-check"
+schema_check_command = "scripts/jig check schema"
 schema_dump_command = "scripts/dump-schema.sh"
 sqlx_check_command = "cargo sqlx prepare --check"
 "#,
@@ -69,7 +69,7 @@ sqlx_check_command = "cargo sqlx prepare --check"
         serde_json::to_string_pretty(&json!({
             "contract_version": 2,
             "tool_namespace": "jig",
-            "jig_version": "0.1.0",
+            "jig_version": "0.2.0-beta.1",
             "required_commands": SUPPORTED_COMMAND_KEYS,
             "tools": [],
         }))
@@ -84,6 +84,48 @@ sqlx_check_command = "cargo sqlx prepare --check"
 }
 
 #[test]
+fn v3_contracts_use_required_commands() {
+    let temp = tempdir().unwrap();
+    fs::create_dir_all(temp.path().join(".agent")).unwrap();
+    fs::write(
+        temp.path().join(".jig.toml"),
+        r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.2.0-beta.1"
+bootstrap_command = "cargo fetch"
+rust_fmt_check_command = "cargo fmt --check"
+"#,
+    )
+    .unwrap();
+    fs::write(
+        temp.path().join(".agent/jig-contract.json"),
+        serde_json::to_string_pretty(&json!({
+            "contract_version": 3,
+            "tool_namespace": "jig",
+            "jig_version": "0.2.0-beta.1",
+            "required_commands": ["bootstrap_command", "rust_fmt_check_command"],
+            "tools": [],
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let ctx = RepoContext::load_from(temp.path()).unwrap();
+
+    assert_eq!(ctx.contract_version(), 3);
+    assert_eq!(
+        ctx.required_commands(),
+        ["bootstrap_command", "rust_fmt_check_command"]
+    );
+    assert_eq!(
+        ctx.command_for_key("bootstrap_command").unwrap(),
+        "cargo fetch"
+    );
+}
+
+#[test]
 fn missing_legacy_contract_check_command_stays_empty() {
     let temp = tempdir().unwrap();
     fs::create_dir_all(temp.path().join(".agent")).unwrap();
@@ -93,7 +135,7 @@ fn missing_legacy_contract_check_command_stays_empty() {
 _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
-jig_version = "0.1.0"
+jig_version = "0.2.0-beta.1"
 rust_fmt_check_command = "cargo fmt --check"
 rust_clippy_command = "cargo clippy"
 rust_test_command = "cargo test"
@@ -105,7 +147,7 @@ rust_test_command = "cargo test"
         serde_json::to_string_pretty(&json!({
             "contract_version": 2,
             "tool_namespace": "jig",
-            "jig_version": "0.1.0",
+            "jig_version": "0.2.0-beta.1",
             "required_commands": ["contract_check_command"],
             "tools": [],
         }))
@@ -133,7 +175,7 @@ fn legacy_work_checks_become_required_check_gates() {
 _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
-jig_version = "0.1.0"
+jig_version = "0.2.0-beta.1"
 
 [work]
 checks = ["jig.contract_check"]
@@ -145,7 +187,7 @@ checks = ["jig.contract_check"]
         serde_json::to_string_pretty(&json!({
             "contract_version": 1,
             "tool_namespace": "jig",
-            "jig_version": "0.1.0",
+            "jig_version": "0.2.0-beta.1",
             "required_make_targets": ["contract-check"],
             "optional_make_targets": [],
             "tools": [
@@ -180,7 +222,7 @@ fn missing_agent_tooling_uses_jig_skills_defaults() {
 _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
-jig_version = "0.1.0"
+jig_version = "0.2.0-beta.1"
 "#,
     )
     .unwrap();
@@ -189,7 +231,7 @@ jig_version = "0.1.0"
         serde_json::to_string_pretty(&json!({
             "contract_version": 1,
             "tool_namespace": "jig",
-            "jig_version": "0.1.0",
+            "jig_version": "0.2.0-beta.1",
             "required_make_targets": ["contract-check"],
             "optional_make_targets": [],
             "tools": [],
@@ -224,7 +266,7 @@ fn explicit_agent_tooling_config_is_loaded() {
 _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
-jig_version = "0.1.0"
+jig_version = "0.2.0-beta.1"
 
 [[agent_tooling.codex.marketplaces]]
 id = "local-skills"
@@ -238,7 +280,7 @@ plugins = ["local-rust@local-skills"]
         serde_json::to_string_pretty(&json!({
             "contract_version": 1,
             "tool_namespace": "jig",
-            "jig_version": "0.1.0",
+            "jig_version": "0.2.0-beta.1",
             "required_make_targets": ["contract-check"],
             "optional_make_targets": [],
             "tools": [],
@@ -265,7 +307,7 @@ fn dev_config_defaults_and_apps_are_loaded() {
 _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
-jig_version = "0.1.0"
+jig_version = "0.2.0-beta.1"
 dev_command = "cargo run"
 web_package_manager = "pnpm"
 
@@ -293,7 +335,7 @@ argv = ["pnpm", "run", "dev"]
         serde_json::to_string_pretty(&json!({
             "contract_version": 1,
             "tool_namespace": "jig",
-            "jig_version": "0.1.0",
+            "jig_version": "0.2.0-beta.1",
             "required_make_targets": ["contract-check"],
             "optional_make_targets": [],
             "tools": [],
@@ -323,7 +365,7 @@ fn duplicate_dev_app_names_are_rejected_at_config_load() {
 _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
-jig_version = "0.1.0"
+jig_version = "0.2.0-beta.1"
 
 [[dev.apps]]
 name = "web"
@@ -340,7 +382,7 @@ command = "bun run dev"
         serde_json::to_string_pretty(&json!({
             "contract_version": 1,
             "tool_namespace": "jig",
-            "jig_version": "0.1.0",
+            "jig_version": "0.2.0-beta.1",
             "required_make_targets": ["contract-check"],
             "optional_make_targets": [],
             "tools": [],
@@ -364,7 +406,7 @@ fn unsupported_web_package_manager_is_rejected() {
 _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
-jig_version = "0.1.0"
+jig_version = "0.2.0-beta.1"
 web_package_manager = "/tmp/run-anything"
 "#,
     )
@@ -374,7 +416,7 @@ web_package_manager = "/tmp/run-anything"
         serde_json::to_string_pretty(&json!({
             "contract_version": 1,
             "tool_namespace": "jig",
-            "jig_version": "0.1.0",
+            "jig_version": "0.2.0-beta.1",
             "required_make_targets": ["contract-check"],
             "optional_make_targets": [],
             "tools": [],
@@ -415,7 +457,7 @@ fn unknown_dev_config_fields_are_rejected() {
 _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
-jig_version = "0.1.0"
+jig_version = "0.2.0-beta.1"
 
 [dev]
 proxy_port = 1555
@@ -428,7 +470,7 @@ proxy_por = 1556
         serde_json::to_string_pretty(&json!({
             "contract_version": 1,
             "tool_namespace": "jig",
-            "jig_version": "0.1.0",
+            "jig_version": "0.2.0-beta.1",
             "required_make_targets": ["contract-check"],
             "optional_make_targets": [],
             "tools": [],
@@ -452,7 +494,7 @@ fn unknown_dev_app_config_fields_are_rejected() {
 _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
-jig_version = "0.1.0"
+jig_version = "0.2.0-beta.1"
 
 [[dev.apps]]
 name = "web"
@@ -466,7 +508,7 @@ commmand = "typo"
         serde_json::to_string_pretty(&json!({
             "contract_version": 1,
             "tool_namespace": "jig",
-            "jig_version": "0.1.0",
+            "jig_version": "0.2.0-beta.1",
             "required_make_targets": ["contract-check"],
             "optional_make_targets": [],
             "tools": [],
@@ -490,7 +532,7 @@ fn unknown_top_level_config_fields_are_rejected() {
 _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
-jig_version = "0.1.0"
+jig_version = "0.2.0-beta.1"
 proxy_porrt = 1355
 "#,
     )
@@ -500,7 +542,7 @@ proxy_porrt = 1355
         serde_json::to_string_pretty(&json!({
             "contract_version": 1,
             "tool_namespace": "jig",
-            "jig_version": "0.1.0",
+            "jig_version": "0.2.0-beta.1",
             "required_make_targets": ["contract-check"],
             "optional_make_targets": [],
             "tools": [],
@@ -524,7 +566,7 @@ fn legacy_work_checks_are_merged_with_explicit_gates() {
 _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
-jig_version = "0.1.0"
+jig_version = "0.2.0-beta.1"
 
 [work]
 checks = ["jig.contract_check", "jig.test"]
@@ -542,7 +584,7 @@ required = false
         serde_json::to_string_pretty(&json!({
             "contract_version": 1,
             "tool_namespace": "jig",
-            "jig_version": "0.1.0",
+            "jig_version": "0.2.0-beta.1",
             "required_make_targets": ["contract-check", "test"],
             "optional_make_targets": [],
             "tools": [
@@ -585,7 +627,7 @@ fn unsupported_work_refinements_are_rejected() {
 _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
-jig_version = "0.1.0"
+jig_version = "0.2.0-beta.1"
 
 [[work.refinements]]
 id = "rust-simplify"
@@ -598,7 +640,7 @@ skill = "jig-rust:rust-simplify"
         serde_json::to_string_pretty(&json!({
             "contract_version": 1,
             "tool_namespace": "jig",
-            "jig_version": "0.1.0",
+            "jig_version": "0.2.0-beta.1",
             "required_make_targets": ["contract-check"],
             "optional_make_targets": [],
             "tools": [],

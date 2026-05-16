@@ -83,7 +83,7 @@ No prebuilt jig $JIG_VERSION binary is available for MCP startup.
 Refusing to run cargo install during MCP initialization because it can block the client startup path.
 
 Run a normal Jig command once to populate the cache:
-  scripts/jig contract-check
+  scripts/jig check contract
 
 For the jig-sh source checkout, you can also build directly:
   cargo build -p jig-sh --bin jig

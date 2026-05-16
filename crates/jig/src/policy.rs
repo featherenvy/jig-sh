@@ -7,10 +7,9 @@ use std::process::{Command, Stdio};
 use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
 
-use crate::cli::{CheckMigrationImmutabilityOpts, CheckRustFileLocOpts};
 use crate::context::RepoContext;
 use crate::process::require_success;
-use crate::tool_defs::{cli_command, tool};
+use crate::tool_defs::{cli_command, legacy_make_target, tool};
 
 const EMPTY_TREE_HASH: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 // New or growing files above this fail unless an explicit exception is present.
@@ -23,8 +22,6 @@ const SOFT_LIMIT_START: usize = 500;
 const SOFT_LIMIT_END: usize = 600;
 // Files above this emit informational guidance for agent-review ergonomics.
 const TARGET_HIGH: usize = 400;
-const LEGACY_TEST_RUST_LOCKED_TARGET: &str = "test-rust-locked";
-
 mod agent_map;
 mod sqlx;
 
@@ -35,41 +32,55 @@ pub(crate) struct NativeToolOutput {
     pub(crate) stderr: String,
 }
 
-pub(crate) fn run_direct(ctx: &RepoContext, command: crate::cli::CommandKind) -> Result<Value> {
+pub(crate) struct AgentMapInput {
+    pub(crate) map_path: PathBuf,
+}
+
+pub(crate) struct RustFileLocInput {
+    pub(crate) staged: bool,
+    pub(crate) changed_against: Option<String>,
+    pub(crate) all: bool,
+}
+
+pub(crate) struct MigrationImmutabilityInput {
+    pub(crate) changed_against: String,
+}
+
+pub(crate) struct SqlxTodoInput {
+    pub(crate) output: Option<PathBuf>,
+}
+
+pub(crate) enum PolicyDirectCommand {
+    AgentMapGenerate(AgentMapInput),
+    GenerateSqlxUncheckedQueriesTodo(SqlxTodoInput),
+}
+
+pub(crate) fn run_direct(ctx: &RepoContext, command: PolicyDirectCommand) -> Result<Value> {
     match command {
-        crate::cli::CommandKind::AgentMap(command) => match command {
-            crate::cli::AgentMapCommand::Generate(opts) => agent_map::generate(ctx, &opts),
-            crate::cli::AgentMapCommand::Check(opts) => agent_map::check(ctx, &opts),
-        },
-        crate::cli::CommandKind::CheckAgentGuides => agent_map::check_guides(ctx),
-        crate::cli::CommandKind::CheckRustFileLoc(opts) => check_rust_file_loc(ctx, &opts),
-        crate::cli::CommandKind::CheckNoModRs => check_no_mod_rs(ctx),
-        crate::cli::CommandKind::CheckMigrationImmutability(opts) => {
-            check_migration_immutability(ctx, &opts)
-        }
-        crate::cli::CommandKind::GenerateSqlxUncheckedQueriesTodo(opts) => {
+        PolicyDirectCommand::AgentMapGenerate(opts) => agent_map::generate(ctx, &opts),
+        PolicyDirectCommand::GenerateSqlxUncheckedQueriesTodo(opts) => {
             sqlx::generate_todo(ctx, &opts)
         }
-        crate::cli::CommandKind::CheckSqlxUncheckedNonTest => sqlx::check_non_test(ctx),
-        crate::cli::CommandKind::Bootstrap(_)
-        | crate::cli::CommandKind::FmtCheck(_)
-        | crate::cli::CommandKind::Clippy(_)
-        | crate::cli::CommandKind::Test(_)
-        | crate::cli::CommandKind::TestLocked(_)
-        | crate::cli::CommandKind::SqlxCheck(_)
-        | crate::cli::CommandKind::SchemaCheck(_)
-        | crate::cli::CommandKind::SchemaDump(_)
-        | crate::cli::CommandKind::MigrationAdd(_)
-        | crate::cli::CommandKind::ContractCheck(_)
-        | crate::cli::CommandKind::Dev(_)
-        | crate::cli::CommandKind::RunTarget(_)
-        | crate::cli::CommandKind::Proxy(_)
-        | crate::cli::CommandKind::Agent(_)
-        | crate::cli::CommandKind::Work(_)
-        | crate::cli::CommandKind::Init(_)
-        | crate::cli::CommandKind::Adopt(_)
-        | crate::cli::CommandKind::Update(_)
-        | crate::cli::CommandKind::Mcp => unreachable!("non-policy command routed to policy"),
+    }
+}
+
+pub(crate) enum PolicyCheckCommand {
+    AgentMap(AgentMapInput),
+    AgentGuides,
+    RustFileLoc(RustFileLocInput),
+    NoModRs,
+    MigrationImmutability(MigrationImmutabilityInput),
+    SqlxUncheckedNonTest,
+}
+
+pub(crate) fn run_check(ctx: &RepoContext, command: PolicyCheckCommand) -> Result<Value> {
+    match command {
+        PolicyCheckCommand::AgentMap(opts) => agent_map::check(ctx, &opts),
+        PolicyCheckCommand::AgentGuides => agent_map::check_guides(ctx),
+        PolicyCheckCommand::RustFileLoc(opts) => check_rust_file_loc(ctx, &opts),
+        PolicyCheckCommand::NoModRs => check_no_mod_rs(ctx),
+        PolicyCheckCommand::MigrationImmutability(opts) => check_migration_immutability(ctx, &opts),
+        PolicyCheckCommand::SqlxUncheckedNonTest => sqlx::check_non_test(ctx),
     }
 }
 
@@ -116,7 +127,7 @@ pub(crate) fn contract_check(ctx: &RepoContext) -> Result<NativeToolOutput> {
                 }
             }
         }
-        2 => {
+        2 | 3 => {
             for command_key in ctx.required_commands() {
                 if !crate::context::SUPPORTED_COMMAND_KEYS.contains(&command_key.as_str()) {
                     errors.push(format!(
@@ -304,22 +315,22 @@ fn required_contract_tools(ctx: &RepoContext) -> Vec<&'static str> {
         tool::TEST,
         tool::CONTRACT_CHECK,
     ];
-    // Contract v2 standardizes the command-backed bootstrap surface for agent
-    // setup; v1 repos only require it when their legacy manifest declares it.
-    if ctx.contract_version() == 2
+    // Command-backed contracts use the same manifest schema from v2 onward;
+    // v3 moved CLI checks under `jig check` without changing tool requirements.
+    if ctx.contract_version() >= 2
         || has_required_key(ctx, cli_command::BOOTSTRAP, "bootstrap_command")
     {
         required.push(tool::BOOTSTRAP);
     }
-    if has_required_key(
-        ctx,
-        LEGACY_TEST_RUST_LOCKED_TARGET,
-        "rust_test_locked_command",
-    ) || has_required_key(ctx, cli_command::TEST_LOCKED, "rust_test_locked_command")
+    if has_required_command(ctx, "rust_test_locked_command")
+        || has_required_make_target(ctx, legacy_make_target::TEST_RUST_LOCKED)
+        || has_required_make_target(ctx, legacy_make_target::TEST_LOCKED)
     {
         required.push(tool::TEST_LOCKED);
     }
-    if ctx.sqlx_enabled() || has_required_key(ctx, cli_command::SQLX_CHECK, "sqlx_check_command") {
+    if ctx.sqlx_enabled()
+        || has_required_key(ctx, legacy_make_target::SQLX_CHECK, "sqlx_check_command")
+    {
         required.push(tool::SQLX_CHECK);
     }
     if ctx.sqlx_enabled()
@@ -328,7 +339,11 @@ fn required_contract_tools(ctx: &RepoContext) -> Vec<&'static str> {
         required.push(tool::MIGRATION_ADD);
     }
     if (ctx.sqlx_enabled() && ctx.schema_dump_enabled())
-        || has_required_key(ctx, cli_command::SCHEMA_CHECK, "schema_check_command")
+        || has_required_key(
+            ctx,
+            legacy_make_target::SCHEMA_CHECK,
+            "schema_check_command",
+        )
     {
         required.push(tool::SCHEMA_CHECK);
     }
@@ -342,16 +357,22 @@ fn required_contract_tools(ctx: &RepoContext) -> Vec<&'static str> {
     required
 }
 
-fn has_required_key(ctx: &RepoContext, make_target: &str, command_key: &str) -> bool {
-    // Contract v1 declares make targets; contract v2 declares command keys.
+fn has_required_key(ctx: &RepoContext, legacy_make_target_key: &str, command_key: &str) -> bool {
+    // Contract v1 declares make targets; command-backed contracts declare command keys.
     // Consult both so one helper can support migrated and legacy manifests.
+    has_required_make_target(ctx, legacy_make_target_key) || has_required_command(ctx, command_key)
+}
+
+fn has_required_make_target(ctx: &RepoContext, legacy_make_target_key: &str) -> bool {
     ctx.required_make_targets()
         .iter()
-        .any(|target| target == make_target)
-        || ctx
-            .required_commands()
-            .iter()
-            .any(|command| command == command_key)
+        .any(|target| target == legacy_make_target_key)
+}
+
+fn has_required_command(ctx: &RepoContext, command_key: &str) -> bool {
+    ctx.required_commands()
+        .iter()
+        .any(|command| command == command_key)
 }
 
 fn makefile_targets(makefile: &str) -> HashSet<&str> {
@@ -410,7 +431,7 @@ fn check_no_mod_rs(ctx: &RepoContext) -> Result<Value> {
     Ok(json!({ "ok": violations.is_empty(), "violations": violations }))
 }
 
-fn check_rust_file_loc(ctx: &RepoContext, opts: &CheckRustFileLocOpts) -> Result<Value> {
+fn check_rust_file_loc(ctx: &RepoContext, opts: &RustFileLocInput) -> Result<Value> {
     let mode_count = [opts.staged, opts.changed_against.is_some(), opts.all]
         .into_iter()
         .filter(|value| *value)
@@ -504,7 +525,7 @@ fn check_rust_file_loc(ctx: &RepoContext, opts: &CheckRustFileLocOpts) -> Result
 
 fn check_migration_immutability(
     ctx: &RepoContext,
-    opts: &CheckMigrationImmutabilityOpts,
+    opts: &MigrationImmutabilityInput,
 ) -> Result<Value> {
     let dir = ctx.rust_migration_dir();
     if dir.trim().is_empty() {
@@ -558,7 +579,7 @@ fn migration_immutability_violations(bytes: &[u8]) -> Vec<String> {
     violations
 }
 
-fn rust_candidate_files(ctx: &RepoContext, opts: &CheckRustFileLocOpts) -> Result<Vec<String>> {
+fn rust_candidate_files(ctx: &RepoContext, opts: &RustFileLocInput) -> Result<Vec<String>> {
     let mut args = vec!["diff", "--name-only", "--diff-filter=AMRT", "-z"];
     let changed_ref;
     if opts.staged {
@@ -589,10 +610,7 @@ fn rust_candidate_files(ctx: &RepoContext, opts: &CheckRustFileLocOpts) -> Resul
         .collect())
 }
 
-fn rust_renames(
-    ctx: &RepoContext,
-    opts: &CheckRustFileLocOpts,
-) -> Result<BTreeMap<String, String>> {
+fn rust_renames(ctx: &RepoContext, opts: &RustFileLocInput) -> Result<BTreeMap<String, String>> {
     let mut args = vec!["diff", "--name-status", "--diff-filter=R", "-z"];
     if opts.staged {
         args.push("--cached");

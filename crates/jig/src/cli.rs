@@ -83,6 +83,14 @@ Close a plan after required gates pass; use --outcome for a machine-readable res
 Examples:
   jig work finish --plan-id plan_abc123 --resolution \"Auth flow complete\" --outcome success";
 
+const CHECK_AFTER_HELP: &str = "\
+Run configured project checks or Jig-owned repository policy checks.
+
+Examples:
+  jig check fmt
+  jig check contract
+  jig check rust-file-loc --changed-against origin/main";
+
 #[derive(Debug, Subcommand)]
 pub(crate) enum CommandKind {
     /// Create a new repository and render Jig harness files into it.
@@ -97,54 +105,25 @@ pub(crate) enum CommandKind {
     /// Run the configured project bootstrap command.
     #[command(name = tool_defs::cli_command::BOOTSTRAP)]
     Bootstrap(ToolOpts),
-    /// Run the configured Rust format check.
-    #[command(name = tool_defs::cli_command::FMT_CHECK)]
-    FmtCheck(ToolOpts),
-    /// Run the configured Rust clippy check.
-    #[command(name = tool_defs::cli_command::CLIPPY)]
-    Clippy(ToolOpts),
-    /// Run the configured default test command.
-    #[command(name = tool_defs::cli_command::TEST)]
-    Test(ToolOpts),
-    /// Run the configured locked test command.
-    #[command(name = tool_defs::cli_command::TEST_LOCKED)]
-    TestLocked(ToolOpts),
-    /// Verify committed SQLx metadata when SQLx is enabled.
-    #[command(name = tool_defs::cli_command::SQLX_CHECK)]
-    SqlxCheck(ToolOpts),
-    /// Verify generated schema documentation when schema dumps are enabled.
-    #[command(name = tool_defs::cli_command::SCHEMA_CHECK)]
-    SchemaCheck(ToolOpts),
+    /// Run configured project checks and Jig-owned repository policy checks.
+    #[command(
+        name = tool_defs::cli_command::CHECK,
+        subcommand,
+        after_help = CHECK_AFTER_HELP
+    )]
+    Check(CheckCommand),
     /// Regenerate schema documentation when schema dumps are enabled.
     #[command(name = tool_defs::cli_command::SCHEMA_DUMP)]
     SchemaDump(ToolOpts),
     /// Add a forward-only SQLx migration file when SQLx is enabled.
     #[command(name = tool_defs::cli_command::MIGRATION_ADD)]
     MigrationAdd(MigrationAddOpts),
-    /// Validate the generated Jig command contract and runtime wiring.
-    #[command(name = tool_defs::cli_command::CONTRACT_CHECK)]
-    ContractCheck(ToolOpts),
-    /// Generate or check the repository agent guide map.
+    /// Generate the repository agent guide map.
     #[command(name = tool_defs::cli_command::AGENT_MAP, subcommand)]
     AgentMap(AgentMapCommand),
-    /// Verify crate-level AGENTS.md guide coverage and required sections.
-    #[command(name = tool_defs::cli_command::CHECK_AGENT_GUIDES)]
-    CheckAgentGuides,
-    /// Enforce Rust file-size policy for changed or tracked files.
-    #[command(name = tool_defs::cli_command::CHECK_RUST_FILE_LOC)]
-    CheckRustFileLoc(CheckRustFileLocOpts),
-    /// Fail if disallowed mod.rs files exist under configured crate roots.
-    #[command(name = tool_defs::cli_command::CHECK_NO_MOD_RS)]
-    CheckNoModRs,
-    /// Verify existing migrations were not mutated.
-    #[command(name = tool_defs::cli_command::CHECK_MIGRATION_IMMUTABILITY)]
-    CheckMigrationImmutability(CheckMigrationImmutabilityOpts),
     /// Generate a TODO report for unchecked SQLx queries.
     #[command(name = tool_defs::cli_command::GENERATE_SQLX_UNCHECKED_QUERIES_TODO)]
     GenerateSqlxUncheckedQueriesTodo(GenerateSqlxUncheckedQueriesTodoOpts),
-    /// Verify non-test SQLx queries use compile-time checked macros.
-    #[command(name = tool_defs::cli_command::CHECK_SQLX_UNCHECKED_NON_TEST)]
-    CheckSqlxUncheckedNonTest,
     /// Run configured development apps through the local dev proxy.
     #[command(name = tool_defs::cli_command::DEV)]
     Dev(DevOpts),
@@ -174,9 +153,49 @@ pub(crate) enum AgentMapCommand {
     /// Rewrite agent-map.md from tracked AGENTS.md files.
     #[command(name = tool_defs::cli_command::AGENT_MAP_GENERATE)]
     Generate(AgentMapOpts),
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum CheckCommand {
+    /// Run the configured Rust format check.
+    #[command(name = tool_defs::cli_command::CHECK_FMT)]
+    Fmt(ToolOpts),
+    /// Run the configured Rust clippy check.
+    #[command(name = tool_defs::cli_command::CHECK_CLIPPY)]
+    Clippy(ToolOpts),
+    /// Run the configured default test command.
+    #[command(name = tool_defs::cli_command::CHECK_TEST)]
+    Test(ToolOpts),
+    /// Run the configured locked test command.
+    #[command(name = tool_defs::cli_command::CHECK_TEST_LOCKED)]
+    TestLocked(ToolOpts),
+    /// Verify committed SQLx metadata when SQLx is enabled.
+    #[command(name = tool_defs::cli_command::CHECK_SQLX)]
+    Sqlx(ToolOpts),
+    /// Verify generated schema documentation when schema dumps are enabled.
+    #[command(name = tool_defs::cli_command::CHECK_SCHEMA)]
+    Schema(ToolOpts),
+    /// Validate the generated Jig command contract and runtime wiring.
+    #[command(name = tool_defs::cli_command::CHECK_CONTRACT)]
+    Contract(ToolOpts),
     /// Check agent-map.md coverage and links.
-    #[command(name = tool_defs::cli_command::AGENT_MAP_CHECK)]
-    Check(AgentMapOpts),
+    #[command(name = tool_defs::cli_command::CHECK_AGENT_MAP)]
+    AgentMap(AgentMapOpts),
+    /// Verify crate-level AGENTS.md guide coverage and required sections.
+    #[command(name = tool_defs::cli_command::CHECK_AGENT_GUIDES)]
+    AgentGuides,
+    /// Enforce Rust file-size policy for changed or tracked files.
+    #[command(name = tool_defs::cli_command::CHECK_RUST_FILE_LOC)]
+    RustFileLoc(CheckRustFileLocOpts),
+    /// Fail if disallowed mod.rs files exist under configured crate roots.
+    #[command(name = tool_defs::cli_command::CHECK_NO_MOD_RS)]
+    NoModRs,
+    /// Verify existing migrations were not mutated.
+    #[command(name = tool_defs::cli_command::CHECK_MIGRATION_IMMUTABILITY)]
+    MigrationImmutability(CheckMigrationImmutabilityOpts),
+    /// Verify non-test SQLx queries use compile-time checked macros.
+    #[command(name = tool_defs::cli_command::CHECK_SQLX_UNCHECKED_NON_TEST)]
+    SqlxUncheckedNonTest,
 }
 
 #[derive(Args, Debug)]
@@ -710,7 +729,10 @@ pub(crate) struct WorkDecisionAddOpts {
 mod run;
 
 #[cfg(test)]
-use run::{command_reports_failure_with_ok, require_json_ok, should_add_template_hint};
+use run::{
+    command_reports_failure_with_ok, moved_check_command_hint, require_json_ok,
+    should_add_template_hint,
+};
 pub(crate) use run::{is_structured_json_failure, run};
 
 fn parse_ip_literal_string(value: &str) -> std::result::Result<String, String> {

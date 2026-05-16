@@ -18,7 +18,7 @@ fn write_policy_repo(root: &Path) {
 _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
-jig_version = "0.1.0"
+jig_version = "0.2.0-beta.1"
 rust_crate_roots = ["crates"]
 rust_test_command = "cargo test"
 "#,
@@ -29,7 +29,7 @@ rust_test_command = "cargo test"
         serde_json::to_string_pretty(&json!({
             "contract_version": 2,
             "tool_namespace": "jig",
-            "jig_version": "0.1.0",
+            "jig_version": "0.2.0-beta.1",
             "required_commands": ["rust_test_command"],
             "tools": [],
         }))
@@ -46,7 +46,7 @@ fn write_sqlx_policy_repo(root: &Path) {
 _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
-jig_version = "0.1.0"
+jig_version = "0.2.0-beta.1"
 sqlx_enabled = true
 rust_migration_dir = "migrations"
 rust_crate_roots = ["crates"]
@@ -65,7 +65,7 @@ fn write_schema_policy_repo(root: &Path, schema_dump_command: &str) {
 _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
-jig_version = "0.1.0"
+jig_version = "0.2.0-beta.1"
 sqlx_enabled = true
 schema_dump_enabled = true
 rust_migration_dir = "migrations"
@@ -109,7 +109,7 @@ fn contract_check_does_not_require_v2_only_tools_for_v1_contracts() {
 _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
-jig_version = "0.1.0"
+jig_version = "0.2.0-beta.1"
 makefile_enabled = true
 "#,
     )
@@ -124,7 +124,7 @@ makefile_enabled = true
         serde_json::to_string_pretty(&json!({
             "contract_version": 1,
             "tool_namespace": "jig",
-            "jig_version": "0.1.0",
+            "jig_version": "0.2.0-beta.1",
             "required_make_targets": ["fmt-check", "clippy", "test", "contract-check"],
             "tools": [
                 {
@@ -292,7 +292,7 @@ fn check_rust_file_loc_reports_oversized_tracked_files() {
     let ctx = RepoContext::load_from(temp.path()).unwrap();
     let output = check_rust_file_loc(
         &ctx,
-        &CheckRustFileLocOpts {
+        &RustFileLocInput {
             staged: false,
             changed_against: None,
             all: true,
@@ -325,7 +325,7 @@ fn check_rust_file_loc_reports_oversized_staged_files() {
     let ctx = RepoContext::load_from(temp.path()).unwrap();
     let output = check_rust_file_loc(
         &ctx,
-        &CheckRustFileLocOpts {
+        &RustFileLocInput {
             staged: true,
             changed_against: None,
             all: false,
@@ -363,7 +363,7 @@ fn check_rust_file_loc_reports_oversized_changed_against_files() {
     let ctx = RepoContext::load_from(temp.path()).unwrap();
     let output = check_rust_file_loc(
         &ctx,
-        &CheckRustFileLocOpts {
+        &RustFileLocInput {
             staged: false,
             changed_against: Some(base.trim().to_string()),
             all: false,

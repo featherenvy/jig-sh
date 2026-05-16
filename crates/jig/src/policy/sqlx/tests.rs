@@ -6,8 +6,8 @@ use serde_json::json;
 use tempfile::tempdir;
 
 use super::{generate_todo, scan_sqlx_calls, sqlx_report};
-use crate::cli::GenerateSqlxUncheckedQueriesTodoOpts;
 use crate::context::RepoContext;
+use crate::policy::SqlxTodoInput;
 
 #[test]
 fn scan_sqlx_calls_marks_inline_cfg_test_module_calls_as_test() {
@@ -391,7 +391,7 @@ fn sqlx_report_includes_untracked_rust_files() {
 _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
-jig_version = "0.1.0"
+jig_version = "0.2.0-beta.1"
 rust_crate_roots = ["crates"]
 rust_test_command = "cargo test"
 "#,
@@ -402,7 +402,7 @@ rust_test_command = "cargo test"
         serde_json::to_string_pretty(&json!({
             "contract_version": 2,
             "tool_namespace": "jig",
-            "jig_version": "0.1.0",
+            "jig_version": "0.2.0-beta.1",
             "required_commands": ["rust_test_command"],
             "tools": [],
         }))
@@ -441,7 +441,7 @@ fn generate_todo_rejects_output_outside_repo() {
 _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
-jig_version = "0.1.0"
+jig_version = "0.2.0-beta.1"
 rust_test_command = "cargo test"
 "#,
     )
@@ -451,7 +451,7 @@ rust_test_command = "cargo test"
         serde_json::to_string_pretty(&json!({
             "contract_version": 2,
             "tool_namespace": "jig",
-            "jig_version": "0.1.0",
+            "jig_version": "0.2.0-beta.1",
             "required_commands": ["rust_test_command"],
             "tools": [],
         }))
@@ -462,7 +462,7 @@ rust_test_command = "cargo test"
     let ctx = RepoContext::load_from(temp.path()).unwrap();
     let error = generate_todo(
         &ctx,
-        &GenerateSqlxUncheckedQueriesTodoOpts {
+        &SqlxTodoInput {
             output: Some(PathBuf::from("../todo.md")),
         },
     )
@@ -482,7 +482,7 @@ fn generate_todo_rejects_absolute_output_paths() {
 _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
-jig_version = "0.1.0"
+jig_version = "0.2.0-beta.1"
 rust_test_command = "cargo test"
 "#,
     )
@@ -492,7 +492,7 @@ rust_test_command = "cargo test"
         serde_json::to_string_pretty(&json!({
             "contract_version": 2,
             "tool_namespace": "jig",
-            "jig_version": "0.1.0",
+            "jig_version": "0.2.0-beta.1",
             "required_commands": ["rust_test_command"],
             "tools": [],
         }))
@@ -503,7 +503,7 @@ rust_test_command = "cargo test"
     let ctx = RepoContext::load_from(temp.path()).unwrap();
     let error = generate_todo(
         &ctx,
-        &GenerateSqlxUncheckedQueriesTodoOpts {
+        &SqlxTodoInput {
             output: Some(PathBuf::from("/tmp/todo.md")),
         },
     )

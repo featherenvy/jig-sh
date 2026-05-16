@@ -76,12 +76,14 @@ pub(super) fn command_reports_failure_with_ok(command: &CommandKind) -> bool {
         CommandKind::Dev(_)
             | CommandKind::Proxy(_)
             | CommandKind::Agent(AgentCommand::Doctor(_))
-            | CommandKind::AgentMap(AgentMapCommand::Check(_))
-            | CommandKind::CheckAgentGuides
-            | CommandKind::CheckRustFileLoc(_)
-            | CommandKind::CheckNoModRs
-            | CommandKind::CheckMigrationImmutability(_)
-            | CommandKind::CheckSqlxUncheckedNonTest
+            | CommandKind::Check(
+                CheckCommand::AgentMap(_)
+                    | CheckCommand::AgentGuides
+                    | CheckCommand::RustFileLoc(_)
+                    | CheckCommand::NoModRs
+                    | CheckCommand::MigrationImmutability(_)
+                    | CheckCommand::SqlxUncheckedNonTest,
+            )
     )
 }
 
@@ -142,7 +144,66 @@ fn exit_with_cli_error(error: clap::Error) -> ! {
         process::exit(error.exit_code());
     }
 
+    if let Some(hint) = moved_check_command_hint(&error) {
+        let message = error.to_string();
+        let _ = writeln!(std::io::stderr(), "{message}\n{hint}");
+        process::exit(error.exit_code());
+    }
+
     error.exit();
+}
+
+pub(super) fn moved_check_command_hint(error: &clap::Error) -> Option<String> {
+    if error.kind() != ErrorKind::InvalidSubcommand {
+        return None;
+    }
+
+    let message = error.to_string();
+    let moved = [
+        ("fmt-check", "jig check fmt"),
+        ("clippy", "jig check clippy"),
+        ("test", "jig check test"),
+        ("test-locked", "jig check test-locked"),
+        ("sqlx-check", "jig check sqlx"),
+        ("schema-check", "jig check schema"),
+        ("contract-check", "jig check contract"),
+        ("check-agent-guides", "jig check agent-guides"),
+        ("check-rust-file-loc", "jig check rust-file-loc"),
+        ("check-no-mod-rs", "jig check no-mod-rs"),
+        (
+            "check-migration-immutability",
+            "jig check migration-immutability",
+        ),
+        (
+            "check-sqlx-unchecked-non-test",
+            "jig check sqlx-unchecked-non-test",
+        ),
+    ];
+
+    // Like the nested agent-map case below, this depends on Clap 4.6.1 formatted
+    // usage text and is only a best-effort migration hint. Recheck on Clap upgrades.
+    if message.contains("Usage: jig <COMMAND>") {
+        if let Some((_, replacement)) = moved
+            .iter()
+            .find(|(legacy, _)| message.contains(&format!("'{legacy}'")))
+        {
+            return Some(moved_check_hint_for(replacement));
+        }
+    }
+
+    // Clap 4.6.1 reports nested invalid subcommands through formatted usage text;
+    // this hint is best-effort and may disappear if that formatting changes.
+    if message.contains("unrecognized subcommand 'check'")
+        && message.contains("Usage: jig agent-map <COMMAND>")
+    {
+        return Some(moved_check_hint_for("jig check agent-map"));
+    }
+
+    None
+}
+
+fn moved_check_hint_for(replacement: &str) -> String {
+    format!("This check command moved. Use:\n  {replacement}")
 }
 
 pub(super) fn should_add_template_hint(error: &clap::Error) -> bool {

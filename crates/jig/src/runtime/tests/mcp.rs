@@ -41,7 +41,7 @@ fn mcp_native_migration_add_creates_files() {
 _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
-jig_version = "0.1.0"
+jig_version = "0.2.0-beta.1"
 sqlx_enabled = true
 rust_migration_dir = "migrations"
 "#,
@@ -52,7 +52,7 @@ rust_migration_dir = "migrations"
         serde_json::to_string_pretty(&json!({
             "contract_version": 2,
             "tool_namespace": "jig",
-            "jig_version": "0.1.0",
+            "jig_version": "0.2.0-beta.1",
             "required_commands": ["rust_test_command"],
             "tools": [
                 {
@@ -96,7 +96,7 @@ fn mcp_native_contract_check_validates_manifest() {
 _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
-jig_version = "0.1.0"
+jig_version = "0.2.0-beta.1"
 makefile_enabled = false
 bootstrap_command = "cargo fetch"
 rust_fmt_check_command = "cargo fmt --check"
@@ -110,7 +110,7 @@ rust_test_command = "cargo test"
         serde_json::to_string_pretty(&json!({
             "contract_version": 2,
             "tool_namespace": "jig",
-            "jig_version": "0.1.0",
+            "jig_version": "0.2.0-beta.1",
             "required_commands": [
                 "bootstrap_command",
                 "rust_fmt_check_command",
@@ -177,7 +177,7 @@ fn mcp_native_schema_check_detects_clean_schema_dump() {
 _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
-jig_version = "0.1.0"
+jig_version = "0.2.0-beta.1"
 sqlx_enabled = true
 schema_dump_enabled = true
 rust_migration_dir = "migrations"
@@ -191,7 +191,7 @@ rust_test_command = "cargo test"
         serde_json::to_string_pretty(&json!({
             "contract_version": 2,
             "tool_namespace": "jig",
-            "jig_version": "0.1.0",
+            "jig_version": "0.2.0-beta.1",
             "required_commands": ["rust_test_command", "schema_dump_command"],
             "tools": [
                 {
