@@ -117,6 +117,36 @@ finally:
 PY
 }
 
+assert_jig_mcp_requires_prebuilt_binary() {
+  local repo_dir="$1"
+
+  REPO_DIR="$repo_dir" python3 <<'PY'
+import os
+import pathlib
+import subprocess
+
+repo_dir = pathlib.Path(os.environ["REPO_DIR"])
+proc = subprocess.run(
+    [str(repo_dir / "scripts" / "jig"), "mcp"],
+    cwd=repo_dir,
+    input=b"",
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+    env={key: value for key, value in os.environ.items() if key != "JIG_DEV_BIN"},
+    timeout=5,
+)
+
+if proc.returncode == 0:
+    raise SystemExit("scripts/jig mcp unexpectedly succeeded without a prebuilt binary")
+
+stderr = proc.stderr.decode(errors="replace")
+if "No prebuilt jig" not in stderr:
+    raise SystemExit(f"Missing prebuilt-binary error, got stderr:\n{stderr}")
+if "cargo install" not in stderr:
+    raise SystemExit(f"Missing no-cargo-install explanation, got stderr:\n{stderr}")
+PY
+}
+
 validate_jig_runtime() {
   local repo_dir="$1"
   local expect_schema_dump="$2"
@@ -171,6 +201,9 @@ PY
     fi
 
     rm -rf .git/jig-tools .agent/.cache
+    assert_jig_mcp_requires_prebuilt_binary "$repo_dir"
+    # MCP startup must use a prebuilt binary; contract-check populates the runtime cache.
+    env -u JIG_DEV_BIN scripts/jig contract-check >/dev/null
     validate_jig_mcp_smoke "$repo_dir" "$expect_schema_dump" "$expect_sqlx"
     [[ -x "$install_base/$jig_version-runtime/bin/jig" ]]
     [[ ! -e "$install_base/$jig_version/bin/jig" ]]
@@ -178,7 +211,6 @@ PY
       echo "runtime profile unexpectedly supports proxy commands" >&2
       exit 1
     fi
-    env -u JIG_DEV_BIN scripts/jig contract-check >/dev/null
     [[ ! -e "$install_base/$jig_version/bin/jig" ]]
     env -u JIG_DEV_BIN JIG_INSTALL_PROFILE=default scripts/jig contract-check >/dev/null
     [[ ! -e "$install_base/$jig_version/bin/jig" ]]

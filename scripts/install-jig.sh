@@ -11,14 +11,13 @@ import pathlib
 import re
 import sys
 
-path = pathlib.Path(sys.argv[1])
-key = sys.argv[2]
-text = path.read_text()
-
 try:
     import tomllib
 except ModuleNotFoundError:
     tomllib = None
+
+text = pathlib.Path(sys.argv[1]).read_text()
+key = sys.argv[2]
 
 if tomllib is not None:
     value = tomllib.loads(text).get(key, "")
@@ -238,7 +237,8 @@ acquire_install_lock() {
   done
   echo "Timed out waiting for jig installer lock: $INSTALL_LOCK_DIR" >&2
   if [[ -d "$INSTALL_LOCK_DIR" ]]; then
-    echo "Another scripts/jig install may still be running. If this is a jig-sh source checkout, build a dev binary with 'cargo build -p jig-sh --bin jig' and rerun with JIG_DEV_BIN=target/debug/jig." >&2
+    # Downstream harnesses intentionally omit jig-sh source-checkout recovery advice.
+    echo "Another scripts/jig install may still be running." >&2
   else
     echo "Could not create jig installer lock; check permissions for $(dirname "$INSTALL_LOCK_DIR")." >&2
   fi

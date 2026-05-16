@@ -1,3 +1,4 @@
+mod agent_guides;
 mod bootstrap;
 mod cli;
 mod context;

@@ -24,8 +24,8 @@ if [[ -f "$REPO_ROOT/.env" ]]; then
   cp "$REPO_ROOT/.env" "$CHECKOUT_DIR/.env"
 fi
 
-echo "==> Running make bootstrap in $CHECKOUT_DIR"
-make -C "$CHECKOUT_DIR" bootstrap
+echo "==> Running scripts/jig bootstrap in $CHECKOUT_DIR"
+(cd "$CHECKOUT_DIR" && scripts/jig bootstrap)
 
 echo
 echo "Done! Checkout ready at: $CHECKOUT_DIR"

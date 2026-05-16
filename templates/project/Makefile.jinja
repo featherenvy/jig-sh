@@ -135,4 +135,4 @@ ci-webapps: ## No configured web apps
 	@echo "No web apps configured."
 [% endif %]
 
-ci: fmt-check clippy test-rust-locked check-rust-file-loc check-no-mod-rs check-agent-map check-agent-guides[% if sqlx_enabled %] check-sqlx-unchecked-non-test sqlx-check[% if schema_dump_enabled %] schema-check[% endif %][% endif %] ci-webapps ## Run the standard CI validation set
+ci: fmt-check clippy test-rust-locked contract-check check-rust-file-loc check-no-mod-rs check-agent-map check-agent-guides[% if sqlx_enabled %] check-sqlx-unchecked-non-test sqlx-check[% if schema_dump_enabled %] schema-check[% endif %][% endif %] ci-webapps ## Run the standard CI validation set

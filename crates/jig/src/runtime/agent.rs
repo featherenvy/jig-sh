@@ -249,23 +249,6 @@ fn shell_single_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::shell_single_quote;
-
-    #[test]
-    fn shell_single_quote_handles_edge_cases() {
-        assert_eq!(shell_single_quote(""), "''");
-        assert_eq!(shell_single_quote("'"), "''\\'''");
-        assert_eq!(shell_single_quote("''"), "''\\'''\\'''");
-        assert_eq!(shell_single_quote("path with space"), "'path with space'");
-        assert_eq!(
-            shell_single_quote("./team's-skills"),
-            "'./team'\\''s-skills'"
-        );
-    }
-}
-
 fn requested_marketplace_source(ctx: &RepoContext, explicit: Option<String>) -> Result<String> {
     if let Some(source) = explicit.or_else(|| env::var(JIG_SKILLS_MARKETPLACE_ENV).ok()) {
         return marketplace_source_for_codex(&source, ctx.root());
@@ -506,4 +489,21 @@ fn codex_config_path() -> Option<PathBuf> {
         .map(PathBuf::from)
         .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".codex")))?;
     Some(codex_home.join("config.toml"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::shell_single_quote;
+
+    #[test]
+    fn shell_single_quote_handles_edge_cases() {
+        assert_eq!(shell_single_quote(""), "''");
+        assert_eq!(shell_single_quote("'"), "''\\'''");
+        assert_eq!(shell_single_quote("''"), "''\\'''\\'''");
+        assert_eq!(shell_single_quote("path with space"), "'path with space'");
+        assert_eq!(
+            shell_single_quote("./team's-skills"),
+            "'./team'\\''s-skills'"
+        );
+    }
 }

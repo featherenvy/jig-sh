@@ -5,6 +5,7 @@ use std::path::{Component, Path, PathBuf};
 use anyhow::{Context, Result};
 use serde_json::{Value, json};
 
+use crate::agent_guides::is_ignored_guide_component;
 use crate::cli::AgentMapOpts;
 use crate::context::RepoContext;
 
@@ -186,10 +187,10 @@ fn collect_guides(root: &Path, current: &Path, guides: &mut BTreeSet<String>) ->
     for entry in fs::read_dir(current)? {
         let entry = entry?;
         let path = entry.path();
-        if path
-            .components()
-            .any(|component| component.as_os_str() == ".git")
-        {
+        let relative = path
+            .strip_prefix(root)
+            .with_context(|| format!("failed to relativize {}", path.display()))?;
+        if relative.components().any(is_ignored_guide_component) {
             continue;
         }
         if entry.file_type()?.is_dir() {
@@ -328,8 +329,14 @@ mod tests {
     fn validate_reports_missing_guides_and_broken_links() {
         let temp = tempdir().unwrap();
         fs::create_dir_all(temp.path().join("crates/api")).unwrap();
+        fs::create_dir_all(temp.path().join("target/package/demo")).unwrap();
         fs::write(temp.path().join("AGENTS.md"), "root").unwrap();
         fs::write(temp.path().join("crates/api/AGENTS.md"), "api").unwrap();
+        fs::write(
+            temp.path().join("target/package/demo/AGENTS.md"),
+            "artifact",
+        )
+        .unwrap();
         fs::write(
             temp.path().join("agent-map.md"),
             "- [root](./AGENTS.md)\n- [missing](./missing.md)\n- [escape](../outside.md)\n",
@@ -353,6 +360,28 @@ mod tests {
                 .iter()
                 .any(|link| link.contains("outside repository"))
         );
+    }
+
+    #[test]
+    fn validate_ignores_target_relative_to_repo_root_only() {
+        let temp = tempdir().unwrap();
+        let root = temp.path().join("target/checkout");
+        fs::create_dir_all(root.join("crates/api")).unwrap();
+        fs::create_dir_all(root.join("target/package/demo")).unwrap();
+        fs::write(root.join("AGENTS.md"), "root").unwrap();
+        fs::write(root.join("crates/api/AGENTS.md"), "api").unwrap();
+        fs::write(root.join("target/package/demo/AGENTS.md"), "artifact").unwrap();
+        fs::write(
+            root.join("agent-map.md"),
+            "- [root](./AGENTS.md)\n- [api](./crates/api/AGENTS.md)\n",
+        )
+        .unwrap();
+
+        let result = validate(&root, Path::new("agent-map.md")).unwrap();
+
+        assert_eq!(result.agent_count, 2);
+        assert!(result.missing_agents.is_empty());
+        assert!(result.broken_links.is_empty());
     }
 
     #[test]
