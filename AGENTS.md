@@ -79,8 +79,7 @@ export JIG_DEV_BIN=target/debug/jig
 For substantial work, open structured work, run configured gates, then inspect gate status and receipts:
 
 ```sh
-work_json="$(scripts/jig work start --title "Describe the work" --body "Validation plan.")"
-plan_id="$(printf '%s' "$work_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["plan"]["plan_id"])')"
+plan_id="$(scripts/jig work start --title "Describe the work" --body "Validation plan." --print-plan-id)"
 
 scripts/jig work check --plan-id "$plan_id"
 scripts/jig work gates --plan-id "$plan_id"

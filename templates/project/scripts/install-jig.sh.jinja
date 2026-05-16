@@ -168,6 +168,62 @@ assert_exact_version() {
   fi
 }
 
+hash_stdin() {
+  local digest
+  if command -v sha256sum >/dev/null 2>&1; then
+    digest="$(sha256sum | awk '{print $1}')"
+    printf 'sha256:%s\n' "$digest"
+    return
+  fi
+  if command -v shasum >/dev/null 2>&1; then
+    digest="$(shasum -a 256 | awk '{print $1}')"
+    printf 'sha256:%s\n' "$digest"
+    return
+  fi
+  if command -v openssl >/dev/null 2>&1; then
+    digest="$(openssl dgst -sha256 -r | awk '{print $1}')"
+    printf 'sha256:%s\n' "$digest"
+    return
+  fi
+  echo "No SHA-256 utility found; local jig source installs will not be cache-stamped." >&2
+  return 1
+}
+
+local_source_stamp() {
+  local source_root="$1"
+  # Keep this path list aligned with the crates and manifests that feed the jig
+  # binary; omitted build inputs can make the source-cache stamp stale.
+  {
+    git -C "$source_root" rev-parse HEAD 2>/dev/null || printf 'unknown-head\n'
+    git -C "$source_root" diff HEAD -- Cargo.toml Cargo.lock crates/jig crates/jig-dev-proxy 2>/dev/null || true
+  } | hash_stdin
+}
+
+local_source_install_is_current() {
+  local source_root="$1"
+  local stamp_path="$INSTALL_ROOT/.jig-source-stamp"
+
+  [[ -x "$BIN_PATH" ]] || return 1
+  assert_exact_version "$BIN_PATH" >/dev/null || return 1
+  [[ -f "$stamp_path" ]] || return 1
+  local current_stamp
+  current_stamp="$(local_source_stamp "$source_root")" || return 1
+  [[ "$(cat "$stamp_path")" == "$current_stamp" ]]
+}
+
+write_local_source_stamp() {
+  local source_root="$1"
+  local current_stamp
+  local stamp_path="$INSTALL_ROOT/.jig-source-stamp"
+  local temp_stamp="$stamp_path.$$"
+  current_stamp="$(local_source_stamp "$source_root")" || {
+    rm -f "$stamp_path"
+    return 0
+  }
+  printf '%s\n' "$current_stamp" >"$temp_stamp"
+  mv "$temp_stamp" "$stamp_path"
+}
+
 install_from_dev_bin() {
   local dev_bin
   dev_bin="$(resolve_executable_path "$JIG_DEV_BIN")" || {
@@ -282,6 +338,7 @@ install_from_local_source() {
     "${CARGO_INSTALL_FEATURE_ARGS[@]}"
 
   assert_exact_version "$BIN_PATH"
+  write_local_source_stamp "$source_root"
 }
 
 is_jig_source_checkout() {
@@ -323,6 +380,28 @@ if [[ -n "${JIG_DEV_BIN:-}" ]]; then
   exit 0
 fi
 
+# The jig-sh source repo dogfoods generated harness files. Prefer a cache that
+# was built from the current checkout over an older same-version release cache.
+# Explicit install roots keep the lower-level installer behavior so callers can
+# populate exactly the root they requested.
+if [[ -z "$INSTALL_ROOT_ARG" ]] && is_jig_source_checkout "$ROOT_DIR"; then
+  if local_source_install_is_current "$ROOT_DIR"; then
+    printf '%s\n' "$BIN_PATH"
+    exit 0
+  fi
+
+  acquire_install_lock
+
+  if local_source_install_is_current "$ROOT_DIR"; then
+    printf '%s\n' "$BIN_PATH"
+    exit 0
+  fi
+
+  install_from_local_source "$ROOT_DIR"
+  printf '%s\n' "$BIN_PATH"
+  exit 0
+fi
+
 if [[ "$INSTALL_PROFILE" != "default" && -z "$INSTALL_ROOT_ARG" ]]; then
   # Runtime and MCP profiles are subsets of the default binary. Reuse a matching
   # full build instead of compiling a stripped binary when it already exists.
@@ -345,11 +424,7 @@ if [[ -x "$BIN_PATH" ]] && assert_exact_version "$BIN_PATH"; then
   exit 0
 fi
 
-# The jig-sh source repo dogfoods generated harness files, but should install
-# from the local checkout before falling back to the rendered template source.
-if is_jig_source_checkout "$ROOT_DIR"; then
-  install_from_local_source "$ROOT_DIR"
-elif [[ -d "$SRC_PATH/crates/jig" ]] || [[ "$SRC_PATH" == /* && -d "$SRC_PATH" ]]; then
+if [[ -d "$SRC_PATH/crates/jig" ]] || [[ "$SRC_PATH" == /* && -d "$SRC_PATH" ]]; then
   install_from_local_source "$SRC_PATH"
 elif [[ -n "$TEMPLATE_SOURCE_URL" ]]; then
   SRC_PATH="$TEMPLATE_SOURCE_URL"

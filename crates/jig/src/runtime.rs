@@ -6,7 +6,6 @@ use serde_json::{Value, json};
 
 use crate::cli::CommandKind;
 use crate::context::{ManifestTool, RepoContext};
-use crate::process::require_success;
 use crate::state::{ReceiptInput, now_ms, record_receipt};
 use crate::tool_defs::{self, JsonObject, MemoryTool, args, string_arg, tool};
 
@@ -17,45 +16,102 @@ mod work;
 pub(crate) fn dispatch(ctx: &RepoContext, command: CommandKind) -> Result<Value> {
     match command {
         CommandKind::Bootstrap(opts) => {
-            execute_manifest_tool(ctx, tool::BOOTSTRAP, json!({}), opts.plan_id)
+            let record_receipt = opts.record_receipt();
+            execute_manifest_tool(
+                ctx,
+                tool::BOOTSTRAP,
+                json!({}),
+                opts.plan_id,
+                record_receipt,
+            )
         }
         CommandKind::FmtCheck(opts) => {
-            execute_manifest_tool(ctx, tool::FMT_CHECK, json!({}), opts.plan_id)
+            let record_receipt = opts.record_receipt();
+            execute_manifest_tool(
+                ctx,
+                tool::FMT_CHECK,
+                json!({}),
+                opts.plan_id,
+                record_receipt,
+            )
         }
         CommandKind::Clippy(opts) => {
-            execute_manifest_tool(ctx, tool::CLIPPY, json!({}), opts.plan_id)
+            let record_receipt = opts.record_receipt();
+            execute_manifest_tool(ctx, tool::CLIPPY, json!({}), opts.plan_id, record_receipt)
         }
-        CommandKind::Test(opts) => execute_manifest_tool(ctx, tool::TEST, json!({}), opts.plan_id),
+        CommandKind::Test(opts) => {
+            let record_receipt = opts.record_receipt();
+            execute_manifest_tool(ctx, tool::TEST, json!({}), opts.plan_id, record_receipt)
+        }
         CommandKind::TestLocked(opts) => {
-            execute_manifest_tool(ctx, tool::TEST_LOCKED, json!({}), opts.plan_id)
+            let record_receipt = opts.record_receipt();
+            execute_manifest_tool(
+                ctx,
+                tool::TEST_LOCKED,
+                json!({}),
+                opts.plan_id,
+                record_receipt,
+            )
         }
         CommandKind::SqlxCheck(opts) => {
-            execute_manifest_tool(ctx, tool::SQLX_CHECK, json!({}), opts.plan_id)
+            let record_receipt = opts.record_receipt();
+            execute_manifest_tool(
+                ctx,
+                tool::SQLX_CHECK,
+                json!({}),
+                opts.plan_id,
+                record_receipt,
+            )
         }
         CommandKind::SchemaCheck(opts) => {
-            execute_manifest_tool(ctx, tool::SCHEMA_CHECK, json!({}), opts.plan_id)
+            let record_receipt = opts.record_receipt();
+            execute_manifest_tool(
+                ctx,
+                tool::SCHEMA_CHECK,
+                json!({}),
+                opts.plan_id,
+                record_receipt,
+            )
         }
         CommandKind::SchemaDump(opts) => {
-            execute_manifest_tool(ctx, tool::SCHEMA_DUMP, json!({}), opts.plan_id)
+            let record_receipt = opts.record_receipt();
+            execute_manifest_tool(
+                ctx,
+                tool::SCHEMA_DUMP,
+                json!({}),
+                opts.plan_id,
+                record_receipt,
+            )
         }
-        CommandKind::MigrationAdd(opts) => execute_manifest_tool(
-            ctx,
-            tool::MIGRATION_ADD,
-            json!({ args::NAME: opts.name }),
-            opts.tool.plan_id,
-        )
-        .map(|value| {
-            let name = value["args"][args::NAME].clone();
-            json!({
-                "ok": true,
-                "tool": tool::MIGRATION_ADD,
-                args::NAME: name,
-                "result": value["result"],
-                "receipt_id": value["receipt_id"],
+        CommandKind::MigrationAdd(opts) => {
+            let record_receipt = opts.tool.record_receipt();
+            execute_manifest_tool(
+                ctx,
+                tool::MIGRATION_ADD,
+                json!({ args::NAME: opts.name }),
+                opts.tool.plan_id,
+                record_receipt,
+            )
+            .map(|value| {
+                let name = value["args"][args::NAME].clone();
+                json!({
+                    "ok": true,
+                    "tool": tool::MIGRATION_ADD,
+                    args::NAME: name,
+                    "result": value["result"],
+                    "receipt_id": value["receipt_id"],
+                })
             })
-        }),
+        }
         CommandKind::ContractCheck(opts) => {
-            execute_manifest_tool(ctx, tool::CONTRACT_CHECK, json!({}), opts.plan_id)
+            let record_receipt = opts.record_receipt();
+            execute_manifest_tool(
+                ctx,
+                tool::CONTRACT_CHECK,
+                json!({}),
+                opts.plan_id,
+                record_receipt,
+            )
         }
         other @ (CommandKind::AgentMap(_)
         | CommandKind::CheckAgentGuides
@@ -65,12 +121,16 @@ pub(crate) fn dispatch(ctx: &RepoContext, command: CommandKind) -> Result<Value>
         | CommandKind::GenerateSqlxUncheckedQueriesTodo(_)
         | CommandKind::CheckSqlxUncheckedNonTest) => crate::policy::run_direct(ctx, other),
         CommandKind::Dev(opts) => crate::dev_proxy::commands::dev(ctx, opts),
-        CommandKind::RunTarget(opts) => execute_manifest_tool(
-            ctx,
-            tool::RUN_TARGET,
-            json!({ args::NAME: opts.name }),
-            opts.tool.plan_id,
-        ),
+        CommandKind::RunTarget(opts) => {
+            let record_receipt = opts.tool.record_receipt();
+            execute_manifest_tool(
+                ctx,
+                tool::RUN_TARGET,
+                json!({ args::NAME: opts.name }),
+                opts.tool.plan_id,
+                record_receipt,
+            )
+        }
         CommandKind::Proxy(command) => crate::dev_proxy::commands::proxy(ctx, command),
         CommandKind::Agent(command) => agent::dispatch(ctx, command),
         CommandKind::Work(command) => work::dispatch(ctx, command),
@@ -115,7 +175,9 @@ fn call_manifest_tool(
     let plan_id = string_arg(args_obj, args::PLAN_ID);
     let args = tool_defs::execution_tool_args(tool, args_obj)?;
 
-    execute_manifest_tool(ctx, &tool.name, args, plan_id)
+    // MCP execution tools are evidence-producing by design; the CLI-only
+    // --no-receipt escape hatch is intentionally not part of the tool schema.
+    execute_manifest_tool(ctx, &tool.name, args, plan_id, true)
 }
 
 fn execute_manifest_tool(
@@ -123,8 +185,9 @@ fn execute_manifest_tool(
     tool_name: &str,
     args: Value,
     plan_id: Option<String>,
+    record_receipt: bool,
 ) -> Result<Value> {
-    execute_manifest_tool_with_options(ctx, tool_name, args, plan_id, true)
+    execute_manifest_tool_with_options(ctx, tool_name, args, plan_id, record_receipt, true)
 }
 
 fn execute_manifest_tool_without_worktree_fingerprint(
@@ -133,7 +196,7 @@ fn execute_manifest_tool_without_worktree_fingerprint(
     args: Value,
     plan_id: Option<String>,
 ) -> Result<Value> {
-    execute_manifest_tool_with_options(ctx, tool_name, args, plan_id, false)
+    execute_manifest_tool_with_options(ctx, tool_name, args, plan_id, true, false)
 }
 
 fn execute_manifest_tool_with_options(
@@ -141,6 +204,7 @@ fn execute_manifest_tool_with_options(
     tool_name: &str,
     args: Value,
     plan_id: Option<String>,
+    record_receipt: bool,
     collect_worktree_fingerprint: bool,
 ) -> Result<Value> {
     let tool = ctx
@@ -163,12 +227,20 @@ fn execute_manifest_tool_with_options(
             target.as_ref(),
             args,
             plan_id,
+            record_receipt,
             collect_worktree_fingerprint,
         );
     }
 
     if tool_defs::is_native_tool(tool) {
-        return execute_native_tool(ctx, &tool.name, args, plan_id, collect_worktree_fingerprint);
+        return execute_native_tool(
+            ctx,
+            &tool.name,
+            args,
+            plan_id,
+            record_receipt,
+            collect_worktree_fingerprint,
+        );
     }
 
     if tool_defs::is_command_tool(tool) {
@@ -184,6 +256,7 @@ fn execute_manifest_tool_with_options(
             command,
             args,
             plan_id,
+            record_receipt,
             collect_worktree_fingerprint,
         );
     }
@@ -196,6 +269,7 @@ fn execute_native_tool(
     tool_name: &str,
     args: Value,
     plan_id: Option<String>,
+    record_receipt: bool,
     collect_worktree_fingerprint: bool,
 ) -> Result<Value> {
     let started = now_ms();
@@ -213,8 +287,9 @@ fn execute_native_tool(
     }?;
     let ended = now_ms();
 
-    let receipt_id = record_receipt(
+    let receipt_result = maybe_record_receipt(
         ctx,
+        record_receipt,
         ReceiptInput {
             tool_name,
             args: args.clone(),
@@ -231,16 +306,17 @@ fn execute_native_tool(
             collect_worktree_fingerprint,
             worktree_fingerprint_override: None,
         },
-    )?;
+    );
 
-    if output.exit_status != 0 {
-        bail!(
-            "{tool_name} failed with status {}\nstdout:\n{}\nstderr:\n{}",
-            output.exit_status,
-            output.stdout,
-            output.stderr
-        );
-    }
+    let receipt_id = receipt_id_or_preserve_tool_error(
+        (output.exit_status != 0).then(|| {
+            format!(
+                "{tool_name} failed with status {}\nstdout:\n{}\nstderr:\n{}",
+                output.exit_status, output.stdout, output.stderr
+            )
+        }),
+        receipt_result,
+    )?;
 
     Ok(json!({
         "ok": true,
@@ -255,12 +331,29 @@ fn execute_native_tool(
     }))
 }
 
+fn receipt_id_or_preserve_tool_error(
+    tool_failure: Option<String>,
+    receipt_result: Result<Option<String>>,
+) -> Result<Option<String>> {
+    if let Some(tool_failure) = tool_failure {
+        match receipt_result {
+            Ok(_) => bail!("{tool_failure}"),
+            Err(receipt_error) => {
+                bail!("{tool_failure}\nreceipt recording also failed:\n{receipt_error:#}")
+            }
+        }
+    } else {
+        receipt_result
+    }
+}
+
 fn execute_make_tool(
     ctx: &RepoContext,
     tool_name: &str,
     target: &str,
     args: Value,
     plan_id: Option<String>,
+    record_receipt: bool,
     collect_worktree_fingerprint: bool,
 ) -> Result<Value> {
     let started = now_ms();
@@ -270,8 +363,9 @@ fn execute_make_tool(
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
 
-    let receipt_id = record_receipt(
+    let receipt_result = maybe_record_receipt(
         ctx,
+        record_receipt,
         ReceiptInput {
             tool_name,
             args: args.clone(),
@@ -288,13 +382,16 @@ fn execute_make_tool(
             collect_worktree_fingerprint,
             worktree_fingerprint_override: None,
         },
-    )?;
+    );
 
-    require_success(&output, |_| {
-        format!(
-            "{tool_name} failed with status {exit_status}\nstdout:\n{stdout}\nstderr:\n{stderr}"
-        )
-    })?;
+    let receipt_id = receipt_id_or_preserve_tool_error(
+        (!output.status.success()).then(|| {
+            format!(
+                "{tool_name} failed with status {exit_status}\nstdout:\n{stdout}\nstderr:\n{stderr}"
+            )
+        }),
+        receipt_result,
+    )?;
 
     Ok(json!({
         "ok": true,
@@ -317,6 +414,7 @@ fn execute_command_tool(
     command_text: &str,
     args: Value,
     plan_id: Option<String>,
+    record_receipt: bool,
     collect_worktree_fingerprint: bool,
 ) -> Result<Value> {
     let started = now_ms();
@@ -326,8 +424,9 @@ fn execute_command_tool(
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
 
-    let receipt_id = record_receipt(
+    let receipt_result = maybe_record_receipt(
         ctx,
+        record_receipt,
         ReceiptInput {
             tool_name,
             args: args.clone(),
@@ -344,13 +443,16 @@ fn execute_command_tool(
             collect_worktree_fingerprint,
             worktree_fingerprint_override: None,
         },
-    )?;
+    );
 
-    require_success(&output, |_| {
-        format!(
-            "{tool_name} failed with status {exit_status}\ncommand key: {command_key}\nstdout:\n{stdout}\nstderr:\n{stderr}"
-        )
-    })?;
+    let receipt_id = receipt_id_or_preserve_tool_error(
+        (!output.status.success()).then(|| {
+            format!(
+                "{tool_name} failed with status {exit_status}\ncommand key: {command_key}\nstdout:\n{stdout}\nstderr:\n{stderr}"
+            )
+        }),
+        receipt_result,
+    )?;
 
     Ok(json!({
         "ok": true,
@@ -364,6 +466,18 @@ fn execute_command_tool(
         },
         "receipt_id": receipt_id,
     }))
+}
+
+fn maybe_record_receipt(
+    ctx: &RepoContext,
+    should_record_receipt: bool,
+    input: ReceiptInput<'_>,
+) -> Result<Option<String>> {
+    if should_record_receipt {
+        record_receipt(ctx, input).map(Some)
+    } else {
+        Ok(None)
+    }
 }
 
 fn run_make(ctx: &RepoContext, target: &str, args: &Value) -> Result<Output> {

@@ -79,7 +79,8 @@ fn nested_help_describes_work_and_agent_commands() {
 fn work_start_help_includes_examples() {
     let work_start_help = rendered_help(&["work", "start"]);
     assert_help_contains(&work_start_help, "jig work start --title \"Add auth\"");
-    assert_help_contains(&work_start_help, "--body-file .agent/notes/signup-plan.md");
+    assert_help_contains(&work_start_help, "--print-plan-id");
+    assert_help_contains(&work_start_help, "plan_id=\"$(jig work start");
 }
 
 #[test]
@@ -111,6 +112,13 @@ fn agent_bootstrap_help_includes_examples() {
         &agent_bootstrap_help,
         "jig agent bootstrap --marketplace owner/skills-repo",
     );
+}
+
+#[test]
+fn update_help_explains_modes() {
+    let update_help = rendered_help(&["update"]);
+    assert_help_contains(&update_help, "jig update --recopy");
+    assert_help_contains(&update_help, "changed template-managed files");
 }
 
 #[test]
@@ -282,6 +290,29 @@ fn parses_work_receipts_filters() {
         }
         other => panic!("expected work receipts command, got {other:?}"),
     }
+}
+
+#[test]
+fn parses_tool_no_receipt_flag() {
+    let cli = Cli::try_parse_from(["jig", "contract-check", "--no-receipt"]).unwrap();
+
+    match cli.command {
+        CommandKind::ContractCheck(opts) => {
+            assert!(opts.no_receipt);
+            assert_eq!(opts.plan_id, None);
+        }
+        other => panic!("expected contract-check command, got {other:?}"),
+    }
+
+    let error = Cli::try_parse_from([
+        "jig",
+        "contract-check",
+        "--plan-id",
+        "plan_1",
+        "--no-receipt",
+    ])
+    .unwrap_err();
+    assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
 }
 
 #[test]
@@ -659,6 +690,30 @@ fn parses_work_status_command() {
             assert!(opts.summary);
         }
         other => panic!("expected work status summary command, got {other:?}"),
+    }
+}
+
+#[test]
+fn parses_work_start_print_plan_id() {
+    let cli = Cli::try_parse_from([
+        "jig",
+        "work",
+        "start",
+        "--title",
+        "DX polish",
+        "--body",
+        "Improve workflow.",
+        "--print-plan-id",
+    ])
+    .unwrap();
+
+    match cli.command {
+        CommandKind::Work(WorkCommand::Start(opts)) => {
+            assert_eq!(opts.title, "DX polish");
+            assert_eq!(opts.body.as_deref(), Some("Improve workflow."));
+            assert!(opts.print_plan_id);
+        }
+        other => panic!("expected work start command, got {other:?}"),
     }
 }
 

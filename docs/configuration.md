@@ -394,6 +394,7 @@ It also provides runtime-owned append-only memory under `.agent/state/*.jsonl` t
 - `scripts/jig agent doctor --summary`
 - `scripts/jig agent bootstrap`
 - `scripts/jig work start --title ...`
+- `scripts/jig work start --title ... --print-plan-id`
 - `scripts/jig work append --plan-id ...`
 - `scripts/jig work check --plan-id ...`
 - `scripts/jig work gates --plan-id ...`
@@ -405,7 +406,14 @@ It also provides runtime-owned append-only memory under `.agent/state/*.jsonl` t
 
 `work finish` closes the plan with `--resolution`. If an active session is also open, it closes that session with `--outcome`; when `--outcome` is omitted, the session outcome falls back to `--resolution`.
 
-For local runtime development, set `JIG_DEV_BIN` to an already-built `jig` binary. The installer resolves that explicit binary to an absolute path before returning it, and verifies that its reported version matches `.jig.toml`. A stale or mismatched `JIG_DEV_BIN` is a hard error rather than a fallback to the cached runtime. Avoid rebuilding that binary while a long-running `JIG_DEV_BIN` process, such as `jig proxy start --foreground`, is still active.
+Contract tools and work checks intentionally append receipts under `.agent/state/`.
+Read-only inspection commands such as `work status` and `work gates` do not add
+new receipts. For one-off contract command runs that should not record evidence,
+pass `--no-receipt`; `--no-receipt` conflicts with `--plan-id` because
+plan-linked checks must leave evidence for `work finish` gate enforcement. When
+receipt recording is skipped, command JSON still includes `"receipt_id": null`.
+
+For local runtime development, set `JIG_DEV_BIN` to an already-built `jig` binary. The installer resolves that explicit binary to an absolute path before returning it, and verifies that its reported version matches `.jig.toml`. A stale or mismatched `JIG_DEV_BIN` is a hard error rather than a fallback to the cached runtime. In the `jig-sh` source checkout, the installer also keeps the repo-local cache tied to the current checkout so same-version release caches do not hide local runtime changes. Avoid rebuilding that binary while a long-running `JIG_DEV_BIN` process, such as `jig proxy start --foreground`, is still active.
 
 ## SQLx Metadata Directory
 

@@ -212,6 +212,16 @@ pub struct AdoptOpts {
 }
 
 #[derive(Args, Clone, Debug)]
+#[command(after_help = "\
+Update modes:
+  jig update advances to the resolved template source.
+  jig update --recopy re-renders from the stored .jig.toml commit.
+  Add --force only when changed template-managed files should be replaced.
+
+Examples:
+  jig update
+  jig update --recopy
+  jig update --template /path/to/jig-sh --template-mode committed --force")]
 pub struct UpdateOpts {
     #[arg(default_value = ".", help = "Adopted repository directory to update")]
     pub path: PathBuf,

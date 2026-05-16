@@ -87,6 +87,7 @@ pub(super) fn command_reports_failure_with_ok(command: &CommandKind) -> bool {
 
 enum HumanOutput {
     AgentDoctorSummary,
+    WorkStartPlanId,
     WorkStatusSummary,
 }
 
@@ -94,6 +95,9 @@ fn human_output_requested(command: &CommandKind) -> Option<HumanOutput> {
     match command {
         CommandKind::Agent(AgentCommand::Doctor(opts)) if opts.summary => {
             Some(HumanOutput::AgentDoctorSummary)
+        }
+        CommandKind::Work(WorkCommand::Start(opts)) if opts.print_plan_id => {
+            Some(HumanOutput::WorkStartPlanId)
         }
         CommandKind::Work(WorkCommand::Status(opts)) if opts.summary => {
             Some(HumanOutput::WorkStatusSummary)
@@ -183,6 +187,7 @@ fn print_json(value: &serde_json::Value) -> Result<()> {
 fn print_output(human_output: Option<HumanOutput>, value: &serde_json::Value) -> Result<()> {
     match human_output {
         Some(HumanOutput::AgentDoctorSummary) => print_text(&format_agent_doctor_summary(value)),
+        Some(HumanOutput::WorkStartPlanId) => print_text(&format_work_start_plan_id(value)?),
         Some(HumanOutput::WorkStatusSummary) => print_text(&format_work_status_summary(value)),
         None => print_json(value),
     }
@@ -194,6 +199,20 @@ fn print_text(text: &str) -> Result<()> {
     handle.write_all(text.as_bytes())?;
     handle.write_all(b"\n")?;
     Ok(())
+}
+
+fn format_work_start_plan_id(value: &serde_json::Value) -> Result<String> {
+    let plan = value
+        .get("plan")
+        .ok_or_else(|| anyhow::anyhow!("work start output did not include plan"))?;
+    if !plan.is_object() {
+        anyhow::bail!("work start output plan was not an object");
+    }
+
+    plan.get("plan_id")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| anyhow::anyhow!("work start output did not include plan.plan_id"))
 }
 
 fn format_agent_doctor_summary(value: &serde_json::Value) -> String {
@@ -509,6 +528,54 @@ mod tests {
         assert!(summary.contains("plan_1: Improve UX"));
         assert!(summary.contains("jig.test"));
         assert!(summary.contains("and 1 more recent receipt"));
+    }
+
+    #[test]
+    fn work_start_plan_id_output_is_shell_friendly() {
+        let plan_id = format_work_start_plan_id(&json!({
+            "ok": true,
+            "plan": {
+                "plan_id": "plan_123"
+            }
+        }))
+        .unwrap();
+
+        assert_eq!(plan_id, "plan_123");
+    }
+
+    #[test]
+    fn work_start_plan_id_output_requires_plan_id() {
+        let error = format_work_start_plan_id(&json!({
+            "ok": true,
+            "plan": {}
+        }))
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("plan.plan_id"));
+    }
+
+    #[test]
+    fn work_start_plan_id_output_requires_plan_object() {
+        let error = format_work_start_plan_id(&json!({
+            "ok": true
+        }))
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("include plan"));
+    }
+
+    #[test]
+    fn work_start_plan_id_output_requires_plan_to_be_object() {
+        let error = format_work_start_plan_id(&json!({
+            "ok": true,
+            "plan": null
+        }))
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("plan was not an object"));
     }
 
     #[test]

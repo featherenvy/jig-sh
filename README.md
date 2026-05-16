@@ -131,8 +131,7 @@ Use this path when you want the fastest successful loop on a new or adopted repo
 4. Start structured work, run required gates, and close it only after fresh evidence exists.
 
    ```sh
-   work_json="$(scripts/jig work start --title "First change" --body "Validate the harness loop.")"
-   plan_id="$(printf '%s' "$work_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["plan"]["plan_id"])')"
+   plan_id="$(scripts/jig work start --title "First change" --body "Validate the harness loop." --print-plan-id)"
 
    scripts/jig work status --summary
    scripts/jig work check --plan-id "$plan_id"
@@ -147,6 +146,11 @@ Use this path when you want the fastest successful loop on a new or adopted repo
    scripts/jig clippy
    scripts/jig test
    ```
+
+Contract and gate commands intentionally append receipts under `.agent/state/`.
+Use `scripts/jig work status --summary` for a read-only scan of existing work
+state, or pass `--no-receipt` to a one-off contract command when you do not
+want evidence recorded.
 
 ## What It Generates
 

@@ -64,10 +64,11 @@ Examples:
 
 const WORK_START_AFTER_HELP: &str = "\
 Use --body for short notes or --body-file for a prepared markdown plan.
+Use --print-plan-id when shell scripts only need the new plan id.
 
 Examples:
   jig work start --title \"Add auth\" --body \"Implement login flow and validation.\"
-  jig work start --title \"Fix signup\" --body-file .agent/notes/signup-plan.md";
+  plan_id=\"$(jig work start --title \"Fix signup\" --body-file .agent/notes/signup-plan.md --print-plan-id)\"";
 
 const WORK_CHECK_AFTER_HELP: &str = "\
 Run all required gates for a plan, or use --tool to run one configured gate.
@@ -551,6 +552,18 @@ pub(crate) struct ProxyServiceRuntimeOpts {
 pub(crate) struct ToolOpts {
     #[arg(long, help = "Structured work plan id to attach the receipt to")]
     pub(crate) plan_id: Option<String>,
+    #[arg(
+        long,
+        conflicts_with = "plan_id",
+        help = "Run without appending a receipt to .agent/state"
+    )]
+    pub(crate) no_receipt: bool,
+}
+
+impl ToolOpts {
+    pub(crate) fn record_receipt(&self) -> bool {
+        !self.no_receipt
+    }
 }
 
 #[derive(Args, Debug)]
@@ -606,6 +619,8 @@ pub(crate) struct WorkStartOpts {
     pub(crate) body: Option<String>,
     #[arg(long, help = "Path to read the initial plan body from")]
     pub(crate) body_file: Option<PathBuf>,
+    #[arg(long, help = "Print only the new plan id instead of JSON")]
+    pub(crate) print_plan_id: bool,
 }
 
 #[derive(Args, Debug)]
