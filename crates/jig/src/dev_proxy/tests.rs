@@ -112,7 +112,7 @@ proxy_port = 1555
     .unwrap();
 
     let ctx = RepoContext::load_from(temp.path()).unwrap();
-    let settings = settings(&ctx, &ProxyRuntimeOpts::default()).unwrap();
+    let settings = settings(&ctx, &ProxyRuntimeOptions::default()).unwrap();
     let apps = configured_apps(&ctx, &settings).unwrap();
 
     assert_eq!(apps.len(), 1);
@@ -150,7 +150,7 @@ command = "bun run dev"
     .unwrap();
 
     let ctx = RepoContext::load_from(temp.path()).unwrap();
-    let settings = settings(&ctx, &ProxyRuntimeOpts::default()).unwrap();
+    let settings = settings(&ctx, &ProxyRuntimeOptions::default()).unwrap();
     let error = configured_apps(&ctx, &settings).unwrap_err().to_string();
 
     assert!(error.contains("Unsupported dev app kind"));
@@ -181,7 +181,7 @@ command = "bun run dev"
     .unwrap();
 
     let ctx = RepoContext::load_from(temp.path()).unwrap();
-    let settings = settings(&ctx, &ProxyRuntimeOpts::default()).unwrap();
+    let settings = settings(&ctx, &ProxyRuntimeOptions::default()).unwrap();
     let error = configured_apps(&ctx, &settings).unwrap_err().to_string();
 
     assert!(error.contains("must be an IP literal"));
@@ -209,7 +209,7 @@ command = "bun run dev"
     .unwrap();
 
     let ctx = RepoContext::load_from(temp.path()).unwrap();
-    let settings = settings(&ctx, &ProxyRuntimeOpts::default()).unwrap();
+    let settings = settings(&ctx, &ProxyRuntimeOptions::default()).unwrap();
     let error = configured_apps(&ctx, &settings).unwrap_err().to_string();
 
     assert!(error.contains("must target a loopback IP literal"));
@@ -238,7 +238,7 @@ command = "bun run dev"
     .unwrap();
 
     let ctx = RepoContext::load_from(temp.path()).unwrap();
-    let settings = settings(&ctx, &ProxyRuntimeOpts::default()).unwrap();
+    let settings = settings(&ctx, &ProxyRuntimeOptions::default()).unwrap();
     let apps = configured_apps(&ctx, &settings).unwrap();
 
     assert_eq!(apps[0].target_host, "192.0.2.10");
@@ -266,7 +266,7 @@ command = "bun run dev"
     .unwrap();
 
     let ctx = RepoContext::load_from(temp.path()).unwrap();
-    let settings = settings(&ctx, &ProxyRuntimeOpts::default()).unwrap();
+    let settings = settings(&ctx, &ProxyRuntimeOptions::default()).unwrap();
     let error = configured_apps(&ctx, &settings).unwrap_err().to_string();
 
     assert!(error.contains("must not contain leading or trailing whitespace"));
@@ -297,7 +297,7 @@ command = "bun run dev"
     .unwrap();
 
     let ctx = RepoContext::load_from(temp.path()).unwrap();
-    let settings = settings(&ctx, &ProxyRuntimeOpts::default()).unwrap();
+    let settings = settings(&ctx, &ProxyRuntimeOptions::default()).unwrap();
     let error = configured_apps(&ctx, &settings).unwrap_err().to_string();
 
     assert!(error.contains("resolves outside repo root"));
@@ -325,7 +325,7 @@ command = "bun run dev"
 
     let ctx = RepoContext::load_from(temp.path()).unwrap();
 
-    let settings = settings(&ctx, &ProxyRuntimeOpts::default()).unwrap();
+    let settings = settings(&ctx, &ProxyRuntimeOptions::default()).unwrap();
     let error = configured_apps(&ctx, &settings).unwrap_err().to_string();
 
     assert!(error.contains("dev app dir"));
@@ -357,7 +357,7 @@ command = "bun run dev"
     .unwrap();
 
     let ctx = RepoContext::load_from(temp.path()).unwrap();
-    let settings = settings(&ctx, &ProxyRuntimeOpts::default()).unwrap();
+    let settings = settings(&ctx, &ProxyRuntimeOptions::default()).unwrap();
     let error = configured_apps(&ctx, &settings).unwrap_err().to_string();
 
     assert!(error.contains("must set argv"));
@@ -382,7 +382,7 @@ tld = "bad,tld"
     .unwrap();
 
     let ctx = RepoContext::load_from(temp.path()).unwrap();
-    let error = settings(&ctx, &ProxyRuntimeOpts::default())
+    let error = settings(&ctx, &ProxyRuntimeOptions::default())
         .unwrap_err()
         .to_string();
 
@@ -408,7 +408,7 @@ tld = "dev"
     .unwrap();
 
     let ctx = RepoContext::load_from(temp.path()).unwrap();
-    let error = settings(&ctx, &ProxyRuntimeOpts::default())
+    let error = settings(&ctx, &ProxyRuntimeOptions::default())
         .unwrap_err()
         .to_string();
 
@@ -434,7 +434,7 @@ proxy_port = 0
     .unwrap();
 
     let ctx = RepoContext::load_from(temp.path()).unwrap();
-    let error = settings(&ctx, &ProxyRuntimeOpts::default())
+    let error = settings(&ctx, &ProxyRuntimeOptions::default())
         .unwrap_err()
         .to_string();
 
@@ -456,9 +456,9 @@ jig_version = "0.2.0-beta.1"
     )
     .unwrap();
     let ctx = RepoContext::load_from(temp.path()).unwrap();
-    let opts = ProxyRuntimeOpts {
+    let opts = ProxyRuntimeOptions {
         state_dir: Some(temp.path().join("missing-state")),
-        ..ProxyRuntimeOpts::default()
+        ..ProxyRuntimeOptions::default()
     };
 
     let error = settings_existing_state_dir(&ctx, &opts)
@@ -484,9 +484,9 @@ jig_version = "0.2.0-beta.1"
     .unwrap();
     let missing = temp.path().join("missing-state");
     let ctx = RepoContext::load_from(temp.path()).unwrap();
-    let opts = ProxyRuntimeOpts {
+    let opts = ProxyRuntimeOptions {
         state_dir: Some(missing.clone()),
-        ..ProxyRuntimeOpts::default()
+        ..ProxyRuntimeOptions::default()
     };
 
     let settings = settings(&ctx, &opts).unwrap();
@@ -497,10 +497,10 @@ jig_version = "0.2.0-beta.1"
 
 #[test]
 fn no_proxy_rejects_proxy_runtime_flags() {
-    let opts = ProxyRuntimeOpts {
+    let opts = ProxyRuntimeOptions {
         https: true,
         tld: Some("localhost".into()),
-        ..ProxyRuntimeOpts::default()
+        ..ProxyRuntimeOptions::default()
     };
 
     let error = reject_no_proxy_runtime_flags(true, &opts)
@@ -514,9 +514,9 @@ fn no_proxy_rejects_proxy_runtime_flags() {
 
 #[test]
 fn no_proxy_allows_state_dir_for_other_proxy_commands() {
-    let opts = ProxyRuntimeOpts {
+    let opts = ProxyRuntimeOptions {
         state_dir: Some(PathBuf::from("/tmp/jig-proxy-state")),
-        ..ProxyRuntimeOpts::default()
+        ..ProxyRuntimeOptions::default()
     };
 
     reject_no_proxy_runtime_flags(true, &opts).unwrap();
@@ -525,25 +525,25 @@ fn no_proxy_allows_state_dir_for_other_proxy_commands() {
 #[test]
 fn contextless_proxy_commands_are_limited_to_host_cleanup_and_status() {
     assert!(commands::can_run_without_context(&ProxyCommand::Stop(
-        ProxyStopOpts::default()
+        ProxyStopRequest::default()
     )));
     assert!(commands::can_run_without_context(&ProxyCommand::Service(
-        ProxyServiceCommand::Status(ProxyServiceRuntimeOpts::default())
+        ProxyServiceCommand::Status(ProxyServiceRuntimeRequest::default())
     )));
     assert!(commands::can_run_without_context(&ProxyCommand::Start(
-        ProxyStartOpts {
+        ProxyStartRequest {
             foreground: true,
-            proxy: ProxyRuntimeOpts::default(),
+            proxy: ProxyRuntimeOptions::default(),
         }
     )));
     assert!(!commands::can_run_without_context(&ProxyCommand::Start(
-        ProxyStartOpts {
+        ProxyStartRequest {
             foreground: false,
-            proxy: ProxyRuntimeOpts::default(),
+            proxy: ProxyRuntimeOptions::default(),
         }
     )));
     assert!(!commands::can_run_without_context(&ProxyCommand::Cert(
-        ProxyCertCommand::Generate(ProxyCertGenerateOpts::default())
+        ProxyCertCommand::Generate(ProxyCertGenerateRequest::default())
     )));
 }
 
@@ -575,52 +575,54 @@ fn contextless_proxy_allowlist_is_exhaustive() {
 
 fn proxy_command_cases() -> Vec<ProxyCommand> {
     vec![
-        ProxyCommand::Start(ProxyStartOpts {
+        ProxyCommand::Start(ProxyStartRequest {
             foreground: true,
-            proxy: ProxyRuntimeOpts::default(),
+            proxy: ProxyRuntimeOptions::default(),
         }),
-        ProxyCommand::Start(ProxyStartOpts {
+        ProxyCommand::Start(ProxyStartRequest {
             foreground: false,
-            proxy: ProxyRuntimeOpts::default(),
+            proxy: ProxyRuntimeOptions::default(),
         }),
-        ProxyCommand::Stop(ProxyStopOpts::default()),
-        ProxyCommand::List(ProxyListOpts::default()),
-        ProxyCommand::Prune(ProxyPruneOpts::default()),
-        ProxyCommand::Run(ProxyRunOpts {
+        ProxyCommand::Stop(ProxyStopRequest::default()),
+        ProxyCommand::List(ProxyListRequest::default()),
+        ProxyCommand::Prune(ProxyPruneRequest::default()),
+        ProxyCommand::Run(ProxyRunRequest {
             name: "web".into(),
             kind: None,
             dir: None,
             port: Some(3000),
             no_proxy: false,
-            proxy: ProxyRuntimeOpts::default(),
+            proxy: ProxyRuntimeOptions::default(),
             command: vec!["npm".into(), "run".into(), "dev".into()],
         }),
-        ProxyCommand::Alias(ProxyAliasOpts {
+        ProxyCommand::Alias(ProxyAliasRequest {
             name: "web".into(),
             port: 3000,
             host: "127.0.0.1".into(),
             accept_non_loopback_target: false,
-            proxy: ProxyRuntimeOpts::default(),
+            proxy: ProxyRuntimeOptions::default(),
         }),
-        ProxyCommand::Cert(ProxyCertCommand::Generate(ProxyCertGenerateOpts::default())),
-        ProxyCommand::Cert(ProxyCertCommand::Status(ProxyCertRuntimeOpts::default())),
-        ProxyCommand::Cert(ProxyCertCommand::Trust(ProxyCertTrustOpts {
+        ProxyCommand::Cert(ProxyCertCommand::Generate(
+            ProxyCertGenerateRequest::default(),
+        )),
+        ProxyCommand::Cert(ProxyCertCommand::Status(ProxyCertRuntimeRequest::default())),
+        ProxyCommand::Cert(ProxyCertCommand::Trust(ProxyCertTrustRequest {
             accept_trust_scope: true,
-            proxy: ProxyRuntimeOpts::default(),
+            proxy: ProxyRuntimeOptions::default(),
         })),
-        ProxyCommand::Cert(ProxyCertCommand::Untrust(ProxyCertUntrustOpts {
+        ProxyCommand::Cert(ProxyCertCommand::Untrust(ProxyCertUntrustRequest {
             accept_trust_scope: true,
-            proxy: ProxyRuntimeOpts::default(),
+            proxy: ProxyRuntimeOptions::default(),
         })),
-        ProxyCommand::Service(ProxyServiceCommand::Install(ProxyServiceInstallOpts {
+        ProxyCommand::Service(ProxyServiceCommand::Install(ProxyServiceInstallRequest {
             accept_service_scope: true,
-            proxy: ProxyRuntimeOpts::default(),
+            proxy: ProxyRuntimeOptions::default(),
         })),
         ProxyCommand::Service(ProxyServiceCommand::Uninstall(
-            ProxyServiceRuntimeOpts::default(),
+            ProxyServiceRuntimeRequest::default(),
         )),
         ProxyCommand::Service(ProxyServiceCommand::Status(
-            ProxyServiceRuntimeOpts::default(),
+            ProxyServiceRuntimeRequest::default(),
         )),
     ]
 }
@@ -647,7 +649,7 @@ fn proxy_command_case_name(command: &ProxyCommand) -> &'static str {
 #[test]
 fn contextless_proxy_settings_use_runtime_flags() {
     let temp = tempdir().unwrap();
-    let settings = settings_without_context(&ProxyRuntimeOpts {
+    let settings = settings_without_context(&ProxyRuntimeOptions {
         state_dir: Some(temp.path().to_path_buf()),
         http_port: Some(1555),
         https_port: Some(1556),
@@ -686,10 +688,10 @@ lan = true
 
     let settings = settings(
         &ctx,
-        &ProxyRuntimeOpts {
+        &ProxyRuntimeOptions {
             no_https: true,
             no_lan: true,
-            ..ProxyRuntimeOpts::default()
+            ..ProxyRuntimeOptions::default()
         },
     )
     .unwrap();
@@ -718,7 +720,7 @@ https_port = 1555
     .unwrap();
 
     let ctx = RepoContext::load_from(temp.path()).unwrap();
-    let error = settings(&ctx, &ProxyRuntimeOpts::default())
+    let error = settings(&ctx, &ProxyRuntimeOptions::default())
         .unwrap_err()
         .to_string();
 

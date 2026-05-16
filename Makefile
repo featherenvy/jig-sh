@@ -20,7 +20,7 @@ DEV_COMMAND := cargo test --workspace
 
 .PHONY: contract-check
 
-.PHONY: check-agent-map check-agent-guides check-rust-file-loc check-no-mod-rs
+.PHONY: check-agent-map check-agent-guides check-rust-file-loc check-no-mod-rs check-launcher-template
 .PHONY: enforce-coverage release-notes release-prepare release-stage release-check release-tag release-publish release-github ci ci-webapps
 
 
@@ -82,6 +82,21 @@ check-rust-file-loc: ## Enforce Rust file-size policy against the default branch
 check-no-mod-rs: ## Fail if disallowed mod.rs files exist under configured crate roots
 	scripts/jig check no-mod-rs
 
+check-launcher-template: ## Verify source and rendered launcher templates stay synchronized
+	@set -euo pipefail; \
+	normalize_launcher() { \
+	  sed \
+	    -e '/^# Keep launcher behavior synchronized /,+1d' \
+	    -e '/^\[% if repo_name == "jig-sh" %\]$$/d' \
+	    -e '/^\[% endif %\]$$/d' \
+	    -e 's/^JIG_VERSION="[^"]*"$$/JIG_VERSION="<<[ jig_version ]>>"/' \
+	    "$$1"; \
+	}; \
+	if ! diff -u <(normalize_launcher scripts/jig) <(normalize_launcher templates/project/scripts/jig.jinja); then \
+	  echo "scripts/jig and templates/project/scripts/jig.jinja drifted." >&2; \
+	  exit 1; \
+	fi
+
 
 
 enforce-coverage: ## Enforce a coverage threshold from COVERAGE_THRESHOLD against COVERAGE_DIR
@@ -113,4 +128,4 @@ ci-webapps: ## No configured web apps
 	@echo "No web apps configured."
 
 
-ci: fmt-check clippy test-rust-locked contract-check check-rust-file-loc check-no-mod-rs check-agent-map check-agent-guides ci-webapps ## Run the standard CI validation set
+ci: fmt-check clippy test-rust-locked contract-check check-rust-file-loc check-no-mod-rs check-agent-map check-agent-guides check-launcher-template ci-webapps ## Run the standard CI validation set

@@ -1,170 +1,22 @@
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow, bail};
+use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
-use crate::cli::{WorkCheckOpts, WorkCommand, WorkFinishOpts, WorkGatesOpts};
+use crate::command::{
+    WorkAppendRequest, WorkCheckRequest, WorkCommand, WorkDecisionRequest, WorkFinishRequest,
+    WorkGatesRequest, WorkGoalRequest, WorkReceiptsRequest, WorkStartRequest,
+};
 use crate::context::{RepoContext, WorkGateConfig};
 use crate::state::{
-    PlanOpenRequest, ReceiptInput, current_session, current_worktree_fingerprint, decisions_add,
-    ensure_plan_is_open, latest_plan_tool_receipt, latest_plan_work_check_receipt_for_tool, now_ms,
-    plans_append, plans_close, plans_open, receipts_list, record_receipt, session_end,
-    session_start, state_summary,
+    DecisionAddRequest, PlanAppendRequest, PlanCloseRequest, PlanOpenRequest, ReceiptInput,
+    ReceiptListFilter, SessionEndRequest, current_session, current_worktree_fingerprint,
+    decisions_add, ensure_plan_is_open, latest_plan_tool_receipt,
+    latest_plan_work_check_receipt_for_tool, now_ms, plans_append, plans_close, plans_open,
+    receipts_list, record_receipt, session_end, session_start, state_summary,
 };
 use crate::tool_defs::{self, tool};
 
-use super::{execute_manifest_tool_without_worktree_fingerprint, requests};
-
-pub(super) fn dispatch(ctx: &RepoContext, command: WorkCommand) -> Result<Value> {
-    match command {
-        WorkCommand::Goal(opts) => goal(ctx, opts.into()),
-        WorkCommand::Start(opts) => start(ctx, opts.into()),
-        WorkCommand::Append(opts) => plans_append(ctx, opts.into()),
-        WorkCommand::Check(opts) => check(ctx, opts),
-        WorkCommand::Gates(opts) => gates(ctx, opts),
-        WorkCommand::Decide(opts) => decisions_add(ctx, opts.into()),
-        WorkCommand::Receipts(opts) => receipts_list(ctx, opts.into()),
-        // Summary output is a CLI rendering concern; runtime output stays JSON.
-        WorkCommand::Status(_opts) => state_summary(ctx),
-        WorkCommand::Finish(opts) => finish(ctx, opts),
-    }
-}
-
-pub(super) fn goal(ctx: &RepoContext, request: requests::WorkGoalRequest) -> Result<Value> {
-    let goal = GoalHarness::from_request(request)?;
-
-    let body = goal_body(ctx, &goal);
-    let output = start(
-        ctx,
-        PlanOpenRequest {
-            title: goal.title.clone(),
-            body: Some(body),
-            body_file: None,
-        },
-    )?;
-
-    let plan_id = output["plan"]["plan_id"]
-        .as_str()
-        .ok_or_else(|| anyhow!("Goal harness failed to create a plan id"))?;
-    let body_path = output["plan"]["body_path"]
-        .as_str()
-        .ok_or_else(|| anyhow!("Goal harness failed to create a plan body path"))?;
-    let goal_prompt = goal_prompt(plan_id, body_path, &goal);
-
-    Ok(json!({
-        "ok": true,
-        "session": output["session"],
-        "plan": output["plan"],
-        "goal_prompt": goal_prompt,
-        "commands": {
-            "status": "scripts/jig work status",
-            "check": format!("scripts/jig work check --plan-id {plan_id}"),
-            "gates": format!("scripts/jig work gates --plan-id {plan_id}"),
-            "finish": format!("scripts/jig work finish --plan-id {plan_id}")
-        }
-    }))
-}
-
-pub(super) fn start(ctx: &RepoContext, plan: crate::state::PlanOpenRequest) -> Result<Value> {
-    let session = session_start(ctx)?;
-    let plan = plans_open(ctx, plan)?;
-
-    Ok(json!({
-        "ok": true,
-        "session": session,
-        "plan": plan,
-    }))
-}
-
-pub(super) fn check(ctx: &RepoContext, opts: WorkCheckOpts) -> Result<Value> {
-    check_tools(ctx, &opts.plan_id, selected_tools(ctx, &opts.tools)?)
-}
-
-pub(super) fn gates(ctx: &RepoContext, opts: WorkGatesOpts) -> Result<Value> {
-    gate_status(ctx, &opts.plan_id)
-}
-
-pub(super) fn finish(ctx: &RepoContext, opts: WorkFinishOpts) -> Result<Value> {
-    // Check before gate evaluation so unknown or already-closed plans report
-    // plan-state errors instead of misleading gate failures. plans_close
-    // rechecks after gates to preserve the state-layer invariant.
-    ensure_plan_is_open(ctx, &opts.plan_id)?;
-    ensure_required_gates_passed(ctx, &opts.plan_id)?;
-
-    let plan = plans_close(ctx, (&opts).into())?;
-    let session = match current_session(ctx)? {
-        Some(_) => Some(session_end(
-            ctx,
-            requests::session_end_request_for_finish(opts.outcome.or(opts.resolution)),
-        )?),
-        None => None,
-    };
-
-    Ok(json!({
-        "ok": true,
-        "plan": plan,
-        "session": session,
-    }))
-}
-
-pub(super) fn start_from_args(ctx: &RepoContext, args: Value) -> Result<Value> {
-    start(ctx, requests::request_from_args(args)?)
-}
-
-pub(super) fn goal_from_args(ctx: &RepoContext, args: Value) -> Result<Value> {
-    goal(ctx, requests::request_from_args(args)?)
-}
-
-pub(super) fn append_from_args(ctx: &RepoContext, args: Value) -> Result<Value> {
-    plans_append(ctx, requests::request_from_args(args)?)
-}
-
-pub(super) fn check_from_args(ctx: &RepoContext, args: Value) -> Result<Value> {
-    let request: requests::WorkCheckRequest = requests::request_from_args(args)?;
-    check_tools(ctx, &request.plan_id, selected_tools(ctx, &request.tools)?)
-}
-
-pub(super) fn gates_from_args(ctx: &RepoContext, args: Value) -> Result<Value> {
-    let request: requests::WorkGatesRequest = requests::request_from_args(args)?;
-    gates(
-        ctx,
-        WorkGatesOpts {
-            plan_id: request.plan_id,
-        },
-    )
-}
-
-pub(super) fn decide_from_args(ctx: &RepoContext, args: Value) -> Result<Value> {
-    decisions_add(ctx, requests::request_from_args(args)?)
-}
-
-pub(super) fn receipts_from_args(ctx: &RepoContext, args: Value) -> Result<Value> {
-    receipts_list(ctx, requests::request_from_args(args)?)
-}
-
-pub(super) fn finish_from_args(ctx: &RepoContext, args: Value) -> Result<Value> {
-    let request: requests::WorkFinishRequest = requests::request_from_args(args)?;
-    finish(
-        ctx,
-        WorkFinishOpts {
-            plan_id: request.plan_id,
-            resolution: request.resolution,
-            outcome: request.outcome,
-        },
-    )
-}
-
-fn selected_tools(ctx: &RepoContext, explicit_tools: &[String]) -> Result<Vec<String>> {
-    let tools = if explicit_tools.is_empty() {
-        ctx.work_check_tools()
-    } else {
-        explicit_tools.to_vec()
-    };
-
-    if tools.is_empty() {
-        bail!("No work check gates configured. Add work.gates to .jig.toml or pass --tool.");
-    }
-
-    Ok(tools)
-}
+use super::execute_manifest_tool_without_worktree_fingerprint;
 
 struct GoalHarness {
     objective: String,
@@ -177,7 +29,7 @@ struct GoalHarness {
 }
 
 impl GoalHarness {
-    fn from_request(request: requests::WorkGoalRequest) -> Result<Self> {
+    fn from_request(request: WorkGoalRequest) -> Result<Self> {
         let objective = trimmed_required_text("--objective", &request.objective)?;
         let success = trimmed_required_text("--success", &request.success)?;
         let validations = clean_provided_items("--validation", &request.validations)?;
@@ -215,6 +67,217 @@ impl GoalHarness {
             notes,
         })
     }
+}
+
+impl From<WorkStartRequest> for PlanOpenRequest {
+    fn from(request: WorkStartRequest) -> Self {
+        Self {
+            title: request.title,
+            body: request.body,
+            body_file: request.body_file,
+        }
+    }
+}
+
+impl From<WorkAppendRequest> for PlanAppendRequest {
+    fn from(request: WorkAppendRequest) -> Self {
+        Self {
+            plan_id: request.plan_id,
+            body: request.body,
+            body_file: request.body_file,
+        }
+    }
+}
+
+impl From<WorkDecisionRequest> for DecisionAddRequest {
+    fn from(request: WorkDecisionRequest) -> Self {
+        Self {
+            title: request.title,
+            selected_option: request.selected_option,
+            rationale: request.rationale,
+            alternatives: request.alternatives,
+            plan_id: request.plan_id,
+        }
+    }
+}
+
+impl From<WorkReceiptsRequest> for ReceiptListFilter {
+    fn from(request: WorkReceiptsRequest) -> Self {
+        Self {
+            session_id: request.session_id,
+            plan_id: request.plan_id,
+            tool_name: request.tool_name,
+            failed_only: request.failed_only,
+            limit: request.limit,
+        }
+    }
+}
+
+impl From<&WorkFinishRequest> for PlanCloseRequest {
+    fn from(request: &WorkFinishRequest) -> Self {
+        Self {
+            plan_id: request.plan_id.clone(),
+            resolution: request.resolution.clone(),
+        }
+    }
+}
+
+pub(super) fn dispatch(ctx: &RepoContext, command: WorkCommand) -> Result<Value> {
+    match command {
+        WorkCommand::Goal(opts) => goal(ctx, opts),
+        WorkCommand::Start(opts) => start(ctx, opts.into()),
+        WorkCommand::Append(opts) => plans_append(ctx, opts.into()),
+        WorkCommand::Check(opts) => check(ctx, opts),
+        WorkCommand::Gates(opts) => gates(ctx, opts),
+        WorkCommand::Decide(opts) => decisions_add(ctx, opts.into()),
+        WorkCommand::Receipts(opts) => receipts_list(ctx, opts.into()),
+        WorkCommand::Status => state_summary(ctx),
+        WorkCommand::Finish(opts) => finish(ctx, opts),
+    }
+}
+
+pub(super) fn goal(ctx: &RepoContext, request: WorkGoalRequest) -> Result<Value> {
+    let goal = GoalHarness::from_request(request)?;
+
+    let body = goal_body(ctx, &goal);
+    let output = start(
+        ctx,
+        PlanOpenRequest {
+            title: goal.title.clone(),
+            body: Some(body),
+            body_file: None,
+        },
+    )?;
+
+    let plan_id = output["plan"]["plan_id"]
+        .as_str()
+        .ok_or_else(|| anyhow!("Goal harness failed to create a plan id"))?;
+    let body_path = output["plan"]["body_path"]
+        .as_str()
+        .ok_or_else(|| anyhow!("Goal harness failed to create a plan body path"))?;
+    let goal_prompt = goal_prompt(plan_id, body_path, &goal);
+
+    Ok(json!({
+        "ok": true,
+        "session": output["session"],
+        "plan": output["plan"],
+        "goal_prompt": goal_prompt,
+        "commands": {
+            "status": "scripts/jig work status",
+            "check": format!("scripts/jig work check --plan-id {plan_id}"),
+            "gates": format!("scripts/jig work gates --plan-id {plan_id}"),
+            "finish": format!("scripts/jig work finish --plan-id {plan_id}")
+        }
+    }))
+}
+
+pub(super) fn start(ctx: &RepoContext, plan: PlanOpenRequest) -> Result<Value> {
+    let session = session_start(ctx)?;
+    let plan = plans_open(ctx, plan)?;
+
+    Ok(json!({
+        "ok": true,
+        "session": session,
+        "plan": plan,
+    }))
+}
+
+pub(super) fn check(ctx: &RepoContext, opts: WorkCheckRequest) -> Result<Value> {
+    check_tools(ctx, &opts.plan_id, selected_tools(ctx, &opts.tools)?)
+}
+
+pub(super) fn gates(ctx: &RepoContext, opts: WorkGatesRequest) -> Result<Value> {
+    gate_status(ctx, &opts.plan_id)
+}
+
+pub(super) fn finish(ctx: &RepoContext, opts: WorkFinishRequest) -> Result<Value> {
+    // Check before gate evaluation so unknown or already-closed plans report
+    // plan-state errors instead of misleading gate failures. plans_close
+    // rechecks after gates to preserve the state-layer invariant.
+    ensure_plan_is_open(ctx, &opts.plan_id)?;
+    ensure_required_gates_passed(ctx, &opts.plan_id)?;
+
+    let plan = plans_close(ctx, (&opts).into())?;
+    let session = match current_session(ctx)? {
+        Some(_) => Some(session_end(
+            ctx,
+            session_end_request_for_finish(opts.outcome.or(opts.resolution)),
+        )?),
+        None => None,
+    };
+
+    Ok(json!({
+        "ok": true,
+        "plan": plan,
+        "session": session,
+    }))
+}
+
+pub(super) fn start_from_args(ctx: &RepoContext, args: Value) -> Result<Value> {
+    let request: WorkStartRequest = request_from_args(args)?;
+    start(ctx, request.into())
+}
+
+pub(super) fn goal_from_args(ctx: &RepoContext, args: Value) -> Result<Value> {
+    goal(ctx, request_from_args(args)?)
+}
+
+pub(super) fn append_from_args(ctx: &RepoContext, args: Value) -> Result<Value> {
+    let request: WorkAppendRequest = request_from_args(args)?;
+    plans_append(ctx, request.into())
+}
+
+pub(super) fn check_from_args(ctx: &RepoContext, args: Value) -> Result<Value> {
+    let request: WorkCheckRequest = request_from_args(args)?;
+    check_tools(ctx, &request.plan_id, selected_tools(ctx, &request.tools)?)
+}
+
+pub(super) fn gates_from_args(ctx: &RepoContext, args: Value) -> Result<Value> {
+    let request: WorkGatesRequest = request_from_args(args)?;
+    gates(ctx, request)
+}
+
+pub(super) fn decide_from_args(ctx: &RepoContext, args: Value) -> Result<Value> {
+    let request: WorkDecisionRequest = request_from_args(args)?;
+    decisions_add(ctx, request.into())
+}
+
+pub(super) fn receipts_from_args(ctx: &RepoContext, args: Value) -> Result<Value> {
+    let request: WorkReceiptsRequest = request_from_args(args)?;
+    receipts_list(ctx, request.into())
+}
+
+pub(super) fn finish_from_args(ctx: &RepoContext, args: Value) -> Result<Value> {
+    let request: WorkFinishRequest = request_from_args(args)?;
+    finish(ctx, request)
+}
+
+fn request_from_args<T>(args: Value) -> Result<T>
+where
+    T: DeserializeOwned,
+{
+    serde_json::from_value(args).context("Invalid work tool arguments")
+}
+
+fn session_end_request_for_finish(outcome: Option<String>) -> SessionEndRequest {
+    SessionEndRequest {
+        session_id: None,
+        outcome,
+    }
+}
+
+fn selected_tools(ctx: &RepoContext, explicit_tools: &[String]) -> Result<Vec<String>> {
+    let tools = if explicit_tools.is_empty() {
+        ctx.work_check_tools()
+    } else {
+        explicit_tools.to_vec()
+    };
+
+    if tools.is_empty() {
+        bail!("No work check gates configured. Add work.gates to .jig.toml or pass --tool.");
+    }
+
+    Ok(tools)
 }
 
 fn goal_title(objective: &str) -> String {

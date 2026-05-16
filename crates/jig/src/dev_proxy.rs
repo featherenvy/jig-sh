@@ -3,15 +3,15 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use serde_json::Value;
 
-use crate::cli::{
-    DevOpts, ProxyAliasOpts, ProxyCertCommand, ProxyCommand, ProxyRuntimeOpts, ProxyServiceCommand,
-    ProxyStartOpts,
+use crate::command::{
+    DevRequest, ProxyAliasRequest, ProxyCertCommand, ProxyCommand, ProxyRuntimeOptions,
+    ProxyServiceCommand, ProxyStartRequest,
 };
 #[cfg(test)]
-use crate::cli::{
-    ProxyCertGenerateOpts, ProxyCertRuntimeOpts, ProxyCertTrustOpts, ProxyCertUntrustOpts,
-    ProxyListOpts, ProxyPruneOpts, ProxyRunOpts, ProxyServiceInstallOpts, ProxyServiceRuntimeOpts,
-    ProxyStopOpts,
+use crate::command::{
+    ProxyCertGenerateRequest, ProxyCertRuntimeRequest, ProxyCertTrustRequest,
+    ProxyCertUntrustRequest, ProxyListRequest, ProxyPruneRequest, ProxyRunRequest,
+    ProxyServiceInstallRequest, ProxyServiceRuntimeRequest, ProxyStopRequest,
 };
 use crate::context::{DevAppConfig, RepoContext};
 use crate::progress::CliProgress;
@@ -19,7 +19,7 @@ use crate::progress::CliProgress;
 pub(crate) mod commands {
     use super::*;
 
-    pub(crate) fn dev(ctx: &RepoContext, opts: DevOpts) -> Result<Value> {
+    pub(crate) fn dev(ctx: &RepoContext, opts: DevRequest) -> Result<Value> {
         let progress = CliProgress::new("dev");
         progress.header("launch configured development apps");
         progress.info("repo", ctx.root().display());
@@ -179,7 +179,7 @@ pub(crate) mod commands {
         }
     }
 
-    fn proxy_start(ctx: &RepoContext, opts: ProxyStartOpts) -> Result<Value> {
+    fn proxy_start(ctx: &RepoContext, opts: ProxyStartRequest) -> Result<Value> {
         jig_dev_proxy::proxy_start(jig_dev_proxy::ProxyStartRequest::new(
             settings(ctx, &opts.proxy)?,
             opts.foreground,
@@ -198,7 +198,7 @@ pub(crate) mod commands {
         jig_dev_proxy::proxy_prune(jig_dev_proxy::ProxyPruneRequest::new(settings))
     }
 
-    fn proxy_alias(ctx: &RepoContext, opts: ProxyAliasOpts) -> Result<Value> {
+    fn proxy_alias(ctx: &RepoContext, opts: ProxyAliasRequest) -> Result<Value> {
         jig_dev_proxy::proxy_alias(
             jig_dev_proxy::ProxyAliasRequest::new(
                 settings(ctx, &opts.proxy)?,
@@ -473,7 +473,7 @@ fn app_from_dev_config(
         .with_proxy(app.proxy))
 }
 
-fn settings(ctx: &RepoContext, opts: &ProxyRuntimeOpts) -> Result<jig_dev_proxy::ProxySettings> {
+fn settings(ctx: &RepoContext, opts: &ProxyRuntimeOptions) -> Result<jig_dev_proxy::ProxySettings> {
     let config = ctx.dev_config();
     build_settings(
         opts,
@@ -491,12 +491,12 @@ fn settings(ctx: &RepoContext, opts: &ProxyRuntimeOpts) -> Result<jig_dev_proxy:
 
 fn settings_existing_state_dir(
     ctx: &RepoContext,
-    opts: &ProxyRuntimeOpts,
+    opts: &ProxyRuntimeOptions,
 ) -> Result<jig_dev_proxy::ProxySettings> {
     require_existing_state_dir(settings(ctx, opts)?)
 }
 
-fn settings_without_context(opts: &ProxyRuntimeOpts) -> Result<jig_dev_proxy::ProxySettings> {
+fn settings_without_context(opts: &ProxyRuntimeOptions) -> Result<jig_dev_proxy::ProxySettings> {
     let defaults = jig_dev_proxy::ProxySettings::default();
     build_settings(
         opts,
@@ -513,7 +513,7 @@ fn settings_without_context(opts: &ProxyRuntimeOpts) -> Result<jig_dev_proxy::Pr
 }
 
 fn settings_existing_state_dir_without_context(
-    opts: &ProxyRuntimeOpts,
+    opts: &ProxyRuntimeOptions,
 ) -> Result<jig_dev_proxy::ProxySettings> {
     require_existing_state_dir(settings_without_context(opts)?)
 }
@@ -528,7 +528,7 @@ struct SettingsDefaults {
 }
 
 fn build_settings(
-    opts: &ProxyRuntimeOpts,
+    opts: &ProxyRuntimeOptions,
     defaults: SettingsDefaults,
     additional_dns_names: impl FnOnce(&str) -> Result<Vec<String>>,
 ) -> Result<jig_dev_proxy::ProxySettings> {
@@ -581,7 +581,7 @@ fn require_existing_state_dir(
     Ok(settings)
 }
 
-fn reject_no_proxy_runtime_flags(no_proxy: bool, opts: &ProxyRuntimeOpts) -> Result<()> {
+fn reject_no_proxy_runtime_flags(no_proxy: bool, opts: &ProxyRuntimeOptions) -> Result<()> {
     if !no_proxy {
         return Ok(());
     }

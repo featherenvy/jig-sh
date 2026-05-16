@@ -20,6 +20,13 @@ FULL_STACK_DIR="$TMP_DIR/full-stack"
 TOOLING_ONLY_DIR="$TMP_DIR/tooling-only"
 TEMPLATE_SNAPSHOT="$TMP_DIR/template-snapshot"
 
+for answer_name in backend-only.toml full-stack.toml tooling-only.toml; do
+  if ! cmp -s "$ROOT_DIR/examples/$answer_name" "$ROOT_DIR/tests/fixtures/$answer_name"; then
+    echo "examples/$answer_name must match tests/fixtures/$answer_name." >&2
+    exit 1
+  fi
+done
+
 create_template_snapshot_repo "$TEMPLATE_SNAPSHOT"
 render_fixture_from_template "$TEMPLATE_SNAPSHOT" "$ROOT_DIR/tests/fixtures/backend-only.toml" "$BACKEND_DIR"
 render_fixture_from_template "$TEMPLATE_SNAPSHOT" "$ROOT_DIR/tests/fixtures/full-stack.toml" "$FULL_STACK_DIR"

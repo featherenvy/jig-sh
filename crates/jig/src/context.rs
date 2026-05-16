@@ -341,7 +341,7 @@ impl RepoContext {
         let manifest: ContractManifest = serde_json::from_str(&manifest_text)
             .with_context(|| format!("Failed to parse {}", manifest_path.display()))?;
 
-        if !matches!(manifest.contract_version, 1 | 2 | 3) {
+        if !matches!(manifest.contract_version, 1..=3) {
             bail!(
                 "Unsupported jig contract version: {}",
                 manifest.contract_version
@@ -705,5 +705,7 @@ impl RepoContext {
     }
 }
 
+#[cfg(test)]
+mod contract_tests;
 #[cfg(test)]
 mod tests;

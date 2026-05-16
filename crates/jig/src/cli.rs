@@ -5,7 +5,10 @@ use clap::{Args, Parser, Subcommand};
 #[cfg(test)]
 use crate::tool_defs::tool;
 use crate::{
-    bootstrap, context::RepoContext, mcp, runtime, state::DEFAULT_RECEIPTS_LIMIT, tool_defs,
+    bootstrap,
+    context::RepoContext,
+    mcp, runtime,
+    tool_defs::{self, DEFAULT_RECEIPTS_LIMIT},
 };
 
 #[derive(Debug, Parser)]
@@ -82,6 +85,13 @@ Close a plan after required gates pass; use --outcome for a machine-readable res
 
 Examples:
   jig work finish --plan-id plan_abc123 --resolution \"Auth flow complete\" --outcome success";
+
+const WORK_RECEIPTS_AFTER_HELP: &str = "\
+JSON is the stable default. Use --summary for terminal scanning.
+
+Examples:
+  jig work receipts --failed-only --summary --limit 5
+  jig work receipts --plan-id plan_abc123 --summary";
 
 const CHECK_AFTER_HELP: &str = "\
 Run configured project checks or Jig-owned repository policy checks.
@@ -235,7 +245,10 @@ pub(crate) enum WorkCommand {
     #[command(name = tool_defs::cli_command::WORK_DECIDE)]
     Decide(WorkDecisionAddOpts),
     /// List recorded command receipts.
-    #[command(name = tool_defs::cli_command::WORK_RECEIPTS)]
+    #[command(
+        name = tool_defs::cli_command::WORK_RECEIPTS,
+        after_help = WORK_RECEIPTS_AFTER_HELP
+    )]
     Receipts(WorkReceiptsOpts),
     /// Summarize current structured work state.
     #[command(name = tool_defs::cli_command::WORK_STATUS)]
@@ -579,12 +592,6 @@ pub(crate) struct ToolOpts {
     pub(crate) no_receipt: bool,
 }
 
-impl ToolOpts {
-    pub(crate) fn record_receipt(&self) -> bool {
-        !self.no_receipt
-    }
-}
-
 #[derive(Args, Debug)]
 #[command(after_help = MIGRATION_ADD_AFTER_HELP)]
 pub(crate) struct MigrationAddOpts {
@@ -698,6 +705,8 @@ pub(crate) struct WorkReceiptsOpts {
     pub(crate) failed_only: bool,
     #[arg(long, default_value_t = DEFAULT_RECEIPTS_LIMIT, help = "Maximum receipts to show")]
     pub(crate) limit: usize,
+    #[arg(long, help = "Print a concise human-readable receipt summary")]
+    pub(crate) summary: bool,
 }
 
 impl Default for WorkReceiptsOpts {
@@ -708,6 +717,7 @@ impl Default for WorkReceiptsOpts {
             tool_name: None,
             failed_only: false,
             limit: DEFAULT_RECEIPTS_LIMIT,
+            summary: false,
         }
     }
 }
@@ -726,14 +736,16 @@ pub(crate) struct WorkDecisionAddOpts {
     pub(crate) plan_id: Option<String>,
 }
 
+mod command_conversion;
+
 mod run;
 
+pub(crate) use run::{is_structured_json_failure, run};
 #[cfg(test)]
 use run::{
-    command_reports_failure_with_ok, moved_check_command_hint, require_json_ok,
-    should_add_template_hint,
+    moved_check_command_hint, require_json_ok, should_add_template_hint,
+    test_command_reports_failure_with_ok,
 };
-pub(crate) use run::{is_structured_json_failure, run};
 
 fn parse_ip_literal_string(value: &str) -> std::result::Result<String, String> {
     value
@@ -742,5 +754,7 @@ fn parse_ip_literal_string(value: &str) -> std::result::Result<String, String> {
         .map_err(|_| format!("'{value}' must be an IP literal"))
 }
 
+#[cfg(test)]
+mod help_tests;
 #[cfg(test)]
 mod tests;

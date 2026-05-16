@@ -8,9 +8,17 @@ PACKAGE_NAME="jig-sh"
 PUBLISH_PACKAGE_NAMES=("jig-dev-proxy" "$PACKAGE_NAME")
 BIN_NAME="jig"
 RELEASE_FIXTURE_FILES=(
+  examples/backend-only.toml
+  examples/full-stack.toml
+  examples/tooling-only.toml
   tests/fixtures/backend-only.toml
   tests/fixtures/full-stack.toml
   tests/fixtures/tooling-only.toml
+)
+EXAMPLE_FIXTURE_BASENAMES=(
+  backend-only.toml
+  full-stack.toml
+  tooling-only.toml
 )
 
 print_usage() {
@@ -314,6 +322,14 @@ PY
     fi
     if [[ "$file_version" != "$version" ]]; then
       echo "$version_file jig_version is $file_version, expected $version." >&2
+      exit 1
+    fi
+  done
+
+  local answer_name
+  for answer_name in "${EXAMPLE_FIXTURE_BASENAMES[@]}"; do
+    if ! cmp -s "$ROOT_DIR/examples/$answer_name" "$ROOT_DIR/tests/fixtures/$answer_name"; then
+      echo "examples/$answer_name must match tests/fixtures/$answer_name. Update both copies together." >&2
       exit 1
     fi
   done

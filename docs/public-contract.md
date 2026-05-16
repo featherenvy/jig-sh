@@ -10,7 +10,7 @@ Generated repositories may rely on the contract described here when they pin a `
 
 Structured work commands and agent tooling checks are runtime-owned conveniences. They are available through commands such as `scripts/jig work ...` and `scripts/jig agent doctor`, and MCP tools named `jig.work_*` and `jig.agent_doctor`, but they are not part of the generated command contract and are not declared in `.agent/jig-contract.json`.
 
-Some runtime-owned CLI commands expose explicit human-output flags, such as `scripts/jig agent doctor --summary`, `scripts/jig work status --summary`, and `scripts/jig work start --print-plan-id`. These outputs are for terminal scanning or shell integration and are not stable machine-readable contract output; automation should use the default JSON output or MCP tools.
+Some runtime-owned CLI commands expose explicit human-output flags, such as `scripts/jig agent doctor --summary`, `scripts/jig work status --summary`, `scripts/jig work receipts --summary`, and `scripts/jig work start --print-plan-id`. These outputs are for terminal scanning or shell integration and are not stable machine-readable contract output; automation should use the default JSON output or MCP tools.
 
 The structured work namespace includes native check gates. Gates are configured in `.jig.toml`, evaluated from receipts, and enforced by `scripts/jig work finish`. They remain runtime-owned because they compose stable execution tools with append-only work state rather than adding new generated contract tools.
 

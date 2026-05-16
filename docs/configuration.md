@@ -388,6 +388,11 @@ The generated `scripts/jig` launcher enforces the exact `jig_version` pinned in 
 - CLI commands such as `scripts/jig check fmt`
 - MCP tools such as `jig.fmt_check`
 
+For help requests, the launcher first looks for an existing matching repo-local
+binary so `scripts/jig --help` and nested `--help` calls stay fast after the
+first install. On a cold checkout it prints an explicit first-run install
+message before preparing the runtime needed to render command help.
+
 It also provides runtime-owned append-only memory under `.agent/state/*.jsonl` through the structured work namespace:
 
 - `scripts/jig agent doctor`
@@ -400,6 +405,7 @@ It also provides runtime-owned append-only memory under `.agent/state/*.jsonl` t
 - `scripts/jig work gates --plan-id ...`
 - `scripts/jig work decide --plan-id ...`
 - `scripts/jig work receipts --plan-id ...`
+- `scripts/jig work receipts --plan-id ... --summary`
 - `scripts/jig work status`
 - `scripts/jig work status --summary`
 - `scripts/jig work finish --plan-id ...`

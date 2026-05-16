@@ -1,6 +1,7 @@
 mod agent_guides;
 mod bootstrap;
 mod cli;
+mod command;
 mod context;
 #[cfg(feature = "dev-proxy")]
 mod dev_proxy;
@@ -12,16 +13,16 @@ mod dev_proxy {
         use anyhow::{Result, bail};
         use serde_json::Value;
 
-        use crate::cli::{DevOpts, ProxyCommand};
+        use crate::command::{DevRequest, ProxyCommand};
         use crate::context::RepoContext;
 
-        pub(crate) fn dev(_ctx: &RepoContext, _opts: DevOpts) -> Result<Value> {
+        pub(crate) fn dev(_ctx: &RepoContext, _opts: DevRequest) -> Result<Value> {
             bail!(
                 "`jig dev` is unavailable because this binary was built without the `dev-proxy` feature"
             )
         }
 
-        pub(crate) fn dev_without_context(_opts: DevOpts) -> Result<Value> {
+        pub(crate) fn dev_without_context(_opts: DevRequest) -> Result<Value> {
             bail!(
                 "`jig dev` is unavailable because this binary was built without the `dev-proxy` feature"
             )
@@ -46,6 +47,7 @@ mod policy;
 mod process;
 mod progress;
 mod runtime;
+mod serde_helpers;
 mod state;
 #[cfg(test)]
 mod test_env;
@@ -103,7 +105,9 @@ jig_version = "0.2.0-beta.1"
 
         let error = runtime::dispatch(
             &ctx,
-            cli::CommandKind::Proxy(cli::ProxyCommand::List(cli::ProxyListOpts::default())),
+            command::RuntimeCommand::Proxy(
+                cli::ProxyCommand::List(cli::ProxyListOpts::default()).into(),
+            ),
         )
         .unwrap_err()
         .to_string();
@@ -113,12 +117,15 @@ jig_version = "0.2.0-beta.1"
 
     #[test]
     fn dev_without_context_reports_proxy_disabled_without_repo_lookup() {
-        let error = dev_proxy::commands::dev_without_context(cli::DevOpts {
-            apps: Vec::new(),
-            discover_workspace: false,
-            no_proxy: false,
-            proxy: cli::ProxyRuntimeOpts::default(),
-        })
+        let error = dev_proxy::commands::dev_without_context(
+            cli::DevOpts {
+                apps: Vec::new(),
+                discover_workspace: false,
+                no_proxy: false,
+                proxy: cli::ProxyRuntimeOpts::default(),
+            }
+            .into(),
+        )
         .unwrap_err()
         .to_string();
 

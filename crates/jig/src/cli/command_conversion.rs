@@ -1,0 +1,456 @@
+use crate::command;
+
+use super::{
+    AgentBootstrapOpts, AgentCommand, AgentMapCommand, AgentMapOpts, CheckCommand,
+    CheckMigrationImmutabilityOpts, CheckRustFileLocOpts, DevOpts,
+    GenerateSqlxUncheckedQueriesTodoOpts, MigrationAddOpts, ProxyAliasOpts, ProxyCertCommand,
+    ProxyCertGenerateOpts, ProxyCertRuntimeOpts, ProxyCertTrustOpts, ProxyCertUntrustOpts,
+    ProxyCommand, ProxyListOpts, ProxyPruneOpts, ProxyRunOpts, ProxyRuntimeOpts,
+    ProxyServiceCommand, ProxyServiceInstallOpts, ProxyServiceRuntimeOpts, ProxyStartOpts,
+    ProxyStopOpts, RunTargetOpts, ToolOpts, WorkAppendOpts, WorkCheckOpts, WorkCommand,
+    WorkDecisionAddOpts, WorkFinishOpts, WorkGatesOpts, WorkGoalOpts, WorkReceiptsOpts,
+    WorkStartOpts,
+};
+
+impl From<ToolOpts> for command::ToolRequest {
+    fn from(opts: ToolOpts) -> Self {
+        Self::new(opts.plan_id, !opts.no_receipt)
+    }
+}
+
+impl From<AgentMapCommand> for command::AgentMapCommand {
+    fn from(command: AgentMapCommand) -> Self {
+        match command {
+            AgentMapCommand::Generate(opts) => Self::Generate(opts.into()),
+        }
+    }
+}
+
+impl From<AgentMapOpts> for command::AgentMapRequest {
+    fn from(opts: AgentMapOpts) -> Self {
+        Self {
+            map_path: opts.map_path,
+        }
+    }
+}
+
+impl From<CheckCommand> for command::CheckCommand {
+    fn from(command: CheckCommand) -> Self {
+        match command {
+            CheckCommand::Fmt(opts) => Self::Fmt(opts.into()),
+            CheckCommand::Clippy(opts) => Self::Clippy(opts.into()),
+            CheckCommand::Test(opts) => Self::Test(opts.into()),
+            CheckCommand::TestLocked(opts) => Self::TestLocked(opts.into()),
+            CheckCommand::Sqlx(opts) => Self::Sqlx(opts.into()),
+            CheckCommand::Schema(opts) => Self::Schema(opts.into()),
+            CheckCommand::Contract(opts) => Self::Contract(opts.into()),
+            CheckCommand::AgentMap(opts) => Self::AgentMap(opts.into()),
+            CheckCommand::AgentGuides => Self::AgentGuides,
+            CheckCommand::RustFileLoc(opts) => Self::RustFileLoc(opts.into()),
+            CheckCommand::NoModRs => Self::NoModRs,
+            CheckCommand::MigrationImmutability(opts) => Self::MigrationImmutability(opts.into()),
+            CheckCommand::SqlxUncheckedNonTest => Self::SqlxUncheckedNonTest,
+        }
+    }
+}
+
+impl From<CheckRustFileLocOpts> for command::RustFileLocRequest {
+    fn from(opts: CheckRustFileLocOpts) -> Self {
+        Self {
+            staged: opts.staged,
+            changed_against: opts.changed_against,
+            all: opts.all,
+        }
+    }
+}
+
+impl From<CheckMigrationImmutabilityOpts> for command::MigrationImmutabilityRequest {
+    fn from(opts: CheckMigrationImmutabilityOpts) -> Self {
+        Self {
+            changed_against: opts.changed_against,
+        }
+    }
+}
+
+impl From<GenerateSqlxUncheckedQueriesTodoOpts> for command::SqlxTodoRequest {
+    fn from(opts: GenerateSqlxUncheckedQueriesTodoOpts) -> Self {
+        Self {
+            output: opts.output,
+        }
+    }
+}
+
+impl From<MigrationAddOpts> for command::MigrationAddRequest {
+    fn from(opts: MigrationAddOpts) -> Self {
+        Self {
+            name: opts.name,
+            tool: opts.tool.into(),
+        }
+    }
+}
+
+impl From<RunTargetOpts> for command::RunTargetRequest {
+    fn from(opts: RunTargetOpts) -> Self {
+        Self {
+            name: opts.name,
+            tool: opts.tool.into(),
+        }
+    }
+}
+
+impl From<AgentCommand> for command::AgentCommand {
+    fn from(command: AgentCommand) -> Self {
+        match command {
+            // `--summary` is a CLI output-mode flag handled in `run` before
+            // the runtime sees the neutral command.
+            AgentCommand::Doctor(_opts) => Self::Doctor,
+            AgentCommand::Bootstrap(opts) => Self::Bootstrap(opts.into()),
+        }
+    }
+}
+
+impl From<AgentBootstrapOpts> for command::AgentBootstrapRequest {
+    fn from(opts: AgentBootstrapOpts) -> Self {
+        Self {
+            marketplace: opts.marketplace,
+        }
+    }
+}
+
+impl From<WorkCommand> for command::WorkCommand {
+    fn from(command: WorkCommand) -> Self {
+        match command {
+            WorkCommand::Goal(opts) => Self::Goal(opts.into()),
+            WorkCommand::Start(opts) => Self::Start(opts.into()),
+            WorkCommand::Append(opts) => Self::Append(opts.into()),
+            WorkCommand::Check(opts) => Self::Check(opts.into()),
+            WorkCommand::Gates(opts) => Self::Gates(opts.into()),
+            WorkCommand::Decide(opts) => Self::Decide(opts.into()),
+            WorkCommand::Receipts(opts) => Self::Receipts(opts.into()),
+            // `--summary` is a CLI output-mode flag handled in `run` before
+            // the runtime sees the neutral command.
+            WorkCommand::Status(_opts) => Self::Status,
+            WorkCommand::Finish(opts) => Self::Finish(opts.into()),
+        }
+    }
+}
+
+impl From<WorkGoalOpts> for command::WorkGoalRequest {
+    fn from(opts: WorkGoalOpts) -> Self {
+        Self {
+            objective: opts.objective,
+            success: opts.success,
+            validations: opts.validations,
+            constraints: opts.constraints,
+            checkpoints: opts.checkpoints,
+            title: opts.title,
+            notes: opts.notes,
+        }
+    }
+}
+
+impl From<WorkStartOpts> for command::WorkStartRequest {
+    fn from(opts: WorkStartOpts) -> Self {
+        // `--print-plan-id` changes CLI rendering only; runtime still opens
+        // the same plan and returns the same structured payload.
+        Self {
+            title: opts.title,
+            body: opts.body,
+            body_file: opts.body_file,
+        }
+    }
+}
+
+impl From<WorkAppendOpts> for command::WorkAppendRequest {
+    fn from(opts: WorkAppendOpts) -> Self {
+        Self {
+            plan_id: opts.plan_id,
+            body: opts.body,
+            body_file: opts.body_file,
+        }
+    }
+}
+
+impl From<WorkCheckOpts> for command::WorkCheckRequest {
+    fn from(opts: WorkCheckOpts) -> Self {
+        Self {
+            plan_id: opts.plan_id,
+            tools: opts.tools,
+        }
+    }
+}
+
+impl From<WorkGatesOpts> for command::WorkGatesRequest {
+    fn from(opts: WorkGatesOpts) -> Self {
+        Self {
+            plan_id: opts.plan_id,
+        }
+    }
+}
+
+impl From<WorkReceiptsOpts> for command::WorkReceiptsRequest {
+    fn from(opts: WorkReceiptsOpts) -> Self {
+        Self {
+            session_id: opts.session_id,
+            plan_id: opts.plan_id,
+            tool_name: opts.tool_name,
+            failed_only: opts.failed_only,
+            limit: opts.limit,
+        }
+    }
+}
+
+impl From<WorkFinishOpts> for command::WorkFinishRequest {
+    fn from(opts: WorkFinishOpts) -> Self {
+        Self {
+            plan_id: opts.plan_id,
+            resolution: opts.resolution,
+            outcome: opts.outcome,
+        }
+    }
+}
+
+impl From<WorkDecisionAddOpts> for command::WorkDecisionRequest {
+    fn from(opts: WorkDecisionAddOpts) -> Self {
+        Self {
+            title: opts.title,
+            selected_option: opts.selected_option,
+            rationale: opts.rationale,
+            alternatives: opts.alternatives,
+            plan_id: opts.plan_id,
+        }
+    }
+}
+
+impl From<DevOpts> for command::DevRequest {
+    fn from(opts: DevOpts) -> Self {
+        Self {
+            apps: opts.apps,
+            discover_workspace: opts.discover_workspace,
+            no_proxy: opts.no_proxy,
+            proxy: opts.proxy.into(),
+        }
+    }
+}
+
+impl From<ProxyRuntimeOpts> for command::ProxyRuntimeOptions {
+    fn from(opts: ProxyRuntimeOpts) -> Self {
+        Self {
+            state_dir: opts.state_dir,
+            http_port: opts.http_port,
+            https_port: opts.https_port,
+            https: opts.https,
+            no_https: opts.no_https,
+            http2: opts.http2,
+            no_http2: opts.no_http2,
+            lan: opts.lan,
+            no_lan: opts.no_lan,
+            tld: opts.tld,
+        }
+    }
+}
+
+impl From<ProxyCommand> for command::ProxyCommand {
+    fn from(command: ProxyCommand) -> Self {
+        match command {
+            ProxyCommand::Start(opts) => Self::Start(opts.into()),
+            ProxyCommand::Stop(opts) => Self::Stop(opts.into()),
+            ProxyCommand::List(opts) => Self::List(opts.into()),
+            ProxyCommand::Prune(opts) => Self::Prune(opts.into()),
+            ProxyCommand::Run(opts) => Self::Run(opts.into()),
+            ProxyCommand::Alias(opts) => Self::Alias(opts.into()),
+            ProxyCommand::Cert(command) => Self::Cert(command.into()),
+            ProxyCommand::Service(command) => Self::Service(command.into()),
+        }
+    }
+}
+
+impl From<ProxyCertCommand> for command::ProxyCertCommand {
+    fn from(command: ProxyCertCommand) -> Self {
+        match command {
+            ProxyCertCommand::Generate(opts) => Self::Generate(opts.into()),
+            ProxyCertCommand::Status(opts) => Self::Status(opts.into()),
+            ProxyCertCommand::Trust(opts) => Self::Trust(opts.into()),
+            ProxyCertCommand::Untrust(opts) => Self::Untrust(opts.into()),
+        }
+    }
+}
+
+impl From<ProxyServiceCommand> for command::ProxyServiceCommand {
+    fn from(command: ProxyServiceCommand) -> Self {
+        match command {
+            ProxyServiceCommand::Install(opts) => Self::Install(opts.into()),
+            ProxyServiceCommand::Uninstall(opts) => Self::Uninstall(opts.into()),
+            ProxyServiceCommand::Status(opts) => Self::Status(opts.into()),
+        }
+    }
+}
+
+impl From<ProxyStartOpts> for command::ProxyStartRequest {
+    fn from(opts: ProxyStartOpts) -> Self {
+        Self {
+            foreground: opts.foreground,
+            proxy: opts.proxy.into(),
+        }
+    }
+}
+
+impl From<ProxyStopOpts> for command::ProxyStopRequest {
+    fn from(opts: ProxyStopOpts) -> Self {
+        Self {
+            proxy: opts.proxy.into(),
+        }
+    }
+}
+
+impl From<ProxyListOpts> for command::ProxyListRequest {
+    fn from(opts: ProxyListOpts) -> Self {
+        Self {
+            raw: opts.raw,
+            proxy: opts.proxy.into(),
+        }
+    }
+}
+
+impl From<ProxyPruneOpts> for command::ProxyPruneRequest {
+    fn from(opts: ProxyPruneOpts) -> Self {
+        Self {
+            proxy: opts.proxy.into(),
+        }
+    }
+}
+
+impl From<ProxyRunOpts> for command::ProxyRunRequest {
+    fn from(opts: ProxyRunOpts) -> Self {
+        Self {
+            name: opts.name,
+            kind: opts.kind,
+            dir: opts.dir,
+            port: opts.port,
+            no_proxy: opts.no_proxy,
+            proxy: opts.proxy.into(),
+            command: opts.command,
+        }
+    }
+}
+
+impl From<ProxyAliasOpts> for command::ProxyAliasRequest {
+    fn from(opts: ProxyAliasOpts) -> Self {
+        Self {
+            name: opts.name,
+            port: opts.port,
+            host: opts.host,
+            accept_non_loopback_target: opts.accept_non_loopback_target,
+            proxy: opts.proxy.into(),
+        }
+    }
+}
+
+impl From<ProxyCertGenerateOpts> for command::ProxyCertGenerateRequest {
+    fn from(opts: ProxyCertGenerateOpts) -> Self {
+        Self {
+            force: opts.force,
+            proxy: opts.proxy.into(),
+        }
+    }
+}
+
+impl From<ProxyCertRuntimeOpts> for command::ProxyCertRuntimeRequest {
+    fn from(opts: ProxyCertRuntimeOpts) -> Self {
+        Self {
+            proxy: opts.proxy.into(),
+        }
+    }
+}
+
+impl From<ProxyCertTrustOpts> for command::ProxyCertTrustRequest {
+    fn from(opts: ProxyCertTrustOpts) -> Self {
+        Self {
+            accept_trust_scope: opts.accept_trust_scope,
+            proxy: opts.proxy.into(),
+        }
+    }
+}
+
+impl From<ProxyCertUntrustOpts> for command::ProxyCertUntrustRequest {
+    fn from(opts: ProxyCertUntrustOpts) -> Self {
+        Self {
+            accept_trust_scope: opts.accept_trust_scope,
+            proxy: opts.proxy.into(),
+        }
+    }
+}
+
+impl From<ProxyServiceInstallOpts> for command::ProxyServiceInstallRequest {
+    fn from(opts: ProxyServiceInstallOpts) -> Self {
+        Self {
+            accept_service_scope: opts.accept_service_scope,
+            proxy: opts.proxy.into(),
+        }
+    }
+}
+
+impl From<ProxyServiceRuntimeOpts> for command::ProxyServiceRuntimeRequest {
+    fn from(opts: ProxyServiceRuntimeOpts) -> Self {
+        Self {
+            proxy: opts.proxy.into(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn migration_add_conversion_preserves_tool_receipt_controls() {
+        let request: command::MigrationAddRequest = MigrationAddOpts {
+            name: "create_users".to_string(),
+            tool: ToolOpts {
+                plan_id: Some("plan_1".to_string()),
+                no_receipt: false,
+            },
+        }
+        .into();
+
+        assert_eq!(request.name, "create_users");
+        let (plan_id, record_receipt) = request.tool.into_parts();
+        assert_eq!(plan_id.as_deref(), Some("plan_1"));
+        assert!(record_receipt);
+
+        let no_receipt_request: command::MigrationAddRequest = MigrationAddOpts {
+            name: "drop_old_table".to_string(),
+            tool: ToolOpts {
+                plan_id: None,
+                no_receipt: true,
+            },
+        }
+        .into();
+
+        let (plan_id, record_receipt) = no_receipt_request.tool.into_parts();
+        assert_eq!(plan_id, None);
+        assert!(!record_receipt);
+    }
+
+    #[test]
+    fn work_receipts_conversion_drops_cli_summary_flag() {
+        let request: command::WorkReceiptsRequest = WorkReceiptsOpts {
+            session_id: Some("session_1".to_string()),
+            plan_id: Some("plan_1".to_string()),
+            tool_name: Some(crate::tool_defs::tool::TEST.to_string()),
+            failed_only: true,
+            limit: 7,
+            summary: true,
+        }
+        .into();
+
+        assert_eq!(request.session_id.as_deref(), Some("session_1"));
+        assert_eq!(request.plan_id.as_deref(), Some("plan_1"));
+        assert_eq!(
+            request.tool_name.as_deref(),
+            Some(crate::tool_defs::tool::TEST)
+        );
+        assert!(request.failed_only);
+        assert_eq!(request.limit, 7);
+    }
+}

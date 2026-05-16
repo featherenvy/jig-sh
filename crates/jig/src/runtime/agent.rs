@@ -5,7 +5,7 @@ use std::process::{Command, Output};
 use anyhow::{Context, Result, bail};
 use serde_json::{Value as JsonValue, json};
 
-use crate::cli::{AgentBootstrapOpts, AgentCommand};
+use crate::command::{AgentBootstrapRequest, AgentCommand};
 use crate::context::{CodexMarketplaceConfig, RepoContext};
 use crate::process::{format_exit_status, require_success};
 use crate::progress::CliProgress;
@@ -18,8 +18,7 @@ pub(super) fn dispatch(ctx: &RepoContext, command: AgentCommand) -> Result<JsonV
     // Agent tooling commands describe or mutate local client setup, not repo
     // work evidence, so they intentionally do not record receipts.
     match command {
-        // Summary output is a CLI rendering concern; runtime output stays JSON.
-        AgentCommand::Doctor(_opts) => doctor(ctx),
+        AgentCommand::Doctor => doctor(ctx),
         AgentCommand::Bootstrap(opts) => bootstrap(ctx, opts),
     }
 }
@@ -127,7 +126,7 @@ pub(super) fn doctor(ctx: &RepoContext) -> Result<JsonValue> {
     }))
 }
 
-fn bootstrap(ctx: &RepoContext, opts: AgentBootstrapOpts) -> Result<JsonValue> {
+fn bootstrap(ctx: &RepoContext, opts: AgentBootstrapRequest) -> Result<JsonValue> {
     let progress = CliProgress::new("agent bootstrap");
     progress.header("install Codex marketplace");
     progress.info("repo", ctx.root().display());

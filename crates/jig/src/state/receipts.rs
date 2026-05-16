@@ -1,5 +1,5 @@
 use anyhow::Result;
-use serde::{Deserialize, Deserializer};
+use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::context::RepoContext;
@@ -13,8 +13,6 @@ use super::events::{
     ReceiptRecord, append_jsonl, ensure_state_layout, new_id, now_ms, read_jsonl, truncate,
 };
 use super::sessions::current_session;
-
-pub(crate) const DEFAULT_RECEIPTS_LIMIT: usize = 20;
 
 pub(crate) struct ReceiptInput<'a> {
     pub(crate) tool_name: &'a str,
@@ -41,37 +39,20 @@ pub(super) struct StateToolReceipt<'a> {
     pub(super) session_override: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 pub(crate) struct ReceiptListFilter {
     pub(crate) session_id: Option<String>,
     pub(crate) plan_id: Option<String>,
     pub(crate) tool_name: Option<String>,
-    #[serde(default, deserialize_with = "null_as_default")]
+    #[serde(default, deserialize_with = "crate::serde_helpers::null_or_default")]
     pub(crate) failed_only: bool,
+    // `usize::default()` is 0, but a null receipt limit should keep the
+    // public default instead of asking for zero rows.
     #[serde(
-        default = "default_receipts_limit",
-        deserialize_with = "null_as_default_receipts_limit"
+        default = "crate::serde_helpers::default_receipts_limit",
+        deserialize_with = "crate::serde_helpers::null_as_default_receipts_limit"
     )]
     pub(crate) limit: usize,
-}
-
-fn default_receipts_limit() -> usize {
-    DEFAULT_RECEIPTS_LIMIT
-}
-
-fn null_as_default<'de, D, T>(deserializer: D) -> std::result::Result<T, D::Error>
-where
-    D: Deserializer<'de>,
-    T: Default + Deserialize<'de>,
-{
-    Option::<T>::deserialize(deserializer).map(Option::unwrap_or_default)
-}
-
-fn null_as_default_receipts_limit<'de, D>(deserializer: D) -> std::result::Result<usize, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    Option::<usize>::deserialize(deserializer).map(|value| value.unwrap_or(DEFAULT_RECEIPTS_LIMIT))
 }
 
 #[derive(Clone, Debug)]

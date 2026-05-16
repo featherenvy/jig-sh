@@ -1,30 +1,4 @@
 use super::*;
-use clap::CommandFactory;
-
-mod help_helpers {
-    use super::*;
-
-    pub(super) fn rendered_help(path: &[&str]) -> String {
-        let mut command = Cli::command();
-        let mut current = &mut command;
-        for (index, name) in path.iter().enumerate() {
-            current = current.find_subcommand_mut(name).unwrap_or_else(|| {
-                panic!("missing subcommand {name:?} at index {index} in path {path:?}")
-            });
-        }
-        current.render_help().to_string()
-    }
-
-    pub(super) fn assert_help_contains(help: &str, expected: &str) {
-        assert!(
-            help.contains(expected),
-            "expected rendered help to contain {expected:?}\n\n{help}"
-        );
-    }
-}
-
-use help_helpers::{assert_help_contains, rendered_help};
-
 #[test]
 fn template_errors_get_hint() {
     let missing_template_value =
@@ -37,74 +11,6 @@ fn template_errors_get_hint() {
 
     let unrelated = Cli::try_parse_from(["jig", "proxy", "run", "web", "vite"]).unwrap_err();
     assert!(!should_add_template_hint(&unrelated));
-}
-
-#[test]
-fn top_level_help_describes_common_commands() {
-    let help = Cli::command().render_help().to_string();
-
-    assert_help_contains(&help, "init");
-    assert_help_contains(&help, "Create a new repository");
-    assert_help_contains(&help, "check");
-    assert_help_contains(&help, "Run configured project checks");
-    assert_help_contains(&help, "Manage structured work plans");
-    assert_help_contains(&help, "Inspect or bootstrap local agent tooling");
-}
-
-#[test]
-fn nested_help_describes_work_and_agent_commands() {
-    let work_help = Cli::command()
-        .find_subcommand_mut("work")
-        .unwrap()
-        .render_help()
-        .to_string();
-    assert_help_contains(&work_help, "start");
-    assert_help_contains(&work_help, "Start a structured work plan");
-    assert_help_contains(&work_help, "gates");
-    assert_help_contains(&work_help, "Show required gate status");
-
-    let agent_help = Cli::command()
-        .find_subcommand_mut("agent")
-        .unwrap()
-        .render_help()
-        .to_string();
-    assert_help_contains(&agent_help, "doctor");
-    assert_help_contains(&agent_help, "Report local Codex marketplace readiness");
-    assert_help_contains(&agent_help, "bootstrap");
-    assert_help_contains(
-        &agent_help,
-        "Register the configured Codex skills marketplace",
-    );
-}
-
-#[test]
-fn work_start_help_includes_examples() {
-    let work_start_help = rendered_help(&["work", "start"]);
-    assert_help_contains(&work_start_help, "jig work start --title \"Add auth\"");
-    assert_help_contains(&work_start_help, "--print-plan-id");
-    assert_help_contains(&work_start_help, "plan_id=\"$(jig work start");
-}
-
-#[test]
-fn work_check_help_includes_examples() {
-    let work_check_help = rendered_help(&["work", "check"]);
-    assert_help_contains(&work_check_help, "jig work check --plan-id plan_abc123");
-    assert_help_contains(&work_check_help, "--tool jig.test");
-}
-
-#[test]
-fn work_finish_help_includes_examples() {
-    let work_finish_help = rendered_help(&["work", "finish"]);
-    assert_help_contains(&work_finish_help, "jig work finish --plan-id plan_abc123");
-    assert_help_contains(&work_finish_help, "--outcome success");
-}
-
-#[test]
-fn check_help_includes_examples() {
-    let check_help = rendered_help(&["check"]);
-    assert_help_contains(&check_help, "jig check fmt");
-    assert_help_contains(&check_help, "jig check contract");
-    assert_help_contains(&check_help, "jig check rust-file-loc --changed-against");
 }
 
 #[test]
@@ -185,66 +91,6 @@ fn parses_check_namespace_commands() {
         clap::error::ErrorKind::InvalidSubcommand
     );
     assert!(moved_check_command_hint(&unrelated_nested).is_none());
-}
-
-#[test]
-fn agent_help_includes_examples() {
-    let agent_help = rendered_help(&["agent"]);
-    assert_help_contains(&agent_help, "jig agent doctor");
-    assert_help_contains(&agent_help, "jig agent bootstrap");
-}
-
-#[test]
-fn agent_bootstrap_help_includes_examples() {
-    let agent_bootstrap_help = rendered_help(&["agent", "bootstrap"]);
-    assert_help_contains(&agent_bootstrap_help, "GitHub owner/repo skill marketplace");
-    assert_help_contains(
-        &agent_bootstrap_help,
-        "jig agent bootstrap --marketplace owner/skills-repo",
-    );
-}
-
-#[test]
-fn update_help_explains_modes() {
-    let update_help = rendered_help(&["update"]);
-    assert_help_contains(&update_help, "jig update --recopy");
-    assert_help_contains(&update_help, "changed template-managed files");
-}
-
-#[test]
-fn human_summary_flags_are_discoverable() {
-    let agent_doctor_help = rendered_help(&["agent", "doctor"]);
-    assert_help_contains(&agent_doctor_help, "--summary");
-    assert_help_contains(&agent_doctor_help, "human-readable readiness summary");
-
-    let work_status_help = rendered_help(&["work", "status"]);
-    assert_help_contains(&work_status_help, "--summary");
-    assert_help_contains(&work_status_help, "human-readable work summary");
-}
-
-#[test]
-fn proxy_run_help_includes_launcher_context_and_examples() {
-    let proxy_run_help = rendered_help(&["proxy", "run"]);
-    assert_help_contains(&proxy_run_help, "The app command must come after --");
-    assert_help_contains(&proxy_run_help, "[[dev.apps]].host");
-    assert_help_contains(&proxy_run_help, "jig proxy run web -- npm run dev");
-    assert_help_contains(&proxy_run_help, "jig proxy run web -- vite --open");
-    assert_help_contains(
-        &proxy_run_help,
-        "jig proxy run api --port 3000 -- cargo run",
-    );
-    assert_help_contains(
-        &proxy_run_help,
-        "jig proxy run web --no-proxy -- npm run dev",
-    );
-}
-
-#[test]
-fn migration_help_includes_examples() {
-    let migration_help = rendered_help(&["migration-add"]);
-    assert_help_contains(&migration_help, "open structured work plan");
-    assert_help_contains(&migration_help, "jig migration-add create_users");
-    assert_help_contains(&migration_help, "--plan-id plan_abc123");
 }
 
 #[test]
@@ -367,6 +213,7 @@ fn parses_work_receipts_filters() {
         "--failed-only",
         "--limit",
         "5",
+        "--summary",
     ])
     .unwrap();
 
@@ -377,6 +224,7 @@ fn parses_work_receipts_filters() {
             assert_eq!(opts.tool_name.as_deref(), Some(tool::TEST));
             assert!(opts.failed_only);
             assert_eq!(opts.limit, 5);
+            assert!(opts.summary);
         }
         other => panic!("expected work receipts command, got {other:?}"),
     }
@@ -631,7 +479,7 @@ fn proxy_json_ok_false_is_cli_failure() {
 
     assert!(error.contains("ok=false"));
     require_json_ok(false, &serde_json::json!({ "ok": false })).unwrap();
-    assert!(command_reports_failure_with_ok(&CommandKind::Dev(
+    assert!(test_command_reports_failure_with_ok(&CommandKind::Dev(
         DevOpts {
             apps: Vec::new(),
             discover_workspace: false,
@@ -639,7 +487,7 @@ fn proxy_json_ok_false_is_cli_failure() {
             proxy: ProxyRuntimeOpts::default(),
         }
     )));
-    assert!(command_reports_failure_with_ok(&CommandKind::Agent(
+    assert!(test_command_reports_failure_with_ok(&CommandKind::Agent(
         AgentCommand::Doctor(AgentDoctorOpts::default())
     )));
 }

@@ -3,6 +3,8 @@ use serde_json::{Map, Value, json};
 
 use crate::context::ManifestTool;
 
+pub(crate) const DEFAULT_RECEIPTS_LIMIT: usize = 20;
+
 pub(crate) mod args {
     pub(crate) const ALTERNATIVES: &str = "alternatives";
     pub(crate) const BODY: &str = "body";

@@ -4,7 +4,7 @@ use std::process::{Command, Output};
 use anyhow::{Context, Result, anyhow, bail};
 use serde_json::{Value, json};
 
-use crate::cli::{AgentMapCommand, CheckCommand, CommandKind};
+use crate::command::{AgentMapCommand, CheckCommand, RuntimeCommand, ToolRequest};
 use crate::context::{ManifestTool, RepoContext};
 use crate::policy::{
     AgentMapInput, MigrationImmutabilityInput, PolicyCheckCommand, PolicyDirectCommand,
@@ -14,39 +14,24 @@ use crate::state::{ReceiptInput, now_ms, record_receipt};
 use crate::tool_defs::{self, JsonObject, MemoryTool, args, string_arg, tool};
 
 mod agent;
-mod requests;
 mod work;
 
-pub(crate) fn dispatch(ctx: &RepoContext, command: CommandKind) -> Result<Value> {
+pub(crate) fn dispatch(ctx: &RepoContext, command: RuntimeCommand) -> Result<Value> {
     match command {
-        CommandKind::Bootstrap(opts) => {
-            let record_receipt = opts.record_receipt();
-            execute_manifest_tool(
-                ctx,
-                tool::BOOTSTRAP,
-                json!({}),
-                opts.plan_id,
-                record_receipt,
-            )
+        RuntimeCommand::Bootstrap(opts) => {
+            execute_manifest_tool_request(ctx, tool::BOOTSTRAP, json!({}), opts)
         }
-        CommandKind::Check(command) => dispatch_check(ctx, command),
-        CommandKind::SchemaDump(opts) => {
-            let record_receipt = opts.record_receipt();
-            execute_manifest_tool(
-                ctx,
-                tool::SCHEMA_DUMP,
-                json!({}),
-                opts.plan_id,
-                record_receipt,
-            )
+        RuntimeCommand::Check(command) => dispatch_check(ctx, command),
+        RuntimeCommand::SchemaDump(opts) => {
+            execute_manifest_tool_request(ctx, tool::SCHEMA_DUMP, json!({}), opts)
         }
-        CommandKind::MigrationAdd(opts) => {
-            let record_receipt = opts.tool.record_receipt();
+        RuntimeCommand::MigrationAdd(opts) => {
+            let (plan_id, record_receipt) = opts.tool.into_parts();
             execute_manifest_tool(
                 ctx,
                 tool::MIGRATION_ADD,
                 json!({ args::NAME: opts.name }),
-                opts.tool.plan_id,
+                plan_id,
                 record_receipt,
             )
             .map(|value| {
@@ -60,96 +45,55 @@ pub(crate) fn dispatch(ctx: &RepoContext, command: CommandKind) -> Result<Value>
                 })
             })
         }
-        CommandKind::AgentMap(AgentMapCommand::Generate(opts)) => crate::policy::run_direct(
+        RuntimeCommand::AgentMap(AgentMapCommand::Generate(opts)) => crate::policy::run_direct(
             ctx,
             PolicyDirectCommand::AgentMapGenerate(AgentMapInput {
                 map_path: opts.map_path,
             }),
         ),
-        CommandKind::GenerateSqlxUncheckedQueriesTodo(opts) => crate::policy::run_direct(
+        RuntimeCommand::GenerateSqlxUncheckedQueriesTodo(opts) => crate::policy::run_direct(
             ctx,
             PolicyDirectCommand::GenerateSqlxUncheckedQueriesTodo(SqlxTodoInput {
                 output: opts.output,
             }),
         ),
-        CommandKind::Dev(opts) => crate::dev_proxy::commands::dev(ctx, opts),
-        CommandKind::RunTarget(opts) => {
-            let record_receipt = opts.tool.record_receipt();
+        RuntimeCommand::Dev(opts) => crate::dev_proxy::commands::dev(ctx, opts),
+        RuntimeCommand::RunTarget(opts) => {
+            let (plan_id, record_receipt) = opts.tool.into_parts();
             execute_manifest_tool(
                 ctx,
                 tool::RUN_TARGET,
                 json!({ args::NAME: opts.name }),
-                opts.tool.plan_id,
+                plan_id,
                 record_receipt,
             )
         }
-        CommandKind::Proxy(command) => crate::dev_proxy::commands::proxy(ctx, command),
-        CommandKind::Agent(command) => agent::dispatch(ctx, command),
-        CommandKind::Work(command) => work::dispatch(ctx, command),
-        CommandKind::Init(_) | CommandKind::Adopt(_) | CommandKind::Update(_) => unreachable!(),
-        CommandKind::Mcp => unreachable!(),
+        RuntimeCommand::Proxy(command) => crate::dev_proxy::commands::proxy(ctx, command),
+        RuntimeCommand::Agent(command) => agent::dispatch(ctx, command),
+        RuntimeCommand::Work(command) => work::dispatch(ctx, command),
     }
 }
 
 fn dispatch_check(ctx: &RepoContext, command: CheckCommand) -> Result<Value> {
     match command {
         CheckCommand::Fmt(opts) => {
-            let record_receipt = opts.record_receipt();
-            execute_manifest_tool(
-                ctx,
-                tool::FMT_CHECK,
-                json!({}),
-                opts.plan_id,
-                record_receipt,
-            )
+            execute_manifest_tool_request(ctx, tool::FMT_CHECK, json!({}), opts)
         }
         CheckCommand::Clippy(opts) => {
-            let record_receipt = opts.record_receipt();
-            execute_manifest_tool(ctx, tool::CLIPPY, json!({}), opts.plan_id, record_receipt)
+            execute_manifest_tool_request(ctx, tool::CLIPPY, json!({}), opts)
         }
-        CheckCommand::Test(opts) => {
-            let record_receipt = opts.record_receipt();
-            execute_manifest_tool(ctx, tool::TEST, json!({}), opts.plan_id, record_receipt)
-        }
+        CheckCommand::Test(opts) => execute_manifest_tool_request(ctx, tool::TEST, json!({}), opts),
         CheckCommand::TestLocked(opts) => {
-            let record_receipt = opts.record_receipt();
-            execute_manifest_tool(
-                ctx,
-                tool::TEST_LOCKED,
-                json!({}),
-                opts.plan_id,
-                record_receipt,
-            )
+            execute_manifest_tool_request(ctx, tool::TEST_LOCKED, json!({}), opts)
         }
         CheckCommand::Sqlx(opts) => {
-            let record_receipt = opts.record_receipt();
-            execute_manifest_tool(
-                ctx,
-                tool::SQLX_CHECK,
-                json!({}),
-                opts.plan_id,
-                record_receipt,
-            )
+            execute_manifest_tool_request(ctx, tool::SQLX_CHECK, json!({}), opts)
         }
         CheckCommand::Schema(opts) => {
-            let record_receipt = opts.record_receipt();
-            execute_manifest_tool(
-                ctx,
-                tool::SCHEMA_CHECK,
-                json!({}),
-                opts.plan_id,
-                record_receipt,
-            )
+            execute_manifest_tool_request(ctx, tool::SCHEMA_CHECK, json!({}), opts)
         }
         CheckCommand::Contract(opts) => {
-            let record_receipt = opts.record_receipt();
-            execute_manifest_tool(
-                ctx,
-                tool::CONTRACT_CHECK,
-                json!({}),
-                opts.plan_id,
-                record_receipt,
-            )
+            execute_manifest_tool_request(ctx, tool::CONTRACT_CHECK, json!({}), opts)
         }
         CheckCommand::AgentMap(opts) => crate::policy::run_check(
             ctx,
@@ -177,6 +121,16 @@ fn dispatch_check(ctx: &RepoContext, command: CheckCommand) -> Result<Value> {
             crate::policy::run_check(ctx, PolicyCheckCommand::SqlxUncheckedNonTest)
         }
     }
+}
+
+fn execute_manifest_tool_request(
+    ctx: &RepoContext,
+    tool_name: &str,
+    args: Value,
+    request: ToolRequest,
+) -> Result<Value> {
+    let (plan_id, record_receipt) = request.into_parts();
+    execute_manifest_tool(ctx, tool_name, args, plan_id, record_receipt)
 }
 
 pub(crate) fn call_tool(ctx: &RepoContext, name: &str, args: Value) -> Result<Value> {
@@ -291,9 +245,11 @@ fn execute_manifest_tool_with_options(
         let command = ctx.command_for_key(command_key)?;
         return execute_command_tool(
             ctx,
-            &tool.name,
-            command_key,
-            command,
+            CommandToolInvocation {
+                tool_name: &tool.name,
+                command_key,
+                command_text: command,
+            },
             args,
             plan_id,
             record_receipt,
@@ -447,18 +403,22 @@ fn execute_make_tool(
     }))
 }
 
+struct CommandToolInvocation<'a> {
+    tool_name: &'a str,
+    command_key: &'a str,
+    command_text: &'a str,
+}
+
 fn execute_command_tool(
     ctx: &RepoContext,
-    tool_name: &str,
-    command_key: &str,
-    command_text: &str,
+    invocation: CommandToolInvocation<'_>,
     args: Value,
     plan_id: Option<String>,
     record_receipt: bool,
     collect_worktree_fingerprint: bool,
 ) -> Result<Value> {
     let started = now_ms();
-    let output = run_configured_command(ctx, tool_name, command_text, &args)?;
+    let output = run_configured_command(ctx, invocation.tool_name, invocation.command_text, &args)?;
     let ended = now_ms();
     let exit_status = output.status.code().unwrap_or(1);
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
@@ -468,10 +428,10 @@ fn execute_command_tool(
         ctx,
         record_receipt,
         ReceiptInput {
-            tool_name,
+            tool_name: invocation.tool_name,
             args: args.clone(),
             invoked_make_target: None,
-            invoked_command_key: Some(command_key.to_string()),
+            invoked_command_key: Some(invocation.command_key.to_string()),
             plan_id,
             started_at_ms: started,
             ended_at_ms: ended,
@@ -487,6 +447,8 @@ fn execute_command_tool(
 
     let receipt_id = receipt_id_or_preserve_tool_error(
         (!output.status.success()).then(|| {
+            let tool_name = invocation.tool_name;
+            let command_key = invocation.command_key;
             format!(
                 "{tool_name} failed with status {exit_status}\ncommand key: {command_key}\nstdout:\n{stdout}\nstderr:\n{stderr}"
             )
@@ -496,8 +458,8 @@ fn execute_command_tool(
 
     Ok(json!({
         "ok": true,
-        "tool": tool_name,
-        "command_key": command_key,
+        "tool": invocation.tool_name,
+        "command_key": invocation.command_key,
         "args": args,
         "result": {
             "exit_status": exit_status,

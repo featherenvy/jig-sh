@@ -2,12 +2,32 @@ use std::io::Write;
 use std::process;
 
 use anyhow::Result;
-use clap::Parser;
-use clap::error::{ContextKind, ContextValue, ErrorKind};
+use clap::{
+    Parser,
+    error::{ContextKind, ContextValue, ErrorKind},
+};
 
 use super::*;
 
 const WORK_STATUS_RECENT_RECEIPT_SUMMARY_LIMIT: usize = 5;
+
+enum HumanOutput {
+    AgentDoctorSummary,
+    WorkStartPlanId,
+    WorkReceiptsSummary,
+    WorkStatusSummary,
+}
+
+#[derive(Debug)]
+struct JsonOkFalse;
+
+impl std::fmt::Display for JsonOkFalse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Command reported ok=false")
+    }
+}
+
+impl std::error::Error for JsonOkFalse {}
 
 pub(crate) fn run() -> Result<()> {
     let cli = parse_cli();
@@ -21,7 +41,7 @@ pub(crate) fn run() -> Result<()> {
         }
         #[cfg(not(feature = "dev-proxy"))]
         CommandKind::Dev(opts) => {
-            let output = crate::dev_proxy::commands::dev_without_context(opts)?;
+            let output = crate::dev_proxy::commands::dev_without_context(opts.into())?;
             print_json(&output)?;
             require_json_ok(true, &output)
         }
@@ -32,80 +52,146 @@ pub(crate) fn run() -> Result<()> {
                     "`scripts/jig dev` requires an adopted Jig repo with `.jig.toml` dev app configuration. Run it from a Jig repo, or use `scripts/jig proxy run <name> -- <command>` for an ad-hoc command."
                 );
             };
-            let output = runtime::dispatch(&ctx, CommandKind::Dev(opts))?;
+            let output = runtime::dispatch(&ctx, crate::command::RuntimeCommand::Dev(opts.into()))?;
             print_json(&output)?;
             require_json_ok(true, &output)
         }
         #[cfg(not(feature = "dev-proxy"))]
         CommandKind::Proxy(command) => {
-            let output = crate::dev_proxy::commands::proxy_without_context(command)?;
+            let output = crate::dev_proxy::commands::proxy_without_context(command.into())?;
             print_json(&output)?;
             require_json_ok(true, &output)
         }
         #[cfg(feature = "dev-proxy")]
-        CommandKind::Proxy(command)
-            if crate::dev_proxy::commands::can_run_without_context(&command) =>
-        {
-            let output = if let Some(ctx) = RepoContext::load_optional()? {
-                runtime::dispatch(&ctx, CommandKind::Proxy(command))?
+        CommandKind::Proxy(command) => {
+            let runtime_command: crate::command::ProxyCommand = command.into();
+            let output = if crate::dev_proxy::commands::can_run_without_context(&runtime_command) {
+                if let Some(ctx) = RepoContext::load_optional()? {
+                    runtime::dispatch(&ctx, crate::command::RuntimeCommand::Proxy(runtime_command))?
+                } else {
+                    crate::dev_proxy::commands::proxy_without_context(runtime_command)?
+                }
             } else {
-                crate::dev_proxy::commands::proxy_without_context(command)?
+                let ctx = RepoContext::load()?;
+                runtime::dispatch(&ctx, crate::command::RuntimeCommand::Proxy(runtime_command))?
             };
             print_json(&output)?;
             require_json_ok(true, &output)
         }
-        other => {
-            let require_ok = command_reports_failure_with_ok(&other);
-            let human_output = human_output_requested(&other);
-            let ctx = RepoContext::load()?;
-            let output = runtime::dispatch(&ctx, other)?;
-            print_output(human_output, &output)?;
-            require_json_ok(require_ok, &output)
+        CommandKind::Bootstrap(opts) => dispatch_runtime_command(
+            crate::command::RuntimeCommand::Bootstrap(opts.into()),
+            false,
+            None,
+        ),
+        CommandKind::Check(command) => {
+            let require_ok = check_command_reports_failure_with_ok(&command);
+            dispatch_runtime_command(
+                crate::command::RuntimeCommand::Check(command.into()),
+                require_ok,
+                None,
+            )
+        }
+        CommandKind::SchemaDump(opts) => dispatch_runtime_command(
+            crate::command::RuntimeCommand::SchemaDump(opts.into()),
+            false,
+            None,
+        ),
+        CommandKind::MigrationAdd(opts) => dispatch_runtime_command(
+            crate::command::RuntimeCommand::MigrationAdd(opts.into()),
+            false,
+            None,
+        ),
+        CommandKind::AgentMap(command) => dispatch_runtime_command(
+            crate::command::RuntimeCommand::AgentMap(command.into()),
+            false,
+            None,
+        ),
+        CommandKind::GenerateSqlxUncheckedQueriesTodo(opts) => dispatch_runtime_command(
+            crate::command::RuntimeCommand::GenerateSqlxUncheckedQueriesTodo(opts.into()),
+            false,
+            None,
+        ),
+        CommandKind::RunTarget(opts) => dispatch_runtime_command(
+            crate::command::RuntimeCommand::RunTarget(opts.into()),
+            false,
+            None,
+        ),
+        CommandKind::Agent(command) => {
+            let require_ok = agent_command_reports_failure_with_ok(&command);
+            let human_output = agent_human_output_requested(&command);
+            dispatch_runtime_command(
+                crate::command::RuntimeCommand::Agent(command.into()),
+                require_ok,
+                human_output,
+            )
+        }
+        CommandKind::Work(command) => {
+            let human_output = work_human_output_requested(&command);
+            dispatch_runtime_command(
+                crate::command::RuntimeCommand::Work(command.into()),
+                false,
+                human_output,
+            )
         }
     }
 }
 
-pub(super) fn command_reports_failure_with_ok(command: &CommandKind) -> bool {
+#[cfg(test)]
+pub(super) fn test_command_reports_failure_with_ok(command: &CommandKind) -> bool {
     // Proxy commands expose host-cleanup/status operations that can complete
     // with `ok: false` in their JSON payload. Multi-app `jig dev` also uses
     // `ok: false` when the first child exits unsuccessfully. Agent doctor is a
     // readiness report and returns `ok: false` when required local tooling is
     // missing or unregistered.
+    match command {
+        CommandKind::Dev(_) | CommandKind::Proxy(_) => true,
+        CommandKind::Agent(command) => agent_command_reports_failure_with_ok(command),
+        CommandKind::Check(command) => check_command_reports_failure_with_ok(command),
+        _ => false,
+    }
+}
+
+fn agent_command_reports_failure_with_ok(command: &AgentCommand) -> bool {
+    matches!(command, AgentCommand::Doctor(_))
+}
+
+fn check_command_reports_failure_with_ok(command: &CheckCommand) -> bool {
     matches!(
         command,
-        CommandKind::Dev(_)
-            | CommandKind::Proxy(_)
-            | CommandKind::Agent(AgentCommand::Doctor(_))
-            | CommandKind::Check(
-                CheckCommand::AgentMap(_)
-                    | CheckCommand::AgentGuides
-                    | CheckCommand::RustFileLoc(_)
-                    | CheckCommand::NoModRs
-                    | CheckCommand::MigrationImmutability(_)
-                    | CheckCommand::SqlxUncheckedNonTest,
-            )
+        CheckCommand::AgentMap(_)
+            | CheckCommand::AgentGuides
+            | CheckCommand::RustFileLoc(_)
+            | CheckCommand::NoModRs
+            | CheckCommand::MigrationImmutability(_)
+            | CheckCommand::SqlxUncheckedNonTest,
     )
 }
 
-enum HumanOutput {
-    AgentDoctorSummary,
-    WorkStartPlanId,
-    WorkStatusSummary,
-}
-
-fn human_output_requested(command: &CommandKind) -> Option<HumanOutput> {
+fn agent_human_output_requested(command: &AgentCommand) -> Option<HumanOutput> {
     match command {
-        CommandKind::Agent(AgentCommand::Doctor(opts)) if opts.summary => {
-            Some(HumanOutput::AgentDoctorSummary)
-        }
-        CommandKind::Work(WorkCommand::Start(opts)) if opts.print_plan_id => {
-            Some(HumanOutput::WorkStartPlanId)
-        }
-        CommandKind::Work(WorkCommand::Status(opts)) if opts.summary => {
-            Some(HumanOutput::WorkStatusSummary)
-        }
+        AgentCommand::Doctor(opts) if opts.summary => Some(HumanOutput::AgentDoctorSummary),
         _ => None,
     }
+}
+
+fn work_human_output_requested(command: &WorkCommand) -> Option<HumanOutput> {
+    match command {
+        WorkCommand::Start(opts) if opts.print_plan_id => Some(HumanOutput::WorkStartPlanId),
+        WorkCommand::Receipts(opts) if opts.summary => Some(HumanOutput::WorkReceiptsSummary),
+        WorkCommand::Status(opts) if opts.summary => Some(HumanOutput::WorkStatusSummary),
+        _ => None,
+    }
+}
+
+fn dispatch_runtime_command(
+    command: crate::command::RuntimeCommand,
+    require_ok: bool,
+    human_output: Option<HumanOutput>,
+) -> Result<()> {
+    let ctx = RepoContext::load()?;
+    let output = runtime::dispatch(&ctx, command)?;
+    print_output(human_output, &output)?;
+    require_json_ok(require_ok, &output)
 }
 
 pub(super) fn require_json_ok(required: bool, output: &serde_json::Value) -> Result<()> {
@@ -114,17 +200,6 @@ pub(super) fn require_json_ok(required: bool, output: &serde_json::Value) -> Res
     }
     Ok(())
 }
-
-#[derive(Debug)]
-struct JsonOkFalse;
-
-impl std::fmt::Display for JsonOkFalse {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("Command reported ok=false")
-    }
-}
-
-impl std::error::Error for JsonOkFalse {}
 
 pub(crate) fn is_structured_json_failure(error: &anyhow::Error) -> bool {
     error.is::<JsonOkFalse>()
@@ -249,6 +324,7 @@ fn print_output(human_output: Option<HumanOutput>, value: &serde_json::Value) ->
     match human_output {
         Some(HumanOutput::AgentDoctorSummary) => print_text(&format_agent_doctor_summary(value)),
         Some(HumanOutput::WorkStartPlanId) => print_text(&format_work_start_plan_id(value)?),
+        Some(HumanOutput::WorkReceiptsSummary) => print_text(&format_work_receipts_summary(value)),
         Some(HumanOutput::WorkStatusSummary) => print_text(&format_work_status_summary(value)),
         None => print_json(value),
     }
@@ -415,6 +491,67 @@ fn format_work_status_summary(value: &serde_json::Value) -> String {
     lines.join("\n")
 }
 
+fn format_work_receipts_summary(value: &serde_json::Value) -> String {
+    let receipts = value["receipts"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    let mut lines = vec![
+        "Work receipts:".into(),
+        format!("  Showing: {}", receipts.len()),
+    ];
+
+    if receipts.is_empty() {
+        lines.push("  No receipts matched the selected filters.".into());
+        return lines.join("\n");
+    }
+
+    for receipt in receipts {
+        let id = value_str(receipt, "id").unwrap_or("<unknown>");
+        let tool = value_str(receipt, "tool_name").unwrap_or("<unknown>");
+        let exit_status = value_i64(receipt, "exit_status")
+            .map(|status| status.to_string())
+            .unwrap_or_else(|| "?".into());
+        let diff = value_str(receipt, "diff_summary").unwrap_or("unknown diff");
+        lines.push(format!("  - {tool} ({id}): exit {exit_status}, {diff}"));
+
+        let plan = value_str(receipt, "plan_id").unwrap_or("none");
+        let session = value_str(receipt, "session_id").unwrap_or("none");
+        lines.push(format!("    plan: {plan}; session: {session}"));
+
+        if let Some(preview) = receipt_preview(receipt) {
+            lines.push(format!("    output: {preview}"));
+        }
+    }
+
+    lines.join("\n")
+}
+
+fn receipt_preview(receipt: &serde_json::Value) -> Option<String> {
+    value_str(receipt, "stderr_preview")
+        .filter(|preview| !preview.trim().is_empty())
+        .or_else(|| {
+            value_str(receipt, "stdout_preview").filter(|preview| !preview.trim().is_empty())
+        })
+        .map(|preview| concise_preview(preview, 180))
+}
+
+fn concise_preview(preview: &str, max_chars: usize) -> String {
+    let one_line = preview.split_whitespace().collect::<Vec<_>>().join(" ");
+    if one_line.chars().count() <= max_chars {
+        return one_line;
+    }
+
+    // Receipt previews are diagnostic text; truncate on scalar boundaries so
+    // UTF-8 stays valid, accepting that grapheme clusters may split.
+    let mut truncated = one_line
+        .chars()
+        .take(max_chars.saturating_sub(3))
+        .collect::<String>();
+    truncated.push_str("...");
+    truncated
+}
+
 fn value_str<'a>(value: &'a serde_json::Value, key: &str) -> Option<&'a str> {
     value.get(key).and_then(serde_json::Value::as_str)
 }
@@ -432,289 +569,7 @@ fn value_u64(value: &serde_json::Value, key: &str) -> Option<u64> {
 }
 
 #[cfg(test)]
-mod tests {
-    use serde_json::json;
-
-    use super::*;
-
-    #[test]
-    fn agent_doctor_summary_calls_out_source_mismatch() {
-        let summary = format_agent_doctor_summary(&json!({
-            "ok": false,
-            "codex": {
-                "required": true,
-                "available": true
-            },
-            "marketplaces": [{
-                "id": "jig-skills",
-                "source": "bpcakes/jig-skills",
-                "configured_source": "https://github.com/example/jig-skills.git",
-                "registered": false
-            }],
-            "next_steps": [
-                "Run `scripts/jig agent bootstrap` to register marketplace jig-skills."
-            ]
-        }));
-
-        assert!(summary.contains("Agent tooling: needs setup"));
-        assert!(summary.contains("repo config expects bpcakes/jig-skills"));
-        assert!(summary.contains("Codex has https://github.com/example/jig-skills.git"));
-        assert!(summary.contains("Next steps:"));
-    }
-
-    #[test]
-    fn agent_doctor_summary_handles_optional_codex_requirement() {
-        let summary = format_agent_doctor_summary(&json!({
-            "ok": true,
-            "codex": {
-                "required": false,
-                "available": null
-            },
-            "marketplaces": [],
-            "next_steps": []
-        }));
-
-        assert!(summary.contains("Agent tooling: ready"));
-        assert!(summary.contains("Codex: not required (probe skipped)"));
-        assert!(summary.contains("Marketplaces: none configured"));
-        // Regression guard for the previously duplicated requirement/probe label.
-        assert!(!summary.contains("not required (not required)"));
-        // When Codex is not required, the summary should explain the skipped
-        // probe instead of exposing the underlying null availability field.
-        assert!(!summary.contains("unknown"));
-    }
-
-    #[test]
-    fn agent_doctor_summary_handles_ready_marketplace() {
-        let summary = format_agent_doctor_summary(&json!({
-            "ok": true,
-            "codex": {
-                "required": true,
-                "available": true
-            },
-            "marketplaces": [{
-                "id": "jig-skills",
-                "source": "bpcakes/jig-skills",
-                "configured_source": "https://github.com/bpcakes/jig-skills.git",
-                "registered": true
-            }],
-            "next_steps": []
-        }));
-
-        assert!(summary.contains("Agent tooling: ready"));
-        assert!(summary.contains("Codex: required (available)"));
-        assert!(summary.contains("jig-skills: registered"));
-        assert!(summary.contains("Next steps: none"));
-    }
-
-    #[test]
-    fn agent_doctor_summary_handles_unknown_required_codex_availability() {
-        let summary = format_agent_doctor_summary(&json!({
-            "ok": false,
-            "codex": {
-                "required": true,
-                "available": null
-            },
-            "marketplaces": [],
-            "next_steps": []
-        }));
-
-        assert!(summary.contains("Codex: required (unknown)"));
-    }
-
-    #[test]
-    fn work_status_summary_stays_compact() {
-        let summary = format_work_status_summary(&json!({
-            "repo": {
-                "name": "demo",
-                "default_branch": "main"
-            },
-            "current_session_id": null,
-            "counts": {
-                "open_plans": 1,
-                "receipts": 12,
-                "failed_receipts": 2,
-                "decisions": 3
-            },
-            "open_plans": [{
-                "plan_id": "plan_1",
-                "title": "Improve UX"
-            }],
-            "recent_receipts": [
-                {
-                    "id": "receipt_1",
-                    "tool_name": "jig.test",
-                    "exit_status": 0,
-                    "diff_summary": "no changes"
-                },
-                {
-                    "id": "receipt_2",
-                    "tool_name": "jig.clippy",
-                    "exit_status": 0,
-                    "diff_summary": "no changes"
-                },
-                {
-                    "id": "receipt_3",
-                    "tool_name": "jig.fmt_check",
-                    "exit_status": 0,
-                    "diff_summary": "no changes"
-                },
-                {
-                    "id": "receipt_4",
-                    "tool_name": "jig.contract_check",
-                    "exit_status": 0,
-                    "diff_summary": "no changes"
-                },
-                {
-                    "id": "receipt_5",
-                    "tool_name": "jig.bootstrap",
-                    "exit_status": 0,
-                    "diff_summary": "no changes"
-                },
-                {
-                    "id": "receipt_6",
-                    "tool_name": "jig.extra",
-                    "exit_status": 0,
-                    "diff_summary": "no changes"
-                }
-            ]
-        }));
-
-        assert!(summary.contains("Work status:"));
-        assert!(summary.contains("Plans: 1 open"));
-        assert!(summary.contains("Receipts: 12 total, 2 failed"));
-        assert!(summary.contains("Decisions: 3"));
-        assert!(summary.contains("Repo: demo (main)"));
-        assert!(summary.contains("Current session: none"));
-        assert!(summary.contains("plan_1: Improve UX"));
-        assert!(summary.contains("jig.test"));
-        assert!(summary.contains("and 1 more recent receipt"));
-    }
-
-    #[test]
-    fn work_start_plan_id_output_is_shell_friendly() {
-        let plan_id = format_work_start_plan_id(&json!({
-            "ok": true,
-            "plan": {
-                "plan_id": "plan_123"
-            }
-        }))
-        .unwrap();
-
-        assert_eq!(plan_id, "plan_123");
-    }
-
-    #[test]
-    fn work_start_plan_id_output_requires_plan_id() {
-        let error = format_work_start_plan_id(&json!({
-            "ok": true,
-            "plan": {}
-        }))
-        .unwrap_err()
-        .to_string();
-
-        assert!(error.contains("plan.plan_id"));
-    }
-
-    #[test]
-    fn work_start_plan_id_output_requires_plan_object() {
-        let error = format_work_start_plan_id(&json!({
-            "ok": true
-        }))
-        .unwrap_err()
-        .to_string();
-
-        assert!(error.contains("include plan"));
-    }
-
-    #[test]
-    fn work_start_plan_id_output_requires_plan_to_be_object() {
-        let error = format_work_start_plan_id(&json!({
-            "ok": true,
-            "plan": null
-        }))
-        .unwrap_err()
-        .to_string();
-
-        assert!(error.contains("plan was not an object"));
-    }
-
-    #[test]
-    fn work_status_summary_omits_truncation_hint_at_receipt_limit() {
-        let summary = format_work_status_summary(&json!({
-            "repo": {
-                "name": "demo",
-                "default_branch": "main"
-            },
-            "current_session_id": null,
-            "counts": {
-                "open_plans": 0,
-                "receipts": 5,
-                "failed_receipts": 0,
-                "decisions": 0
-            },
-            "open_plans": [],
-            "recent_receipts": [
-                {
-                    "id": "receipt_1",
-                    "tool_name": "jig.test",
-                    "exit_status": 0,
-                    "diff_summary": "no changes"
-                },
-                {
-                    "id": "receipt_2",
-                    "tool_name": "jig.clippy",
-                    "exit_status": 0,
-                    "diff_summary": "no changes"
-                },
-                {
-                    "id": "receipt_3",
-                    "tool_name": "jig.fmt_check",
-                    "exit_status": 0,
-                    "diff_summary": "no changes"
-                },
-                {
-                    "id": "receipt_4",
-                    "tool_name": "jig.contract_check",
-                    "exit_status": 0,
-                    "diff_summary": "no changes"
-                },
-                {
-                    "id": "receipt_5",
-                    "tool_name": "jig.bootstrap",
-                    "exit_status": 0,
-                    "diff_summary": "no changes"
-                }
-            ]
-        }));
-
-        assert!(summary.contains("receipt_5"));
-        assert!(!summary.contains("omit --summary"));
-    }
-
-    #[test]
-    fn work_status_summary_handles_empty_state() {
-        let summary = format_work_status_summary(&json!({
-            "repo": {
-                "name": "demo",
-                "default_branch": "main"
-            },
-            "current_session_id": null,
-            "counts": {
-                "open_plans": 0,
-                "receipts": 0,
-                "failed_receipts": 0,
-                "decisions": 0
-            },
-            "open_plans": [],
-            "recent_receipts": []
-        }));
-
-        assert!(summary.contains("Plans: 0 open"));
-        assert!(summary.contains("Receipts: 0 total, 0 failed"));
-        assert!(summary.contains("Decisions: 0"));
-        assert!(summary.contains("Current session: none"));
-        assert!(summary.contains("Open plans: none"));
-        assert!(summary.contains("Recent receipts: none"));
-    }
-}
+// Keep these tests as children of `run` so formatter helpers can stay private
+// to the CLI runtime instead of becoming module-public test surface.
+#[path = "run_tests.rs"]
+mod tests;

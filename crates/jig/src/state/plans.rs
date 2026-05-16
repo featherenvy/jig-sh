@@ -14,21 +14,21 @@ use super::events::{
 };
 use super::receipts::{StateToolReceipt, record_successful_state_tool};
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 pub(crate) struct PlanOpenRequest {
     pub(crate) title: String,
     pub(crate) body: Option<String>,
     pub(crate) body_file: Option<PathBuf>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 pub(crate) struct PlanAppendRequest {
     pub(crate) plan_id: String,
     pub(crate) body: Option<String>,
     pub(crate) body_file: Option<PathBuf>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 pub(crate) struct PlanCloseRequest {
     pub(crate) plan_id: String,
     pub(crate) resolution: Option<String>,

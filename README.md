@@ -27,7 +27,7 @@ Jig's template lives in the `jig-sh` repository. Running `jig init` or `jig adop
 cargo install jig-sh
 ```
 
-Generated repos install and pin their own `jig` version automatically via `scripts/install-jig.sh`. You only need a global install to run `jig init` or `jig adopt` on a repo for the first time.
+Generated repos install and pin their own `jig` version automatically via `scripts/install-jig.sh`. You only need a global install to run `jig init` or `jig adopt` on a repo for the first time. Help requests reuse an existing matching repo-local binary when one is available; on a cold checkout the launcher prints an explicit first-run install message before preparing the runtime.
 
 By default, release builds of `jig init` and `jig adopt` clone the official template from GitHub at the matching `vVERSION` tag. For offline use or local head dogfooding, pass `--template /path/to/jig-sh --template-mode committed`.
 
@@ -149,8 +149,9 @@ Use this path when you want the fastest successful loop on a new or adopted repo
 
 Contract and gate commands intentionally append receipts under `.agent/state/`.
 Use `scripts/jig work status --summary` for a read-only scan of existing work
-state, or pass `--no-receipt` to a one-off contract command when you do not
-want evidence recorded.
+state and `scripts/jig work receipts --summary --failed-only` for a compact
+receipt history. Pass `--no-receipt` to a one-off contract command when you do
+not want evidence recorded.
 
 ## What It Generates
 
@@ -265,7 +266,7 @@ The default workflow assumes Bun for package installation and script execution.
 - `crates/jig-dev-proxy/` — local HTTP/HTTPS proxy with TLS certificate management
 - `templates/project/` — files rendered into downstream repos
 - `docs/` — [configuration reference](docs/configuration.md), [adoption guide](docs/adoption.md), and [public contract documentation](docs/public-contract.md)
-- `examples/` — example `.jig.toml` answer files
+- `examples/` — visible `.jig.toml` answer-file examples and a short index
 - `scripts/validate-fixtures.sh` — renders sample repos and validates the generated harness
 
 ## Validate This Repo

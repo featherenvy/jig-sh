@@ -4,6 +4,10 @@ use std::process::Command;
 
 use tempfile::tempdir;
 
+use common::*;
+
+use crate::cli::CommandKind;
+use crate::command::RuntimeCommand;
 use crate::test_env::{EnvVarGuard, lock_env};
 
 use super::*;
@@ -13,7 +17,33 @@ mod common;
 mod mcp;
 mod work;
 
-use common::*;
+fn dispatch(ctx: &RepoContext, command: CommandKind) -> Result<Value> {
+    super::dispatch(ctx, runtime_command_from_cli(command))
+}
+
+fn runtime_command_from_cli(command: CommandKind) -> RuntimeCommand {
+    match command {
+        CommandKind::Bootstrap(opts) => RuntimeCommand::Bootstrap(opts.into()),
+        CommandKind::Check(command) => RuntimeCommand::Check(command.into()),
+        CommandKind::SchemaDump(opts) => RuntimeCommand::SchemaDump(opts.into()),
+        CommandKind::MigrationAdd(opts) => RuntimeCommand::MigrationAdd(opts.into()),
+        CommandKind::AgentMap(command) => RuntimeCommand::AgentMap(command.into()),
+        CommandKind::GenerateSqlxUncheckedQueriesTodo(opts) => {
+            RuntimeCommand::GenerateSqlxUncheckedQueriesTodo(opts.into())
+        }
+        CommandKind::Dev(opts) => RuntimeCommand::Dev(opts.into()),
+        CommandKind::RunTarget(opts) => RuntimeCommand::RunTarget(opts.into()),
+        CommandKind::Proxy(command) => RuntimeCommand::Proxy(command.into()),
+        CommandKind::Agent(command) => RuntimeCommand::Agent(command.into()),
+        CommandKind::Work(command) => RuntimeCommand::Work(command.into()),
+        CommandKind::Init(_)
+        | CommandKind::Adopt(_)
+        | CommandKind::Update(_)
+        | CommandKind::Mcp => {
+            panic!("runtime test helper only accepts runtime commands")
+        }
+    }
+}
 
 #[cfg(feature = "dev-proxy")]
 #[test]

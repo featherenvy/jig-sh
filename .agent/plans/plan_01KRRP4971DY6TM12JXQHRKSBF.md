@@ -1,0 +1,1 @@
+Fix the developer UX review findings: help startup clarity, receipt summary output, and discoverable examples. Validate targeted tests and run a comprehensive review before finishing.
