@@ -1,6 +1,30 @@
 use super::*;
 use clap::CommandFactory;
 
+mod help_helpers {
+    use super::*;
+
+    pub(super) fn rendered_help(path: &[&str]) -> String {
+        let mut command = Cli::command();
+        let mut current = &mut command;
+        for (index, name) in path.iter().enumerate() {
+            current = current.find_subcommand_mut(name).unwrap_or_else(|| {
+                panic!("missing subcommand {name:?} at index {index} in path {path:?}")
+            });
+        }
+        current.render_help().to_string()
+    }
+
+    pub(super) fn assert_help_contains(help: &str, expected: &str) {
+        assert!(
+            help.contains(expected),
+            "expected rendered help to contain {expected:?}\n\n{help}"
+        );
+    }
+}
+
+use help_helpers::{assert_help_contains, rendered_help};
+
 #[test]
 fn template_errors_get_hint() {
     let missing_template_value =
@@ -51,11 +75,67 @@ fn nested_help_describes_work_and_agent_commands() {
     );
 }
 
-fn assert_help_contains(help: &str, expected: &str) {
-    assert!(
-        help.contains(expected),
-        "expected rendered help to contain {expected:?}\n\n{help}"
+#[test]
+fn work_start_help_includes_examples() {
+    let work_start_help = rendered_help(&["work", "start"]);
+    assert_help_contains(&work_start_help, "jig work start --title \"Add auth\"");
+    assert_help_contains(&work_start_help, "--body-file .agent/notes/signup-plan.md");
+}
+
+#[test]
+fn work_check_help_includes_examples() {
+    let work_check_help = rendered_help(&["work", "check"]);
+    assert_help_contains(&work_check_help, "jig work check --plan-id plan_abc123");
+    assert_help_contains(&work_check_help, "--tool jig.test");
+}
+
+#[test]
+fn work_finish_help_includes_examples() {
+    let work_finish_help = rendered_help(&["work", "finish"]);
+    assert_help_contains(&work_finish_help, "jig work finish --plan-id plan_abc123");
+    assert_help_contains(&work_finish_help, "--outcome success");
+}
+
+#[test]
+fn agent_help_includes_examples() {
+    let agent_help = rendered_help(&["agent"]);
+    assert_help_contains(&agent_help, "jig agent doctor");
+    assert_help_contains(&agent_help, "jig agent bootstrap");
+}
+
+#[test]
+fn agent_bootstrap_help_includes_examples() {
+    let agent_bootstrap_help = rendered_help(&["agent", "bootstrap"]);
+    assert_help_contains(&agent_bootstrap_help, "GitHub owner/repo skill marketplace");
+    assert_help_contains(
+        &agent_bootstrap_help,
+        "jig agent bootstrap --marketplace owner/skills-repo",
     );
+}
+
+#[test]
+fn proxy_run_help_includes_launcher_context_and_examples() {
+    let proxy_run_help = rendered_help(&["proxy", "run"]);
+    assert_help_contains(&proxy_run_help, "The app command must come after --");
+    assert_help_contains(&proxy_run_help, "[[dev.apps]].host");
+    assert_help_contains(&proxy_run_help, "jig proxy run web -- npm run dev");
+    assert_help_contains(&proxy_run_help, "jig proxy run web -- vite --open");
+    assert_help_contains(
+        &proxy_run_help,
+        "jig proxy run api --port 3000 -- cargo run",
+    );
+    assert_help_contains(
+        &proxy_run_help,
+        "jig proxy run web --no-proxy -- npm run dev",
+    );
+}
+
+#[test]
+fn migration_help_includes_examples() {
+    let migration_help = rendered_help(&["migration-add"]);
+    assert_help_contains(&migration_help, "open structured work plan");
+    assert_help_contains(&migration_help, "jig migration-add create_users");
+    assert_help_contains(&migration_help, "--plan-id plan_abc123");
 }
 
 #[test]

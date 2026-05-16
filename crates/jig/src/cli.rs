@@ -34,6 +34,54 @@ Use one of:
 
 Pass --template only for a local checkout, fork, or private template.";
 
+const AGENT_AFTER_HELP: &str = "\
+Examples:
+  jig agent doctor
+  jig agent bootstrap";
+
+const AGENT_BOOTSTRAP_AFTER_HELP: &str = "\
+Use --marketplace for a GitHub owner/repo skill marketplace or another configured marketplace source.
+
+Examples:
+  jig agent bootstrap
+  jig agent bootstrap --marketplace owner/skills-repo";
+
+const PROXY_RUN_AFTER_HELP: &str = "\
+The app command must come after --. Ad-hoc proxy runs bind the app to 127.0.0.1; use [[dev.apps]].host for configured loopback IP targets.
+
+Examples:
+  jig proxy run web -- npm run dev
+  jig proxy run web -- vite --open
+  jig proxy run api --port 3000 -- cargo run
+  jig proxy run web --no-proxy -- npm run dev";
+
+const MIGRATION_ADD_AFTER_HELP: &str = "\
+Use --plan-id to associate the migration with an open structured work plan.
+
+Examples:
+  jig migration-add create_users
+  jig migration-add add_login_tokens --plan-id plan_abc123";
+
+const WORK_START_AFTER_HELP: &str = "\
+Use --body for short notes or --body-file for a prepared markdown plan.
+
+Examples:
+  jig work start --title \"Add auth\" --body \"Implement login flow and validation.\"
+  jig work start --title \"Fix signup\" --body-file .agent/notes/signup-plan.md";
+
+const WORK_CHECK_AFTER_HELP: &str = "\
+Run all required gates for a plan, or use --tool to run one configured gate.
+
+Examples:
+  jig work check --plan-id plan_abc123
+  jig work check --plan-id plan_abc123 --tool jig.test";
+
+const WORK_FINISH_AFTER_HELP: &str = "\
+Close a plan after required gates pass; use --outcome for a machine-readable result.
+
+Examples:
+  jig work finish --plan-id plan_abc123 --resolution \"Auth flow complete\" --outcome success";
+
 #[derive(Debug, Subcommand)]
 pub(crate) enum CommandKind {
     /// Create a new repository and render Jig harness files into it.
@@ -106,7 +154,11 @@ pub(crate) enum CommandKind {
     #[command(name = tool_defs::cli_command::PROXY, subcommand)]
     Proxy(ProxyCommand),
     /// Inspect or bootstrap local agent tooling.
-    #[command(name = tool_defs::cli_command::AGENT, subcommand)]
+    #[command(
+        name = tool_defs::cli_command::AGENT,
+        subcommand,
+        after_help = AGENT_AFTER_HELP
+    )]
     Agent(AgentCommand),
     /// Manage structured work plans, receipts, gates, and decisions.
     #[command(name = tool_defs::cli_command::WORK, subcommand)]
@@ -138,13 +190,19 @@ pub(crate) enum WorkCommand {
     #[command(name = tool_defs::cli_command::WORK_GOAL)]
     Goal(WorkGoalOpts),
     /// Start a structured work plan and session.
-    #[command(name = tool_defs::cli_command::WORK_START)]
+    #[command(
+        name = tool_defs::cli_command::WORK_START,
+        after_help = WORK_START_AFTER_HELP
+    )]
     Start(WorkStartOpts),
     /// Append progress text to an open work plan.
     #[command(name = tool_defs::cli_command::WORK_APPEND)]
     Append(WorkAppendOpts),
     /// Run configured or selected work gate checks for a plan.
-    #[command(name = tool_defs::cli_command::WORK_CHECK)]
+    #[command(
+        name = tool_defs::cli_command::WORK_CHECK,
+        after_help = WORK_CHECK_AFTER_HELP
+    )]
     Check(WorkCheckOpts),
     /// Show required gate status for a plan.
     #[command(name = tool_defs::cli_command::WORK_GATES)]
@@ -159,7 +217,10 @@ pub(crate) enum WorkCommand {
     #[command(name = tool_defs::cli_command::WORK_STATUS)]
     Status,
     /// Close a work plan after required gates pass.
-    #[command(name = tool_defs::cli_command::WORK_FINISH)]
+    #[command(
+        name = tool_defs::cli_command::WORK_FINISH,
+        after_help = WORK_FINISH_AFTER_HELP
+    )]
     Finish(WorkFinishOpts),
 }
 
@@ -169,7 +230,10 @@ pub(crate) enum AgentCommand {
     #[command(name = tool_defs::cli_command::AGENT_DOCTOR)]
     Doctor,
     /// Register the configured Codex skills marketplace.
-    #[command(name = tool_defs::cli_command::AGENT_BOOTSTRAP)]
+    #[command(
+        name = tool_defs::cli_command::AGENT_BOOTSTRAP,
+        after_help = AGENT_BOOTSTRAP_AFTER_HELP
+    )]
     Bootstrap(AgentBootstrapOpts),
 }
 
@@ -366,9 +430,7 @@ pub(crate) struct ProxyPruneOpts {
 }
 
 #[derive(Args, Debug)]
-#[command(
-    after_help = "Pass the app command after --, for example: jig proxy run web -- vite --open. Ad-hoc proxy runs bind the app to 127.0.0.1; use [[dev.apps]].host for configured loopback IP targets."
-)]
+#[command(after_help = PROXY_RUN_AFTER_HELP)]
 pub(crate) struct ProxyRunOpts {
     pub(crate) name: String,
     #[arg(long)]
@@ -474,6 +536,7 @@ pub(crate) struct ToolOpts {
 }
 
 #[derive(Args, Debug)]
+#[command(after_help = MIGRATION_ADD_AFTER_HELP)]
 pub(crate) struct MigrationAddOpts {
     /// Migration name, for example create_users.
     pub(crate) name: String,
