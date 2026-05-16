@@ -9,7 +9,7 @@ This matrix captures what was extracted from the source application workflow and
 | `.agent/PLANS.md` | Templated | Preserved as the generic ExecPlan contract. |
 | `.agent/jig-contract.json` | Templated | Declares command-backed and native repo contract tools for CLI and MCP consumers, with SQLx tools gated by `sqlx_enabled`. |
 | `.agent/state/*.jsonl` | Runtime-owned | Append-only repo memory populated by `jig`. |
-| `scripts/jig agent doctor` + `scripts/jig agent bootstrap` | Runtime-owned | Checks and explicitly installs expected Codex-side Jig skills without adding more rendered shell scripts. |
+| `scripts/jig agent doctor` / `scripts/jig agent doctor --summary` + `scripts/jig agent bootstrap` | Runtime-owned | Checks and explicitly installs expected Codex-side Jig skills without adding more rendered shell scripts. JSON remains the default automation output; `--summary` is for terminal scanning. |
 | `.mcp.json` | Templated | Repo-local MCP entrypoint that launches `scripts/jig mcp`. |
 | `Makefile` | Optional templated subset | Kept as a convenience adapter when `makefile_enabled = true`; existing project Makefiles stay repo-owned on adoption. |
 | `crates/jig` | Added | Publishable runtime that exposes the typed CLI/MCP surface over the generated command contract and runtime-owned state. |

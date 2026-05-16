@@ -13,6 +13,7 @@ DEFAULT_BRANCH ?= master
 JIG_VERSION ?= 0.2.0-beta.1
 RUST_CRATE_ROOTS := crates
 
+# Source-repo convenience target; generated repos set this from .jig.toml.
 DEV_COMMAND := cargo test --workspace
 
 .PHONY: help bootstrap deps dev fmt-check clippy test-rust test-rust-locked test
@@ -40,7 +41,7 @@ deps: ## Install Rust and optional webapp dependencies
 	@echo "No web apps configured."
 
 
-dev: ## Run the local development stack
+dev: ## Run the configured dev command
 	@bash -lc '$(DEV_COMMAND)'
 
 fmt-check: ## Check Rust formatting

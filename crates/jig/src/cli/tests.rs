@@ -114,6 +114,17 @@ fn agent_bootstrap_help_includes_examples() {
 }
 
 #[test]
+fn human_summary_flags_are_discoverable() {
+    let agent_doctor_help = rendered_help(&["agent", "doctor"]);
+    assert_help_contains(&agent_doctor_help, "--summary");
+    assert_help_contains(&agent_doctor_help, "human-readable readiness summary");
+
+    let work_status_help = rendered_help(&["work", "status"]);
+    assert_help_contains(&work_status_help, "--summary");
+    assert_help_contains(&work_status_help, "human-readable work summary");
+}
+
+#[test]
 fn proxy_run_help_includes_launcher_context_and_examples() {
     let proxy_run_help = rendered_help(&["proxy", "run"]);
     assert_help_contains(&proxy_run_help, "The app command must come after --");
@@ -317,8 +328,18 @@ fn parses_agent_doctor_command() {
     let cli = Cli::try_parse_from(["jig", "agent", "doctor"]).unwrap();
 
     match cli.command {
-        CommandKind::Agent(AgentCommand::Doctor) => {}
+        CommandKind::Agent(AgentCommand::Doctor(opts)) => {
+            assert!(!opts.summary);
+        }
         other => panic!("expected agent doctor command, got {other:?}"),
+    }
+
+    let summary = Cli::try_parse_from(["jig", "agent", "doctor", "--summary"]).unwrap();
+    match summary.command {
+        CommandKind::Agent(AgentCommand::Doctor(opts)) => {
+            assert!(opts.summary);
+        }
+        other => panic!("expected agent doctor summary command, got {other:?}"),
     }
 }
 
@@ -497,7 +518,7 @@ fn proxy_json_ok_false_is_cli_failure() {
         }
     )));
     assert!(command_reports_failure_with_ok(&CommandKind::Agent(
-        AgentCommand::Doctor
+        AgentCommand::Doctor(AgentDoctorOpts::default())
     )));
 }
 
@@ -626,8 +647,18 @@ fn parses_work_status_command() {
     let cli = Cli::try_parse_from(["jig", "work", "status"]).unwrap();
 
     match cli.command {
-        CommandKind::Work(WorkCommand::Status) => {}
+        CommandKind::Work(WorkCommand::Status(opts)) => {
+            assert!(!opts.summary);
+        }
         other => panic!("expected work status command, got {other:?}"),
+    }
+
+    let summary = Cli::try_parse_from(["jig", "work", "status", "--summary"]).unwrap();
+    match summary.command {
+        CommandKind::Work(WorkCommand::Status(opts)) => {
+            assert!(opts.summary);
+        }
+        other => panic!("expected work status summary command, got {other:?}"),
     }
 }
 

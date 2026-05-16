@@ -96,8 +96,57 @@ For repos adopted from the official default template, this means the first rende
 
 ```sh
 cargo build -p jig-sh --bin jig
-JIG_DEV_BIN=target/debug/jig scripts/jig work status
+JIG_DEV_BIN=target/debug/jig scripts/jig work status --summary
 ```
+
+## Five-Minute Golden Path
+
+Use this path when you want the fastest successful loop on a new or adopted repo.
+
+1. Render the harness.
+
+   ```sh
+   jig init /path/to/new-repo --repo-name new-repo --sqlx-enabled false
+   # or, inside an existing repo:
+   jig adopt . --repo-name existing-repo --sqlx-enabled false
+   ```
+
+2. Enter the repo and verify the pinned launcher works.
+
+   ```sh
+   cd /path/to/new-repo
+   scripts/jig bootstrap
+   scripts/jig contract-check
+   ```
+
+3. Check local agent readiness. The JSON form is the stable automation output; `--summary` is the human scan path. `agent doctor` exits nonzero until required setup is complete.
+
+   ```sh
+   scripts/jig agent doctor --summary || true
+   # If the summary reports missing marketplace registration:
+   scripts/jig agent bootstrap
+   scripts/jig agent doctor --summary
+   ```
+
+4. Start structured work, run required gates, and close it only after fresh evidence exists.
+
+   ```sh
+   work_json="$(scripts/jig work start --title "First change" --body "Validate the harness loop.")"
+   plan_id="$(printf '%s' "$work_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["plan"]["plan_id"])')"
+
+   scripts/jig work status --summary
+   scripts/jig work check --plan-id "$plan_id"
+   scripts/jig work gates --plan-id "$plan_id"
+   scripts/jig work finish --plan-id "$plan_id" --resolution "Harness loop verified" --outcome success
+   ```
+
+5. For normal local validation, use the repo contract commands directly.
+
+   ```sh
+   scripts/jig fmt-check
+   scripts/jig clippy
+   scripts/jig test
+   ```
 
 ## What It Generates
 
@@ -119,7 +168,7 @@ Generated repos use `scripts/jig` as the execution backend. The generated `Makef
 On fresh machines, generated repos can check and bootstrap expected agent skills through the launcher:
 
 ```sh
-scripts/jig agent doctor
+scripts/jig agent doctor --summary
 scripts/jig agent bootstrap
 ```
 

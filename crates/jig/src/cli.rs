@@ -180,7 +180,11 @@ pub(crate) enum AgentMapCommand {
 
 #[derive(Args, Debug)]
 pub(crate) struct AgentMapOpts {
-    #[arg(long = "map", default_value = "agent-map.md")]
+    #[arg(
+        long = "map",
+        default_value = "agent-map.md",
+        help = "Agent map file to generate or check"
+    )]
     pub(crate) map_path: PathBuf,
 }
 
@@ -215,7 +219,7 @@ pub(crate) enum WorkCommand {
     Receipts(WorkReceiptsOpts),
     /// Summarize current structured work state.
     #[command(name = tool_defs::cli_command::WORK_STATUS)]
-    Status,
+    Status(WorkStatusOpts),
     /// Close a work plan after required gates pass.
     #[command(
         name = tool_defs::cli_command::WORK_FINISH,
@@ -228,7 +232,7 @@ pub(crate) enum WorkCommand {
 pub(crate) enum AgentCommand {
     /// Report local Codex marketplace readiness for this repo.
     #[command(name = tool_defs::cli_command::AGENT_DOCTOR)]
-    Doctor,
+    Doctor(AgentDoctorOpts),
     /// Register the configured Codex skills marketplace.
     #[command(
         name = tool_defs::cli_command::AGENT_BOOTSTRAP,
@@ -324,6 +328,12 @@ pub(crate) struct AgentBootstrapOpts {
     pub(crate) marketplace: Option<String>,
 }
 
+#[derive(Args, Debug, Default)]
+pub(crate) struct AgentDoctorOpts {
+    #[arg(long, help = "Print a concise human-readable readiness summary")]
+    pub(crate) summary: bool,
+}
+
 #[derive(Args, Clone, Debug, Default)]
 pub(crate) struct ProxyRuntimeOpts {
     #[arg(
@@ -403,7 +413,7 @@ pub(crate) struct DevOpts {
 
 #[derive(Args, Debug)]
 pub(crate) struct ProxyStartOpts {
-    #[arg(long)]
+    #[arg(long, help = "Run the proxy in the foreground instead of detaching")]
     pub(crate) foreground: bool,
     #[command(flatten)]
     pub(crate) proxy: ProxyRuntimeOpts,
@@ -417,7 +427,7 @@ pub(crate) struct ProxyStopOpts {
 
 #[derive(Args, Debug, Default)]
 pub(crate) struct ProxyListOpts {
-    #[arg(long)]
+    #[arg(long, help = "Print raw route and listener details")]
     pub(crate) raw: bool,
     #[command(flatten)]
     pub(crate) proxy: ProxyRuntimeOpts,
@@ -432,14 +442,18 @@ pub(crate) struct ProxyPruneOpts {
 #[derive(Args, Debug)]
 #[command(after_help = PROXY_RUN_AFTER_HELP)]
 pub(crate) struct ProxyRunOpts {
+    #[arg(help = "Route name to publish for the ad-hoc app")]
     pub(crate) name: String,
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "App kind used for command setup, such as env-port or vite"
+    )]
     pub(crate) kind: Option<String>,
-    #[arg(long)]
+    #[arg(long, help = "Working directory for the app command")]
     pub(crate) dir: Option<PathBuf>,
-    #[arg(long, value_parser = clap::value_parser!(u16).range(1..))]
+    #[arg(long, help = "Fixed backend port for the app", value_parser = clap::value_parser!(u16).range(1..))]
     pub(crate) port: Option<u16>,
-    #[arg(long)]
+    #[arg(long, help = "Run directly without publishing a proxy route")]
     pub(crate) no_proxy: bool,
     #[command(flatten)]
     pub(crate) proxy: ProxyRuntimeOpts,
@@ -454,6 +468,7 @@ pub(crate) struct ProxyRunOpts {
 
 #[derive(Args, Debug)]
 pub(crate) struct ProxyAliasOpts {
+    #[arg(help = "Route name to publish for the existing service")]
     pub(crate) name: String,
     #[arg(long, help = "Backend TCP port to route to", value_parser = clap::value_parser!(u16).range(1..))]
     pub(crate) port: u16,
@@ -475,7 +490,10 @@ pub(crate) struct ProxyAliasOpts {
 
 #[derive(Args, Debug, Default)]
 pub(crate) struct ProxyCertGenerateOpts {
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "Regenerate certificate files even when usable files already exist"
+    )]
     pub(crate) force: bool,
     #[command(flatten)]
     pub(crate) proxy: ProxyRuntimeOpts,
@@ -618,6 +636,12 @@ pub(crate) struct WorkGatesOpts {
     pub(crate) plan_id: String,
 }
 
+#[derive(Args, Debug, Default)]
+pub(crate) struct WorkStatusOpts {
+    #[arg(long, help = "Print a concise human-readable work summary")]
+    pub(crate) summary: bool,
+}
+
 #[derive(Args, Debug)]
 pub(crate) struct WorkFinishOpts {
     #[arg(long, help = "Open plan id to close")]
@@ -656,15 +680,15 @@ impl Default for WorkReceiptsOpts {
 
 #[derive(Args, Debug)]
 pub(crate) struct WorkDecisionAddOpts {
-    #[arg(long)]
+    #[arg(long, help = "Short decision title")]
     pub(crate) title: String,
-    #[arg(long)]
+    #[arg(long, help = "Chosen option or approach")]
     pub(crate) selected_option: String,
-    #[arg(long)]
+    #[arg(long, help = "Reason the selected option was chosen")]
     pub(crate) rationale: String,
-    #[arg(long)]
+    #[arg(long, help = "Alternative considered; may be repeated")]
     pub(crate) alternatives: Vec<String>,
-    #[arg(long)]
+    #[arg(long, help = "Plan id to associate with the decision")]
     pub(crate) plan_id: Option<String>,
 }
 

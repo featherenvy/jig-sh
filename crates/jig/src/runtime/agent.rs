@@ -18,7 +18,8 @@ pub(super) fn dispatch(ctx: &RepoContext, command: AgentCommand) -> Result<JsonV
     // Agent tooling commands describe or mutate local client setup, not repo
     // work evidence, so they intentionally do not record receipts.
     match command {
-        AgentCommand::Doctor => doctor(ctx),
+        // Summary output is a CLI rendering concern; runtime output stays JSON.
+        AgentCommand::Doctor(_opts) => doctor(ctx),
         AgentCommand::Bootstrap(opts) => bootstrap(ctx, opts),
     }
 }

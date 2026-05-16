@@ -61,58 +61,71 @@ const TEMPLATE_LOCAL_PATH_KEY: &str = "_template_local_path";
 
 #[derive(Args, Clone, Debug, Default)]
 pub struct AnswerOpts {
-    #[arg(long)]
+    #[arg(long, help = "Read renderer answers from a TOML file")]
     pub answers_file: Option<PathBuf>,
-    #[arg(long)]
+    #[arg(long, help = "Repository display name written into generated docs")]
     pub repo_name: Option<String>,
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "Default branch used for generated CI and comparison commands"
+    )]
     pub default_branch: Option<String>,
-    #[arg(long)]
+    #[arg(long, help = "GitHub Actions runner label for generated workflows")]
     pub ci_github_runner: Option<String>,
-    #[arg(long)]
+    #[arg(long, help = "Exact Jig runtime version to pin in generated repos")]
     pub jig_version: Option<String>,
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "Portable canonical template source URL for future updates"
+    )]
     pub template_source_url: Option<String>,
     #[arg(
         long,
         help = "Render and manage Jig's Makefile adapter; defaults to false when adopting a repo that already has Makefile"
     )]
     pub makefile_enabled: Option<bool>,
-    #[arg(long)]
+    #[arg(long, help = "Generate SQLx and migration contract tools")]
     pub sqlx_enabled: Option<bool>,
-    #[arg(long = "rust-crate-root")]
+    #[arg(
+        long = "rust-crate-root",
+        help = "Directory whose direct children are Rust crates; may be repeated"
+    )]
     pub rust_crate_roots: Vec<String>,
-    #[arg(long)]
+    #[arg(long, help = "SQL migration directory for SQLx-enabled repos")]
     pub rust_migration_dir: Option<String>,
-    #[arg(long)]
+    #[arg(long, help = "Committed SQLx metadata directory")]
     pub rust_sqlx_metadata_dir: Option<String>,
-    #[arg(long)]
+    #[arg(long, help = "Generate schema dump and freshness commands")]
     pub schema_dump_enabled: Option<bool>,
-    #[arg(long)]
+    #[arg(long, help = "Command used by scripts/jig schema-dump")]
     pub schema_dump_command: Option<String>,
-    #[arg(long)]
+    #[arg(long, help = "Command used by legacy schema-check manifests")]
     pub schema_check_command: Option<String>,
-    #[arg(long)]
+    #[arg(long, help = "Command used by scripts/jig sqlx-check")]
     pub sqlx_check_command: Option<String>,
-    #[arg(long)]
+    #[arg(long, help = "Command used by legacy migration-add manifests")]
     pub migration_add_command: Option<String>,
-    #[arg(long)]
+    #[arg(long, help = "Command used by scripts/jig bootstrap")]
     pub bootstrap_command: Option<String>,
-    #[arg(long)]
+    #[arg(long, help = "Command used by legacy contract-check manifests")]
     pub contract_check_command: Option<String>,
-    #[arg(long)]
+    #[arg(long, help = "Makefile adapter command used by make dev")]
     pub dev_command: Option<String>,
-    #[arg(long)]
+    #[arg(long, help = "Command used by scripts/jig fmt-check")]
     pub rust_fmt_check_command: Option<String>,
-    #[arg(long)]
+    #[arg(long, help = "Command used by scripts/jig clippy")]
     pub rust_clippy_command: Option<String>,
-    #[arg(long)]
+    #[arg(long, help = "Command used by scripts/jig test")]
     pub rust_test_command: Option<String>,
-    #[arg(long)]
+    #[arg(long, help = "Command used by scripts/jig test-locked")]
     pub rust_test_locked_command: Option<String>,
-    #[arg(long)]
+    #[arg(long, help = "Web package manager for generated web app checks")]
     pub web_package_manager: Option<String>,
-    #[arg(long = "frontend-app", value_parser = parse_frontend_app)]
+    #[arg(
+        long = "frontend-app",
+        value_parser = parse_frontend_app,
+        help = "Legacy frontend app as name:dir:coverage_threshold; may be repeated"
+    )]
     pub frontend_apps: Vec<FrontendApp>,
 }
 
@@ -200,21 +213,24 @@ pub struct AdoptOpts {
 
 #[derive(Args, Clone, Debug)]
 pub struct UpdateOpts {
-    #[arg(default_value = ".")]
+    #[arg(default_value = ".", help = "Adopted repository directory to update")]
     pub path: PathBuf,
-    #[arg(long)]
+    #[arg(long, help = "Template source to render from for this update")]
     pub template: Option<String>,
-    #[arg(long, value_enum)]
+    #[arg(long, value_enum, help = "How to read a local git template checkout")]
     pub template_mode: Option<TemplateMode>,
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "Re-render from the stored .jig.toml commit instead of advancing"
+    )]
     pub recopy: bool,
-    #[arg(long)]
+    #[arg(long, help = "Overwrite changed template-managed files")]
     pub force: bool,
-    #[arg(long)]
+    #[arg(long, help = "Git revision to render from the template source")]
     pub vcs_ref: Option<String>,
-    #[arg(long)]
+    #[arg(long, help = "Use default answers for omitted configuration prompts")]
     pub defaults: bool,
-    #[arg(long)]
+    #[arg(long, help = "Fail instead of prompting for missing answers")]
     pub no_input: bool,
 }
 

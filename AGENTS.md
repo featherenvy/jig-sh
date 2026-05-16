@@ -10,7 +10,7 @@ This repository uses the shared `jig.sh` workflow. Keep repo-local business rule
 - Read the nearest crate-level `AGENTS.md` before changing a crate.
 - Use `.agent/PLANS.md` when writing an ExecPlan for a complex feature or refactor.
 - Use `scripts/jig` for the typed repo contract and `scripts/jig mcp` for MCP clients.
-- On a fresh machine, run `scripts/jig agent doctor`; run `scripts/jig agent bootstrap` when Jig Codex skills are missing.
+- On a fresh machine, run `scripts/jig agent doctor --summary`; run `scripts/jig agent bootstrap` when Jig Codex skills are missing.
 - For substantial work, use `scripts/jig work start`, `scripts/jig work check`, `scripts/jig work gates`, and `scripts/jig work finish` to keep plans, receipts, and required gates connected.
 - Treat `.agent/state/*.jsonl` as append-only repo memory.
 
@@ -32,6 +32,7 @@ No web apps are configured in `.jig.toml`.
 
 - `scripts/jig bootstrap`
 - `scripts/jig dev`
+- `scripts/jig work status --summary`
 - `scripts/jig test`
 - `scripts/jig fmt-check`
 - `scripts/jig clippy`
@@ -84,7 +85,7 @@ plan_id="$(printf '%s' "$work_json" | python3 -c 'import json,sys; print(json.lo
 scripts/jig work check --plan-id "$plan_id"
 scripts/jig work gates --plan-id "$plan_id"
 scripts/jig work receipts --plan-id "$plan_id"
-scripts/jig work status
+scripts/jig work status --summary
 ```
 
 Do not rely on the repo-local cached `jig` binary for runtime changes unless you have intentionally refreshed it. `JIG_DEV_BIN` is the expected local-development cutover.

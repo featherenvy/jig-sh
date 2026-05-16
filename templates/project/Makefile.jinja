@@ -46,7 +46,7 @@ deps: ## Install Rust and optional webapp dependencies
 	@echo "No web apps configured."
 [% endif %]
 
-dev: ## Run the local development stack
+dev: ## Run the configured dev command
 	@bash -lc '$(DEV_COMMAND)'
 
 fmt-check: ## Check Rust formatting

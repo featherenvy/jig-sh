@@ -10,6 +10,8 @@ Generated repositories may rely on the contract described here when they pin a `
 
 Structured work commands and agent tooling checks are runtime-owned conveniences. They are available through commands such as `scripts/jig work ...` and `scripts/jig agent doctor`, and MCP tools named `jig.work_*` and `jig.agent_doctor`, but they are not part of the generated command contract and are not declared in `.agent/jig-contract.json`.
 
+Some runtime-owned CLI commands expose explicit human-output flags, such as `scripts/jig agent doctor --summary` and `scripts/jig work status --summary`. These summaries are for terminal scanning and are not stable machine-readable contract output; automation should use the default JSON output or MCP tools.
+
 The structured work namespace includes native check gates. Gates are configured in `.jig.toml`, evaluated from receipts, and enforced by `scripts/jig work finish`. They remain runtime-owned because they compose stable execution tools with append-only work state rather than adding new generated contract tools.
 
 Local development proxy commands are also runtime-owned. `scripts/jig dev` and `scripts/jig proxy ...` manage machine-local processes, ports, routes, certificates, and optional user services. They are configured from `.jig.toml` but are intentionally absent from `.agent/jig-contract.json` because they do not represent repository checks.
@@ -105,7 +107,7 @@ A generated repo may omit optional tools that do not apply to its configuration.
 
 ## Stable JSON Behavior
 
-All successful stable CLI and MCP command responses are JSON objects. Stable response fields are additive: existing fields should keep their names, types, and meanings for the current contract version, and new fields may be added.
+All successful stable CLI and MCP command responses are JSON objects unless a runtime-owned command explicitly documents a human-output flag. Stable response fields are additive: existing fields should keep their names, types, and meanings for the current contract version, and new fields may be added.
 
 Stable common response fields:
 

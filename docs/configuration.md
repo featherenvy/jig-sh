@@ -101,7 +101,7 @@ plugins = [
 
 Jig Codex skills are optional Codex plugin bundles used by agents working in generated Jig repos; the default marketplace source is `bpcakes/jig-skills`.
 
-Use `scripts/jig agent doctor` to report whether the local Codex installation can use the configured marketplace and to show diagnostic plugin enablement flags. The top-level `ok` result requires Codex marketplace support and registered marketplace sources; plugin enablement is reported separately because the supported Codex bootstrap path is marketplace registration. Use `scripts/jig agent bootstrap` to run `codex plugin marketplace add` when exactly one marketplace is configured. If multiple marketplaces are configured, `agent bootstrap` requires `--marketplace <source>` so a repo cannot install several user-level Codex marketplaces by default. `agent bootstrap` mutates user-level Codex config, so it is intentionally separate from the project-owned `bootstrap_command`.
+Use `scripts/jig agent doctor` to report whether the local Codex installation can use the configured marketplace and to show diagnostic plugin enablement flags. Add `--summary` for human-readable readiness output; omit it for stable JSON automation output. `agent doctor` exits nonzero until required setup is complete. The top-level `ok` result requires Codex marketplace support and registered marketplace sources; plugin enablement is reported separately because the supported Codex bootstrap path is marketplace registration. Use `scripts/jig agent bootstrap` to run `codex plugin marketplace add` when exactly one marketplace is configured. If multiple marketplaces are configured, `agent bootstrap` requires `--marketplace <source>` so a repo cannot install several user-level Codex marketplaces by default. `agent bootstrap` mutates user-level Codex config, so it is intentionally separate from the project-owned `bootstrap_command`.
 
 Omitting `agent_tooling`, `agent_tooling.codex`, or `agent_tooling.codex.marketplaces` uses the default Jig skills marketplace. Set `marketplaces = []` to opt out explicitly. In `agent doctor` output, `codex.available` is `true` or `false` when Codex is required, and `null` when the Codex probe is skipped because `marketplaces = []`.
 
@@ -391,6 +391,7 @@ The generated `scripts/jig` launcher enforces the exact `jig_version` pinned in 
 It also provides runtime-owned append-only memory under `.agent/state/*.jsonl` through the structured work namespace:
 
 - `scripts/jig agent doctor`
+- `scripts/jig agent doctor --summary`
 - `scripts/jig agent bootstrap`
 - `scripts/jig work start --title ...`
 - `scripts/jig work append --plan-id ...`
@@ -399,6 +400,7 @@ It also provides runtime-owned append-only memory under `.agent/state/*.jsonl` t
 - `scripts/jig work decide --plan-id ...`
 - `scripts/jig work receipts --plan-id ...`
 - `scripts/jig work status`
+- `scripts/jig work status --summary`
 - `scripts/jig work finish --plan-id ...`
 
 `work finish` closes the plan with `--resolution`. If an active session is also open, it closes that session with `--outcome`; when `--outcome` is omitted, the session outcome falls back to `--resolution`.

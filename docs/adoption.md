@@ -9,7 +9,7 @@
 4. Confirm `.jig.toml` was generated with the intended profile and template source. The default points at the official portable URL; override `template_source_url` only when adopting from a local checkout, fork, or private template. If the repo already had a root `Makefile`, Jig records `makefile_enabled = false` and leaves that file project-owned. Review the remaining paths, commands, and `[dev]` proxy defaults such as `tld`, `lan`, and `workspace_discovery` before committing. Command-backed `*_command` values run through non-login `bash -c`, so put any required toolchain setup in the command string or in project-owned scripts. Jig rejects unknown `.jig.toml` keys; after upgrading an existing repo, remove or rename any unknown keys reported by `scripts/jig` before rerunning commands.
 5. Review the root `AGENTS.md`. Existing repo guidance is preserved; Jig inserts or updates only the `<!-- BEGIN JIG MANAGED BLOCK -->` section.
 6. Add or adapt crate-level `AGENTS.md` files for each backend crate.
-7. Run `scripts/jig agent doctor`. If Jig Codex skills are missing and you want this client to use them, run `scripts/jig agent bootstrap`.
+7. Run `scripts/jig agent doctor --summary`. If Jig Codex skills are missing and you want this client to use them, run `scripts/jig agent bootstrap`.
 8. Run the generated local checks and `scripts/jig contract-check`. If web app dependencies or other project setup must happen during bootstrap, set `bootstrap_command` explicitly; the default is `cargo fetch`.
 9. Wire any missing project-owned scripts such as `scripts/dump-schema.sh` if schema dumps are enabled.
 10. Commit the generated files and then switch CI to use the new workflows.
@@ -80,7 +80,7 @@ If web apps are configured, confirm each app has the expected package scripts be
 
 If you want an MCP client to discover the repo automatically, point it at the generated `.mcp.json`, which launches `scripts/jig mcp`.
 
-On a fresh machine, `scripts/jig agent doctor` is the read-only agent tooling check. Its top-level `ok` result requires Codex marketplace support and registered marketplace sources; plugin enablement is reported as diagnostic detail. `scripts/jig agent bootstrap` is explicit because it runs `codex plugin marketplace add` and mutates user-level Codex config. For local dogfooding with an existing sibling skills checkout, use:
+On a fresh machine, `scripts/jig agent doctor` is the read-only agent tooling check and exits nonzero until required setup is complete. Add `--summary` for a concise human-readable readiness report; omit it for stable JSON automation output. The top-level `ok` result requires Codex marketplace support and registered marketplace sources; plugin enablement is reported as diagnostic detail. `scripts/jig agent bootstrap` is explicit because it runs `codex plugin marketplace add` and mutates user-level Codex config. For local dogfooding with an existing sibling skills checkout, use:
 
 ```sh
 scripts/jig agent bootstrap --marketplace ../jig-skills

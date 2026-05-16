@@ -22,7 +22,8 @@ pub(super) fn dispatch(ctx: &RepoContext, command: WorkCommand) -> Result<Value>
         WorkCommand::Gates(opts) => gates(ctx, opts),
         WorkCommand::Decide(opts) => decisions_add(ctx, opts.into()),
         WorkCommand::Receipts(opts) => receipts_list(ctx, opts.into()),
-        WorkCommand::Status => state_summary(ctx),
+        // Summary output is a CLI rendering concern; runtime output stays JSON.
+        WorkCommand::Status(_opts) => state_summary(ctx),
         WorkCommand::Finish(opts) => finish(ctx, opts),
     }
 }
