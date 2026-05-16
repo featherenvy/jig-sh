@@ -45,6 +45,7 @@ enabled = true
     assert_eq!(output["marketplaces"][0]["source_matches"], true);
     assert_eq!(output["marketplaces"][0]["plugins_ready"], true);
     assert_eq!(output["marketplaces"][0]["plugins"][0]["enabled"], true);
+    assert!(output["next_steps"].as_array().unwrap().is_empty());
 }
 
 #[test]
@@ -125,6 +126,10 @@ enabled = true
         output["marketplaces"][0]["configured_source"],
         "https://github.com/someone-else/jig-skills.git"
     );
+    assert_eq!(
+        output["next_steps"][0],
+        "Run `scripts/jig agent bootstrap` to register marketplace jig-skills (source: bpcakes/jig-skills)."
+    );
 }
 
 #[test]
@@ -159,6 +164,13 @@ source = "https://github.com/bpcakes/jig-skills.git"
         true
     );
     assert_eq!(output["marketplaces"][0]["registered"], true);
+    assert!(
+        output["next_steps"][0]
+            .as_str()
+            .unwrap()
+            .contains("plugin marketplace add --help")
+    );
+    assert_eq!(output["next_steps"].as_array().unwrap().len(), 1);
 }
 
 #[test]
@@ -256,6 +268,7 @@ tool = "jig.custom_check"
         false
     );
     assert!(output["marketplaces"].as_array().unwrap().is_empty());
+    assert!(output["next_steps"].as_array().unwrap().is_empty());
 }
 
 #[test]
@@ -297,6 +310,53 @@ fn agent_bootstrap_invokes_codex_marketplace_add() {
         "plugin marketplace add {}",
         skills_root.canonicalize().unwrap().display()
     )));
+}
+
+#[test]
+fn agent_doctor_reports_marketplace_specific_bootstrap_commands() {
+    let _guard = lock_env();
+    let temp = tempdir().unwrap();
+    write_fixture_repo(temp.path());
+    fs::write(
+        temp.path().join(".jig.toml"),
+        r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.1.0"
+
+[[agent_tooling.codex.marketplaces]]
+id = "first-skills"
+source = "bpcakes/jig-skills"
+
+[[agent_tooling.codex.marketplaces]]
+id = "local-skills"
+source = "./team's-skills"
+"#,
+    )
+    .unwrap();
+    let codex_path = temp.path().join("codex-stub.sh");
+    write_codex_stub(
+        &codex_path,
+        "#!/bin/sh\nif [ \"$1 $2 $3 $4\" = \"plugin marketplace add --help\" ]; then exit 0; fi\nexit 2\n",
+    );
+
+    let _codex_bin = EnvVarGuard::set("JIG_CODEX_BIN", &codex_path);
+    let _codex_home = EnvVarGuard::set("CODEX_HOME", temp.path().join("missing-codex-home"));
+    let ctx = RepoContext::load_from(temp.path()).unwrap();
+    let output = dispatch(&ctx, CommandKind::Agent(crate::cli::AgentCommand::Doctor)).unwrap();
+
+    assert_eq!(output["ok"], false, "{output:#}");
+    let steps = output["next_steps"].as_array().unwrap();
+    assert_eq!(steps.len(), 2);
+    assert_eq!(
+        steps[0],
+        "Run `scripts/jig agent bootstrap --marketplace 'bpcakes/jig-skills'` to register marketplace first-skills (source: bpcakes/jig-skills)."
+    );
+    assert_eq!(
+        steps[1],
+        "Run `scripts/jig agent bootstrap --marketplace './team'\\''s-skills'` to register marketplace local-skills (source: ./team's-skills)."
+    );
 }
 
 #[test]

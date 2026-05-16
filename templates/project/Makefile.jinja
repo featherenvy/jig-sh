@@ -31,8 +31,10 @@ help: ## Show all available targets
 	@echo "<<[ repo_name ]>> Makefile"
 	@awk 'BEGIN {FS = ":.*##"} /^[A-Za-z0-9._-]+:.*##/ {printf "  %-28s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
+# Bootstrap uses a login shell so PATH includes tools installed by shell profile setup.
 bootstrap: ## Initialize the local workspace
-	scripts/jig bootstrap
+	@echo "If bootstrap cannot start jig, run: make deps"
+	@bash -lc 'scripts/jig bootstrap'
 
 deps: ## Install Rust and optional webapp dependencies
 	$(CARGO) fetch

@@ -14,17 +14,14 @@ import json
 import os
 import pathlib
 import subprocess
+import sys
+import tempfile
 
 repo_dir = pathlib.Path(os.environ["REPO_DIR"])
 expect_schema_dump = os.environ["EXPECT_SCHEMA_DUMP"] == "1"
 expect_sqlx = os.environ["EXPECT_SQLX"] == "1"
-proc = subprocess.Popen(
-    [str(repo_dir / "scripts" / "jig"), "mcp"],
-    cwd=repo_dir,
-    stdin=subprocess.PIPE,
-    stdout=subprocess.PIPE,
-    stderr=subprocess.PIPE,
-)
+stderr_file = tempfile.TemporaryFile()
+proc = None
 
 def send(message):
     body = json.dumps(message).encode()
@@ -45,48 +42,78 @@ def recv():
     body = proc.stdout.read(int(headers["content-length"]))
     return json.loads(body)
 
-send({
-    "jsonrpc": "2.0",
-    "id": 1,
-    "method": "initialize",
-    "params": {
-        "protocolVersion": "2025-06-18",
-        "capabilities": {},
-        "clientInfo": {"name": "fixture", "version": "1"},
-    },
-})
-response = recv()
-assert response["result"]["serverInfo"]["name"] == "jig", response
+def print_mcp_stderr():
+    stderr_file.flush()
+    stderr_file.seek(0)
+    stderr = stderr_file.read().decode(errors="replace")
+    if stderr:
+        print("MCP server stderr:", file=sys.stderr)
+        print(stderr, file=sys.stderr, end="" if stderr.endswith("\n") else "\n")
 
-send({"jsonrpc": "2.0", "method": "notifications/initialized"})
-send({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
-response = recv()
-tool_names = {tool["name"] for tool in response["result"]["tools"]}
-assert "jig.fmt_check" in tool_names, tool_names
-assert ("jig.schema_check" in tool_names) == expect_schema_dump, tool_names
-assert ("jig.schema_dump" in tool_names) == expect_schema_dump, tool_names
-assert ("jig.sqlx_check" in tool_names) == expect_sqlx, tool_names
-assert ("jig.migration_add" in tool_names) == expect_sqlx, tool_names
-assert "jig.agent_doctor" in tool_names, tool_names
-assert "jig.work_start" in tool_names, tool_names
-assert "jig.session_start" not in tool_names, tool_names
+try:
+    proc = subprocess.Popen(
+        [str(repo_dir / "scripts" / "jig"), "mcp"],
+        cwd=repo_dir,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=stderr_file,
+        env={key: value for key, value in os.environ.items() if key != "JIG_DEV_BIN"},
+    )
 
-send({
-    "jsonrpc": "2.0",
-    "id": 3,
-    "method": "tools/call",
-    "params": {
-        "name": "jig.work_status",
-        "arguments": {},
-    },
-})
-response = recv()
-content = response["result"]["structuredContent"]
-assert content["ok"] is True, response
-assert "counts" in content, response
+    send({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "clientInfo": {"name": "fixture", "version": "1"},
+        },
+    })
+    response = recv()
+    assert response["result"]["serverInfo"]["name"] == "jig", response
 
-proc.terminate()
-proc.wait(timeout=5)
+    send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+    send({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
+    response = recv()
+    tool_names = {tool["name"] for tool in response["result"]["tools"]}
+    assert "jig.fmt_check" in tool_names, tool_names
+    assert ("jig.schema_check" in tool_names) == expect_schema_dump, tool_names
+    assert ("jig.schema_dump" in tool_names) == expect_schema_dump, tool_names
+    assert ("jig.sqlx_check" in tool_names) == expect_sqlx, tool_names
+    assert ("jig.migration_add" in tool_names) == expect_sqlx, tool_names
+    assert "jig.agent_doctor" in tool_names, tool_names
+    assert "jig.work_start" in tool_names, tool_names
+    assert "jig.session_start" not in tool_names, tool_names
+
+    send({
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "tools/call",
+        "params": {
+            "name": "jig.work_status",
+            "arguments": {},
+        },
+    })
+    response = recv()
+    content = response["result"]["structuredContent"]
+    assert content["ok"] is True, response
+    assert "counts" in content, response
+except Exception:
+    print_mcp_stderr()
+    raise
+finally:
+    if proc is not None and proc.poll() is None:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+    stderr_file.close()
 PY
 }
 
@@ -133,10 +160,36 @@ PY
     local work_json
     local plan_id
     local receipts_json
+    local jig_version
+    local install_base
+
+    jig_version="$(answers_get .jig.toml jig_version)"
+    if [[ -d .git ]]; then
+      install_base=".git/jig-tools"
+    else
+      install_base=".agent/.cache/jig"
+    fi
 
     rm -rf .git/jig-tools .agent/.cache
-    env -u JIG_DEV_BIN scripts/install-jig.sh >/dev/null
     validate_jig_mcp_smoke "$repo_dir" "$expect_schema_dump" "$expect_sqlx"
+    [[ -x "$install_base/$jig_version-runtime/bin/jig" ]]
+    [[ ! -e "$install_base/$jig_version/bin/jig" ]]
+    if "$install_base/$jig_version-runtime/bin/jig" proxy list >/dev/null 2>&1; then
+      echo "runtime profile unexpectedly supports proxy commands" >&2
+      exit 1
+    fi
+    env -u JIG_DEV_BIN scripts/jig contract-check >/dev/null
+    [[ ! -e "$install_base/$jig_version/bin/jig" ]]
+    env -u JIG_DEV_BIN JIG_INSTALL_PROFILE=default scripts/jig contract-check >/dev/null
+    [[ ! -e "$install_base/$jig_version/bin/jig" ]]
+    env -u JIG_DEV_BIN scripts/jig dev --help >/dev/null
+    env -u JIG_DEV_BIN scripts/jig proxy --help >/dev/null
+    env -u JIG_DEV_BIN scripts/jig proxy list --help >/dev/null
+    [[ ! -e "$install_base/$jig_version/bin/jig" ]]
+    env -u JIG_DEV_BIN JIG_INSTALL_PROFILE=runtime scripts/jig proxy list >/dev/null
+    [[ -x "$install_base/$jig_version/bin/jig" ]]
+
+    env -u JIG_DEV_BIN scripts/install-jig.sh >/dev/null
 
     work_json="$(scripts/jig work start --title "Fixture runtime plan" --body "## Fixture\nRuntime validation.")"
     plan_id="$(printf '%s' "$work_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["plan"]["plan_id"])')"
@@ -185,7 +238,8 @@ PY
     rg -q "Runtime validation" ".agent/plans/${plan_id}.md"
     [[ -f .agent/state/receipts.jsonl ]]
     [[ -f .agent/state/decisions.jsonl ]]
-    [[ -f ".git/jig-tools/0.2.0-beta.1/bin/jig" ]]
+    [[ -f "$install_base/$jig_version-runtime/bin/jig" ]]
+    [[ -f "$install_base/$jig_version/bin/jig" ]]
     if [[ "$expect_sqlx" == "1" ]]; then
       find crates/acme-db/migrations -name "*_${migration_name}.up.sql" | grep -q .
     fi

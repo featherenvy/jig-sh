@@ -88,13 +88,66 @@ is_remote_source() {
   [[ "$source" == *"://"* || "$source" == git@*:* ]]
 }
 
+# JIG_INSTALL_PROFILE is for direct installer calls. The scripts/jig launcher
+# passes --profile explicitly so command-aware routing wins over ambient env.
+INSTALL_PROFILE="${JIG_INSTALL_PROFILE:-default}"
+INSTALL_ROOT_ARG=""
+while [[ "$#" -gt 0 ]]; do
+  case "$1" in
+    --profile)
+      if [[ "$#" -lt 2 ]]; then
+        echo "--profile requires a value." >&2
+        exit 2
+      fi
+      INSTALL_PROFILE="$2"
+      shift 2
+      ;;
+    --profile=*)
+      INSTALL_PROFILE="${1#--profile=}"
+      shift
+      ;;
+    -*)
+      echo "Unknown install-jig option: $1" >&2
+      exit 2
+      ;;
+    *)
+      if [[ -n "$INSTALL_ROOT_ARG" ]]; then
+        echo "Unexpected extra install root argument: $1" >&2
+        exit 2
+      fi
+      INSTALL_ROOT_ARG="$1"
+      shift
+      ;;
+  esac
+done
+
+case "$INSTALL_PROFILE" in
+  default | runtime | mcp)
+    ;;
+  *)
+    echo "Unsupported jig install profile: $INSTALL_PROFILE" >&2
+    exit 2
+    ;;
+esac
+
 if [[ -d "$ROOT_DIR/.git" ]]; then
-  DEFAULT_INSTALL_ROOT="$ROOT_DIR/.git/jig-tools/$JIG_VERSION"
+  DEFAULT_INSTALL_BASE="$ROOT_DIR/.git/jig-tools"
 else
-  DEFAULT_INSTALL_ROOT="$ROOT_DIR/.agent/.cache/jig/$JIG_VERSION"
+  DEFAULT_INSTALL_BASE="$ROOT_DIR/.agent/.cache/jig"
 fi
 
-INSTALL_ROOT="${1:-$DEFAULT_INSTALL_ROOT}"
+case "$INSTALL_PROFILE" in
+  default)
+    DEFAULT_INSTALL_ROOT="$DEFAULT_INSTALL_BASE/$JIG_VERSION"
+    CARGO_INSTALL_FEATURE_ARGS=()
+    ;;
+  runtime | mcp)
+    DEFAULT_INSTALL_ROOT="$DEFAULT_INSTALL_BASE/$JIG_VERSION-runtime"
+    CARGO_INSTALL_FEATURE_ARGS=(--no-default-features)
+    ;;
+esac
+
+INSTALL_ROOT="${INSTALL_ROOT_ARG:-$DEFAULT_INSTALL_ROOT}"
 BIN_PATH="$INSTALL_ROOT/bin/jig"
 INSTALL_LOCK_DIR="$INSTALL_ROOT.lock"
 INSTALL_LOCK_ATTEMPTS=30
@@ -183,6 +236,12 @@ acquire_install_lock() {
     attempt=$((attempt + 1))
   done
   echo "Timed out waiting for jig installer lock: $INSTALL_LOCK_DIR" >&2
+  if [[ -d "$INSTALL_LOCK_DIR" ]]; then
+    # Downstream harnesses intentionally omit jig-sh source-checkout recovery advice.
+    echo "Another scripts/jig install may still be running." >&2
+  else
+    echo "Could not create jig installer lock; check permissions for $(dirname "$INSTALL_LOCK_DIR")." >&2
+  fi
   exit 1
 }
 
@@ -219,9 +278,22 @@ install_from_local_source() {
     --path "$crate_path" \
     --root "$INSTALL_ROOT" \
     --locked \
-    --force
+    --force \
+    "${CARGO_INSTALL_FEATURE_ARGS[@]}"
 
   assert_exact_version "$BIN_PATH"
+}
+
+is_jig_source_checkout() {
+  local source_root="$1"
+  [[ -n "$source_root" ]] || return 1
+  # This helper is rendered into downstream harnesses too so the same template
+  # can repair the jig-sh source repo; ordinary projects fail these checks and
+  # fall through to the configured template source.
+  local manifest="$source_root/crates/jig/Cargo.toml"
+  [[ -f "$source_root/templates/project/scripts/install-jig.sh.jinja" ]] || return 1
+  [[ -f "$manifest" ]] || return 1
+  grep -Eq '^[[:space:]]*name[[:space:]]*=[[:space:]]*"jig-sh"' "$manifest"
 }
 
 install_from_git_source() {
@@ -240,6 +312,7 @@ install_from_git_source() {
     --root "$INSTALL_ROOT" \
     --locked \
     --force \
+    "${CARGO_INSTALL_FEATURE_ARGS[@]}" \
     jig-sh
 
   assert_exact_version "$BIN_PATH"
@@ -248,6 +321,16 @@ install_from_git_source() {
 if [[ -n "${JIG_DEV_BIN:-}" ]]; then
   install_from_dev_bin
   exit 0
+fi
+
+if [[ "$INSTALL_PROFILE" != "default" && -z "$INSTALL_ROOT_ARG" ]]; then
+  # Runtime and MCP profiles are subsets of the default binary. Reuse a matching
+  # full build instead of compiling a stripped binary when it already exists.
+  FULL_BIN_PATH="$DEFAULT_INSTALL_BASE/$JIG_VERSION/bin/jig"
+  if [[ -x "$FULL_BIN_PATH" ]] && assert_exact_version "$FULL_BIN_PATH"; then
+    printf '%s\n' "$FULL_BIN_PATH"
+    exit 0
+  fi
 fi
 
 if [[ -x "$BIN_PATH" ]] && assert_exact_version "$BIN_PATH"; then
@@ -262,7 +345,11 @@ if [[ -x "$BIN_PATH" ]] && assert_exact_version "$BIN_PATH"; then
   exit 0
 fi
 
-if [[ -d "$SRC_PATH/crates/jig" ]] || [[ "$SRC_PATH" == /* && -d "$SRC_PATH" ]]; then
+# The jig-sh source repo dogfoods generated harness files, but should install
+# from the local checkout before falling back to the rendered template source.
+if is_jig_source_checkout "$ROOT_DIR"; then
+  install_from_local_source "$ROOT_DIR"
+elif [[ -d "$SRC_PATH/crates/jig" ]] || [[ "$SRC_PATH" == /* && -d "$SRC_PATH" ]]; then
   install_from_local_source "$SRC_PATH"
 elif [[ -n "$TEMPLATE_SOURCE_URL" ]]; then
   SRC_PATH="$TEMPLATE_SOURCE_URL"

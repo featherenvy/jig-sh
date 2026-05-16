@@ -1,4 +1,5 @@
 use super::*;
+use clap::CommandFactory;
 
 #[test]
 fn template_errors_get_hint() {
@@ -12,6 +13,49 @@ fn template_errors_get_hint() {
 
     let unrelated = Cli::try_parse_from(["jig", "proxy", "run", "web", "vite"]).unwrap_err();
     assert!(!should_add_template_hint(&unrelated));
+}
+
+#[test]
+fn top_level_help_describes_common_commands() {
+    let help = Cli::command().render_help().to_string();
+
+    assert_help_contains(&help, "init");
+    assert_help_contains(&help, "Create a new repository");
+    assert_help_contains(&help, "Manage structured work plans");
+    assert_help_contains(&help, "Inspect or bootstrap local agent tooling");
+}
+
+#[test]
+fn nested_help_describes_work_and_agent_commands() {
+    let work_help = Cli::command()
+        .find_subcommand_mut("work")
+        .unwrap()
+        .render_help()
+        .to_string();
+    assert_help_contains(&work_help, "start");
+    assert_help_contains(&work_help, "Start a structured work plan");
+    assert_help_contains(&work_help, "gates");
+    assert_help_contains(&work_help, "Show required gate status");
+
+    let agent_help = Cli::command()
+        .find_subcommand_mut("agent")
+        .unwrap()
+        .render_help()
+        .to_string();
+    assert_help_contains(&agent_help, "doctor");
+    assert_help_contains(&agent_help, "Report local Codex marketplace readiness");
+    assert_help_contains(&agent_help, "bootstrap");
+    assert_help_contains(
+        &agent_help,
+        "Register the configured Codex skills marketplace",
+    );
+}
+
+fn assert_help_contains(help: &str, expected: &str) {
+    assert!(
+        help.contains(expected),
+        "expected rendered help to contain {expected:?}\n\n{help}"
+    );
 }
 
 #[test]

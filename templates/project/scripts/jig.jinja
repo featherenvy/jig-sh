@@ -10,7 +10,36 @@ if [[ ! -x "$INSTALLER" ]]; then
   exit 1
 fi
 
-bin_path="$("$INSTALLER")"
+jig_help_requested_before_separator() {
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+      --)
+        return 1
+        ;;
+      -h | --help)
+        return 0
+        ;;
+    esac
+  done
+  return 1
+}
+
+# Keep repo-contract, work, agent, and MCP startup on stripped builds. Add only
+# commands that require dev-proxy support to the full-profile branch.
+install_args=(--profile runtime)
+case "${1:-}" in
+  mcp)
+    install_args=(--profile mcp)
+    ;;
+  dev | proxy)
+    if ! jig_help_requested_before_separator "$@"; then
+      install_args=(--profile default)
+    fi
+    ;;
+esac
+
+bin_path="$("$INSTALLER" "${install_args[@]}")"
 actual_version="$("$bin_path" --version 2>/dev/null | awk '{print $2}')"
 
 if [[ "$actual_version" != "$JIG_VERSION" ]]; then

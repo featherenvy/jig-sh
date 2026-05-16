@@ -66,10 +66,19 @@ pub(super) fn doctor(ctx: &RepoContext) -> Result<JsonValue> {
         None
     };
 
-    let marketplaces: Vec<JsonValue> = configured_marketplaces
-        .iter()
-        .map(|marketplace| marketplace_status(marketplace, config.as_ref(), ctx.root()))
-        .collect();
+    let mut marketplaces = Vec::new();
+    let mut unregistered_marketplaces = Vec::new();
+    for marketplace in configured_marketplaces.iter() {
+        let status = marketplace_status(marketplace, config.as_ref(), ctx.root());
+        let registered = status
+            .get("registered")
+            .and_then(JsonValue::as_bool)
+            .unwrap_or(false);
+        if !registered {
+            unregistered_marketplaces.push((marketplace.id.clone(), marketplace.source.clone()));
+        }
+        marketplaces.push(status);
+    }
     let all_marketplaces_ready = if codex_required {
         marketplaces.iter().all(|marketplace| {
             marketplace
@@ -83,6 +92,13 @@ pub(super) fn doctor(ctx: &RepoContext) -> Result<JsonValue> {
     progress.step(
         "check marketplaces",
         readiness_message(codex_required, all_marketplaces_ready),
+    );
+    let next_steps = doctor_next_steps(
+        &codex_bin,
+        codex_required,
+        codex_ready,
+        configured_marketplaces.len(),
+        &unregistered_marketplaces,
     );
     if codex_ready && all_marketplaces_ready {
         progress.done("agent doctor complete");
@@ -105,7 +121,8 @@ pub(super) fn doctor(ctx: &RepoContext) -> Result<JsonValue> {
             "ok_requires_marketplaces_registered": codex_required,
             "ok_requires_plugins_enabled": false
         },
-        "marketplaces": marketplaces
+        "marketplaces": marketplaces,
+        "next_steps": next_steps
     }))
 }
 
@@ -173,6 +190,79 @@ fn readiness_message(codex_required: bool, ready: bool) -> &'static str {
         (false, _) => "not required",
         (true, true) => "registered",
         (true, false) => "missing registration",
+    }
+}
+
+fn doctor_next_steps(
+    codex_bin: &str,
+    codex_required: bool,
+    codex_ready: bool,
+    marketplace_count: usize,
+    unregistered_marketplaces: &[(String, String)],
+) -> Vec<String> {
+    if !codex_required {
+        return Vec::new();
+    }
+
+    let mut steps = Vec::new();
+    if !codex_ready {
+        // Codex marketplace registration depends on this command family, so
+        // report the prerequisite first and defer registration steps until the
+        // binary can run them.
+        let marketplace_help_command = format!(
+            "{} plugin marketplace add --help",
+            shell_single_quote(codex_bin)
+        );
+        steps.push(format!(
+            "Install or update Codex so `{marketplace_help_command}` succeeds, or set JIG_CODEX_BIN to a compatible Codex binary."
+        ));
+        return steps;
+    }
+
+    for (id, source) in unregistered_marketplaces {
+        steps.push(format!(
+            "Run `{}` to register marketplace {} (source: {}).",
+            agent_bootstrap_command(marketplace_count, source),
+            id,
+            source
+        ));
+    }
+
+    steps
+}
+
+fn agent_bootstrap_command(marketplace_count: usize, source: &str) -> String {
+    // A single configured marketplace can be selected by `agent bootstrap`
+    // without a flag; multiple configured marketplaces require an explicit
+    // source even if only one is currently unregistered.
+    if marketplace_count == 1 {
+        "scripts/jig agent bootstrap".into()
+    } else {
+        format!(
+            "scripts/jig agent bootstrap --marketplace {}",
+            shell_single_quote(source)
+        )
+    }
+}
+
+fn shell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::shell_single_quote;
+
+    #[test]
+    fn shell_single_quote_handles_edge_cases() {
+        assert_eq!(shell_single_quote(""), "''");
+        assert_eq!(shell_single_quote("'"), "''\\'''");
+        assert_eq!(shell_single_quote("''"), "''\\'''\\'''");
+        assert_eq!(shell_single_quote("path with space"), "'path with space'");
+        assert_eq!(
+            shell_single_quote("./team's-skills"),
+            "'./team'\\''s-skills'"
+        );
     }
 }
 

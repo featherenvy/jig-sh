@@ -7,11 +7,12 @@ NODE ?= node
 BUN ?= bun
 BUN_INSTALL_FLAGS ?= --frozen-lockfile
 
-DEFAULT_BRANCH ?= main
+# This source repository still uses master; generated Makefiles render their
+# own DEFAULT_BRANCH from the downstream repo's .jig.toml.
+DEFAULT_BRANCH ?= master
 JIG_VERSION ?= 0.2.0-beta.1
 RUST_CRATE_ROOTS := crates
 
-BOOTSTRAP_COMMAND := cargo fetch
 DEV_COMMAND := cargo test --workspace
 
 .PHONY: help bootstrap deps dev fmt-check clippy test-rust test-rust-locked test
@@ -26,9 +27,13 @@ help: ## Show all available targets
 	@echo "jig-sh Makefile"
 	@awk 'BEGIN {FS = ":.*##"} /^[A-Za-z0-9._-]+:.*##/ {printf "  %-28s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
+# Bootstrap uses a login shell so PATH includes tools installed by shell profile setup.
 bootstrap: ## Initialize the local workspace
-	@bash -lc '$(BOOTSTRAP_COMMAND)'
+	@echo "If bootstrap cannot start jig, run: make deps"
+	@bash -lc 'scripts/jig bootstrap'
 
+# Keep this as a pre-jig primitive so dependency fetch still works while the
+# launcher or local jig binary is being repaired.
 deps: ## Install Rust and optional webapp dependencies
 	$(CARGO) fetch
 
@@ -39,16 +44,16 @@ dev: ## Run the local development stack
 	@bash -lc '$(DEV_COMMAND)'
 
 fmt-check: ## Check Rust formatting
-	cargo fmt --all -- --check
+	scripts/jig fmt-check
 
 clippy: ## Run clippy for the Rust workspace
-	cargo clippy --workspace --all-targets --locked -- -D warnings
+	scripts/jig clippy
 
 test-rust: ## Run Rust workspace tests
-	cargo test --workspace
+	scripts/jig test
 
 test-rust-locked: ## Run Rust workspace tests with --locked
-	cargo test --workspace --locked
+	scripts/jig test-locked
 
 test: test-rust ## Run the default backend test suite
 

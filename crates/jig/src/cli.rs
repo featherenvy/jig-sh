@@ -36,64 +36,92 @@ Pass --template only for a local checkout, fork, or private template.";
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum CommandKind {
+    /// Create a new repository and render Jig harness files into it.
     #[command(name = tool_defs::cli_command::INIT)]
     Init(bootstrap::InitOpts),
+    /// Adopt Jig harness files into an existing repository.
     #[command(name = tool_defs::cli_command::ADOPT)]
     Adopt(bootstrap::AdoptOpts),
+    /// Refresh managed Jig harness files from the configured template source.
     #[command(name = tool_defs::cli_command::UPDATE)]
     Update(bootstrap::UpdateOpts),
+    /// Run the configured project bootstrap command.
     #[command(name = tool_defs::cli_command::BOOTSTRAP)]
     Bootstrap(ToolOpts),
+    /// Run the configured Rust format check.
     #[command(name = tool_defs::cli_command::FMT_CHECK)]
     FmtCheck(ToolOpts),
+    /// Run the configured Rust clippy check.
     #[command(name = tool_defs::cli_command::CLIPPY)]
     Clippy(ToolOpts),
+    /// Run the configured default test command.
     #[command(name = tool_defs::cli_command::TEST)]
     Test(ToolOpts),
+    /// Run the configured locked test command.
     #[command(name = tool_defs::cli_command::TEST_LOCKED)]
     TestLocked(ToolOpts),
+    /// Verify committed SQLx metadata when SQLx is enabled.
     #[command(name = tool_defs::cli_command::SQLX_CHECK)]
     SqlxCheck(ToolOpts),
+    /// Verify generated schema documentation when schema dumps are enabled.
     #[command(name = tool_defs::cli_command::SCHEMA_CHECK)]
     SchemaCheck(ToolOpts),
+    /// Regenerate schema documentation when schema dumps are enabled.
     #[command(name = tool_defs::cli_command::SCHEMA_DUMP)]
     SchemaDump(ToolOpts),
+    /// Add a forward-only SQLx migration file when SQLx is enabled.
     #[command(name = tool_defs::cli_command::MIGRATION_ADD)]
     MigrationAdd(MigrationAddOpts),
+    /// Validate the generated Jig command contract and runtime wiring.
     #[command(name = tool_defs::cli_command::CONTRACT_CHECK)]
     ContractCheck(ToolOpts),
+    /// Generate or check the repository agent guide map.
     #[command(name = tool_defs::cli_command::AGENT_MAP, subcommand)]
     AgentMap(AgentMapCommand),
+    /// Verify crate-level AGENTS.md guide coverage and required sections.
     #[command(name = tool_defs::cli_command::CHECK_AGENT_GUIDES)]
     CheckAgentGuides,
+    /// Enforce Rust file-size policy for changed or tracked files.
     #[command(name = tool_defs::cli_command::CHECK_RUST_FILE_LOC)]
     CheckRustFileLoc(CheckRustFileLocOpts),
+    /// Fail if disallowed mod.rs files exist under configured crate roots.
     #[command(name = tool_defs::cli_command::CHECK_NO_MOD_RS)]
     CheckNoModRs,
+    /// Verify existing migrations were not mutated.
     #[command(name = tool_defs::cli_command::CHECK_MIGRATION_IMMUTABILITY)]
     CheckMigrationImmutability(CheckMigrationImmutabilityOpts),
+    /// Generate a TODO report for unchecked SQLx queries.
     #[command(name = tool_defs::cli_command::GENERATE_SQLX_UNCHECKED_QUERIES_TODO)]
     GenerateSqlxUncheckedQueriesTodo(GenerateSqlxUncheckedQueriesTodoOpts),
+    /// Verify non-test SQLx queries use compile-time checked macros.
     #[command(name = tool_defs::cli_command::CHECK_SQLX_UNCHECKED_NON_TEST)]
     CheckSqlxUncheckedNonTest,
+    /// Run configured development apps through the local dev proxy.
     #[command(name = tool_defs::cli_command::DEV)]
     Dev(DevOpts),
+    /// Run an arbitrary make target declared by the generated contract.
     #[command(name = tool_defs::cli_command::RUN_TARGET)]
     RunTarget(RunTargetOpts),
+    /// Manage the local development proxy.
     #[command(name = tool_defs::cli_command::PROXY, subcommand)]
     Proxy(ProxyCommand),
+    /// Inspect or bootstrap local agent tooling.
     #[command(name = tool_defs::cli_command::AGENT, subcommand)]
     Agent(AgentCommand),
+    /// Manage structured work plans, receipts, gates, and decisions.
     #[command(name = tool_defs::cli_command::WORK, subcommand)]
     Work(WorkCommand),
+    /// Serve the Jig MCP server over stdio.
     #[command(name = tool_defs::cli_command::MCP)]
     Mcp,
 }
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum AgentMapCommand {
+    /// Rewrite agent-map.md from tracked AGENTS.md files.
     #[command(name = tool_defs::cli_command::AGENT_MAP_GENERATE)]
     Generate(AgentMapOpts),
+    /// Check agent-map.md coverage and links.
     #[command(name = tool_defs::cli_command::AGENT_MAP_CHECK)]
     Check(AgentMapOpts),
 }
@@ -106,50 +134,69 @@ pub(crate) struct AgentMapOpts {
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum WorkCommand {
+    /// Start a structured goal plan from an objective and validation contract.
     #[command(name = tool_defs::cli_command::WORK_GOAL)]
     Goal(WorkGoalOpts),
+    /// Start a structured work plan and session.
     #[command(name = tool_defs::cli_command::WORK_START)]
     Start(WorkStartOpts),
+    /// Append progress text to an open work plan.
     #[command(name = tool_defs::cli_command::WORK_APPEND)]
     Append(WorkAppendOpts),
+    /// Run configured or selected work gate checks for a plan.
     #[command(name = tool_defs::cli_command::WORK_CHECK)]
     Check(WorkCheckOpts),
+    /// Show required gate status for a plan.
     #[command(name = tool_defs::cli_command::WORK_GATES)]
     Gates(WorkGatesOpts),
+    /// Record a durable decision for the current work.
     #[command(name = tool_defs::cli_command::WORK_DECIDE)]
     Decide(WorkDecisionAddOpts),
+    /// List recorded command receipts.
     #[command(name = tool_defs::cli_command::WORK_RECEIPTS)]
     Receipts(WorkReceiptsOpts),
+    /// Summarize current structured work state.
     #[command(name = tool_defs::cli_command::WORK_STATUS)]
     Status,
+    /// Close a work plan after required gates pass.
     #[command(name = tool_defs::cli_command::WORK_FINISH)]
     Finish(WorkFinishOpts),
 }
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum AgentCommand {
+    /// Report local Codex marketplace readiness for this repo.
     #[command(name = tool_defs::cli_command::AGENT_DOCTOR)]
     Doctor,
+    /// Register the configured Codex skills marketplace.
     #[command(name = tool_defs::cli_command::AGENT_BOOTSTRAP)]
     Bootstrap(AgentBootstrapOpts),
 }
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum ProxyCommand {
+    /// Start the local development proxy.
     #[command(name = tool_defs::cli_command::PROXY_START)]
     Start(ProxyStartOpts),
+    /// Stop the local development proxy.
     #[command(name = tool_defs::cli_command::PROXY_STOP)]
     Stop(ProxyStopOpts),
+    /// List proxy routes and runtime status.
     #[command(name = tool_defs::cli_command::PROXY_LIST)]
     List(ProxyListOpts),
+    /// Remove stale proxy routes.
     #[command(name = tool_defs::cli_command::PROXY_PRUNE)]
     Prune(ProxyPruneOpts),
+    /// Run an ad-hoc app command behind the proxy.
     #[command(name = tool_defs::cli_command::PROXY_RUN)]
     Run(ProxyRunOpts),
+    /// Route a stable hostname to an already-running local service.
     #[command(name = tool_defs::cli_command::PROXY_ALIAS)]
     Alias(ProxyAliasOpts),
+    /// Generate, inspect, trust, or untrust local proxy certificates.
     #[command(name = tool_defs::cli_command::PROXY_CERT, subcommand)]
     Cert(ProxyCertCommand),
+    /// Install, uninstall, or inspect a per-user proxy service.
     #[command(name = tool_defs::cli_command::PROXY_SERVICE, subcommand)]
     Service(ProxyServiceCommand),
 }
@@ -178,25 +225,38 @@ pub(crate) enum ProxyServiceCommand {
 
 #[derive(Args, Debug)]
 pub(crate) struct WorkGoalOpts {
-    #[arg(long)]
+    #[arg(long, help = "Plain-language objective for the work")]
     pub(crate) objective: String,
-    #[arg(long)]
+    #[arg(long, help = "Observable condition that means the goal is complete")]
     pub(crate) success: String,
-    #[arg(long = "validation", required = true)]
+    #[arg(
+        long = "validation",
+        required = true,
+        help = "Validation command or check that must pass; may be repeated"
+    )]
     pub(crate) validations: Vec<String>,
-    #[arg(long = "constraint")]
+    #[arg(
+        long = "constraint",
+        help = "Constraint to preserve while working; may be repeated"
+    )]
     pub(crate) constraints: Vec<String>,
-    #[arg(long = "checkpoint")]
+    #[arg(
+        long = "checkpoint",
+        help = "Progress checkpoint to include in the plan; may be repeated"
+    )]
     pub(crate) checkpoints: Vec<String>,
-    #[arg(long)]
+    #[arg(long, help = "Optional plan title; defaults from the objective")]
     pub(crate) title: Option<String>,
-    #[arg(long)]
+    #[arg(long, help = "Additional notes to include in the generated plan")]
     pub(crate) notes: Option<String>,
 }
 
 #[derive(Args, Debug)]
 pub(crate) struct AgentBootstrapOpts {
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "Marketplace source to register; defaults to the single configured source"
+    )]
     pub(crate) marketplace: Option<String>,
 }
 
@@ -267,11 +327,11 @@ pub(crate) struct ProxyRuntimeOpts {
 
 #[derive(Args, Debug)]
 pub(crate) struct DevOpts {
-    #[arg(long = "app")]
+    #[arg(long = "app", help = "Configured app name to run; may be repeated")]
     pub(crate) apps: Vec<String>,
-    #[arg(long)]
+    #[arg(long, help = "Discover JavaScript workspace apps with dev scripts")]
     pub(crate) discover_workspace: bool,
-    #[arg(long)]
+    #[arg(long, help = "Run apps directly without publishing proxy routes")]
     pub(crate) no_proxy: bool,
     #[command(flatten)]
     pub(crate) proxy: ProxyRuntimeOpts,
@@ -409,12 +469,13 @@ pub(crate) struct ProxyServiceRuntimeOpts {
 
 #[derive(Args, Clone, Debug, Default)]
 pub(crate) struct ToolOpts {
-    #[arg(long)]
+    #[arg(long, help = "Structured work plan id to attach the receipt to")]
     pub(crate) plan_id: Option<String>,
 }
 
 #[derive(Args, Debug)]
 pub(crate) struct MigrationAddOpts {
+    /// Migration name, for example create_users.
     pub(crate) name: String,
     #[command(flatten)]
     pub(crate) tool: ToolOpts,
@@ -422,6 +483,7 @@ pub(crate) struct MigrationAddOpts {
 
 #[derive(Args, Debug)]
 pub(crate) struct RunTargetOpts {
+    /// Make target name to run.
     pub(crate) name: String,
     #[command(flatten)]
     pub(crate) tool: ToolOpts,
@@ -445,71 +507,75 @@ pub(crate) struct CheckRustFileLocOpts {
 
 #[derive(Args, Debug)]
 pub(crate) struct CheckMigrationImmutabilityOpts {
-    #[arg(long = "changed-against")]
+    #[arg(long = "changed-against", help = "Git ref to compare against")]
     pub(crate) changed_against: String,
 }
 
 #[derive(Args, Debug)]
 pub(crate) struct GenerateSqlxUncheckedQueriesTodoOpts {
+    /// Optional output path for the generated TODO report.
     pub(crate) output: Option<PathBuf>,
 }
 
 #[derive(Args, Debug)]
 pub(crate) struct WorkStartOpts {
-    #[arg(long)]
+    #[arg(long, help = "Short human-readable plan title")]
     pub(crate) title: String,
-    #[arg(long)]
+    #[arg(long, help = "Initial plan body text")]
     pub(crate) body: Option<String>,
-    #[arg(long)]
+    #[arg(long, help = "Path to read the initial plan body from")]
     pub(crate) body_file: Option<PathBuf>,
 }
 
 #[derive(Args, Debug)]
 pub(crate) struct WorkAppendOpts {
-    #[arg(long)]
+    #[arg(long, help = "Open plan id to append to")]
     pub(crate) plan_id: String,
-    #[arg(long)]
+    #[arg(long, help = "Progress text to append")]
     pub(crate) body: Option<String>,
-    #[arg(long)]
+    #[arg(long, help = "Path to read progress text from")]
     pub(crate) body_file: Option<PathBuf>,
 }
 
 #[derive(Args, Debug)]
 pub(crate) struct WorkCheckOpts {
-    #[arg(long)]
+    #[arg(long, help = "Open plan id to check")]
     pub(crate) plan_id: String,
 
-    #[arg(long = "tool")]
+    #[arg(
+        long = "tool",
+        help = "Specific gate tool to run; defaults to configured gates"
+    )]
     pub(crate) tools: Vec<String>,
 }
 
 #[derive(Args, Debug)]
 pub(crate) struct WorkGatesOpts {
-    #[arg(long)]
+    #[arg(long, help = "Plan id to inspect")]
     pub(crate) plan_id: String,
 }
 
 #[derive(Args, Debug)]
 pub(crate) struct WorkFinishOpts {
-    #[arg(long)]
+    #[arg(long, help = "Open plan id to close")]
     pub(crate) plan_id: String,
-    #[arg(long)]
+    #[arg(long, help = "Resolution summary recorded on the plan")]
     pub(crate) resolution: Option<String>,
-    #[arg(long)]
+    #[arg(long, help = "Optional session outcome; defaults to the resolution")]
     pub(crate) outcome: Option<String>,
 }
 
 #[derive(Args, Debug)]
 pub(crate) struct WorkReceiptsOpts {
-    #[arg(long)]
+    #[arg(long, help = "Filter by session id")]
     pub(crate) session_id: Option<String>,
-    #[arg(long)]
+    #[arg(long, help = "Filter by plan id")]
     pub(crate) plan_id: Option<String>,
-    #[arg(long)]
+    #[arg(long, help = "Filter by Jig tool name")]
     pub(crate) tool_name: Option<String>,
-    #[arg(long)]
+    #[arg(long, help = "Only show failed receipts")]
     pub(crate) failed_only: bool,
-    #[arg(long, default_value_t = DEFAULT_RECEIPTS_LIMIT)]
+    #[arg(long, default_value_t = DEFAULT_RECEIPTS_LIMIT, help = "Maximum receipts to show")]
     pub(crate) limit: usize,
 }
 
