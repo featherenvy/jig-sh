@@ -51,7 +51,7 @@ fn dev_config_defaults_match_proxy_settings_defaults() {
 }
 
 #[test]
-fn dev_apps_cannot_be_combined_with_legacy_frontend_apps() {
+fn dev_apps_take_precedence_when_matching_frontend_apps_are_also_configured() {
     let temp = tempdir().unwrap();
     write_contract(temp.path());
     fs::create_dir_all(temp.path().join("apps/web")).unwrap();
@@ -81,9 +81,93 @@ argv = ["bun", "run", "dev"]
     )
     .unwrap();
 
+    let ctx = RepoContext::load_from(temp.path()).unwrap();
+    let settings = settings(&ctx, &ProxyRuntimeOptions::default()).unwrap();
+    let apps = configured_apps(&ctx, &settings).unwrap();
+
+    assert_eq!(apps.len(), 1);
+    assert_eq!(apps[0].name, "web");
+    assert!(matches!(
+        &apps[0].command,
+        jig_dev_proxy::CommandSpec::Argv(argv)
+            if argv == &vec!["bun".to_string(), "run".to_string(), "dev".to_string()]
+    ));
+}
+
+#[test]
+fn dev_apps_reject_unmatched_frontend_apps_when_both_sections_are_configured() {
+    let temp = tempdir().unwrap();
+    write_contract(temp.path());
+    fs::create_dir_all(temp.path().join("apps/legacy-web")).unwrap();
+    fs::create_dir_all(temp.path().join("apps/web")).unwrap();
+    fs::write(
+        temp.path().join(".jig.toml"),
+        r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.2.0-beta.1"
+web_package_manager = "bun"
+
+[[frontend_apps]]
+name = "legacy-web"
+dir = "apps/legacy-web"
+coverage_threshold = 80
+
+[dev]
+proxy_port = 1555
+
+[[dev.apps]]
+name = "web"
+kind = "vite"
+dir = "apps/web"
+argv = ["bun", "run", "dev"]
+"#,
+    )
+    .unwrap();
+
     let error = RepoContext::load_from(temp.path()).unwrap_err().to_string();
 
-    assert!(error.contains("cannot both be configured"));
+    assert!(error.contains("Add a matching [[dev.apps]] entry"));
+    assert!(error.contains("legacy-web"));
+}
+
+#[test]
+fn dev_apps_reject_mismatched_frontend_app_dirs_when_both_sections_are_configured() {
+    let temp = tempdir().unwrap();
+    write_contract(temp.path());
+    fs::create_dir_all(temp.path().join("apps/web")).unwrap();
+    fs::create_dir_all(temp.path().join("frontend/web")).unwrap();
+    fs::write(
+        temp.path().join(".jig.toml"),
+        r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.2.0-beta.1"
+web_package_manager = "bun"
+
+[[frontend_apps]]
+name = "web"
+dir = "apps/web"
+coverage_threshold = 80
+
+[dev]
+proxy_port = 1555
+
+[[dev.apps]]
+name = "web"
+kind = "vite"
+dir = "frontend/web"
+argv = ["bun", "run", "dev"]
+"#,
+    )
+    .unwrap();
+
+    let error = RepoContext::load_from(temp.path()).unwrap_err().to_string();
+
+    assert!(error.contains("uses dir 'frontend/web'"));
+    assert!(error.contains("matching [[frontend_apps]] uses 'apps/web'"));
 }
 
 #[test]

@@ -1,6 +1,8 @@
+use std::fs;
 use std::path::Path;
 
-use anyhow::Result;
+use anyhow::{Context, Result, bail};
+use serde_json::Value as JsonValue;
 #[cfg(test)]
 use toml::{Table, Value as TomlValue};
 
@@ -16,6 +18,7 @@ use super::{TEMPLATE_LOCAL_PATH_KEY, TEMPLATE_MODE_KEY};
 use crate::progress::CliProgress;
 
 const ANSWERS_DETAIL: &str = ".jig.toml values and command defaults";
+const REQUIRED_FRONTEND_SCRIPTS: &[&str] = &["lint", "typecheck", "build:bundle", "test:coverage"];
 
 pub(super) struct BootstrapCopyRequest<'a> {
     pub(super) destination: &'a Path,
@@ -28,6 +31,7 @@ pub(super) struct BootstrapCopyRequest<'a> {
 
 pub(super) struct BootstrapCopyResult {
     pub(super) default_branch: Option<String>,
+    pub(super) notes: Vec<String>,
 }
 
 pub(super) fn render_and_copy_bootstrap_template(
@@ -44,6 +48,14 @@ pub(super) fn render_and_copy_bootstrap_template(
     let answers = request
         .progress
         .log_blocked_on_err(RenderAnswers::from_opts(&answer_opts, request.destination))?;
+    if request.seed_repo_path.is_some() && !answers.frontend_apps().is_empty() {
+        request
+            .progress
+            .step("validate web apps", "package.json scripts for CI checks");
+        request
+            .progress
+            .log_blocked_on_err(validate_frontend_app_scripts(request.destination, &answers))?;
+    }
     let staged = stage_render(RenderStageRequest {
         template: request.template,
         answers: &answers,
@@ -64,6 +76,14 @@ pub(super) fn render_and_copy_bootstrap_template(
 
     Ok(BootstrapCopyResult {
         default_branch: Some(answers.default_branch().to_string()),
+        notes: if answers.has_legacy_dev_command() {
+            vec![
+                "Preserved deprecated dev_command for migration; generated commands ignore it. Move that value into [dev] / [[dev.apps]] when ready."
+                    .into(),
+            ]
+        } else {
+            Vec::new()
+        },
     })
 }
 
@@ -73,6 +93,85 @@ fn default_makefile_enabled(destination: &Path, seed_repo_path: Option<&Path>) -
     // project Makefile is repo-owned and should not become a Jig conflict by
     // default.
     seed_repo_path.is_none() || !destination.join("Makefile").exists()
+}
+
+fn validate_frontend_app_scripts(destination: &Path, answers: &RenderAnswers) -> Result<()> {
+    for app in answers.frontend_apps() {
+        let app_dir = destination.join(&app.dir);
+        let package_path = app_dir.join("package.json");
+        if !package_path.is_file() {
+            bail!(
+                "Configured frontend app '{}' in {} is missing package.json. Add the app package.json, or remove the entry from frontend_apps until web CI checks are ready.",
+                app.name,
+                app.dir
+            );
+        }
+        let package = fs::read_to_string(&package_path)
+            .with_context(|| format!("Failed to read {}", package_path.display()))?;
+        let package: JsonValue = serde_json::from_str(&package)
+            .with_context(|| format!("Failed to parse {}", package_path.display()))?;
+        let scripts = package
+            .get("scripts")
+            .and_then(JsonValue::as_object)
+            .cloned()
+            .unwrap_or_default();
+        let missing = REQUIRED_FRONTEND_SCRIPTS
+            .iter()
+            .copied()
+            .filter(|script| {
+                !matches!(
+                    scripts.get(*script).and_then(JsonValue::as_str),
+                    Some(command) if !command.trim().is_empty()
+                )
+            })
+            .collect::<Vec<_>>();
+        if !missing.is_empty() {
+            bail!(
+                "Configured frontend app '{}' in {} is missing package.json scripts required by generated web CI: {}. Add those scripts, or remove the entry from frontend_apps until the app is CI-ready.",
+                app.name,
+                app.dir,
+                missing.join(", ")
+            );
+        }
+        validate_frontend_app_lockfile(destination, &app_dir, answers.web_package_manager(), app)?;
+    }
+    Ok(())
+}
+
+fn validate_frontend_app_lockfile(
+    destination: &Path,
+    app_dir: &Path,
+    package_manager: &str,
+    app: &super::FrontendApp,
+) -> Result<()> {
+    let lockfiles = frontend_lockfile_names(package_manager);
+    let has_repo_lockfile = destination.join("package.json").is_file()
+        && lockfiles
+            .iter()
+            .any(|lockfile| destination.join(lockfile).is_file());
+    let has_app_lockfile = lockfiles
+        .iter()
+        .any(|lockfile| app_dir.join(lockfile).is_file());
+    if has_repo_lockfile || has_app_lockfile {
+        return Ok(());
+    }
+
+    bail!(
+        "Configured frontend app '{}' in {} does not have a lockfile for {} at the repo root or app directory. Add one, or remove the entry from frontend_apps until web CI is ready.",
+        app.name,
+        app.dir,
+        package_manager
+    )
+}
+
+fn frontend_lockfile_names(package_manager: &str) -> &'static [&'static str] {
+    match package_manager {
+        "bun" => &["bun.lock", "bun.lockb"],
+        "npm" => &["package-lock.json"],
+        "pnpm" => &["pnpm-lock.yaml"],
+        "yarn" => &["yarn.lock"],
+        _ => unreachable!("web package manager was already validated"),
+    }
 }
 
 #[cfg(test)]

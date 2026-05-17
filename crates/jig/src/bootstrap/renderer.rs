@@ -50,6 +50,15 @@ pub(super) fn stage_render(request: RenderStageRequest<'_>) -> Result<StagedRend
         request.answers,
         &destination,
     ))?;
+    if let Some(seed_repo_path) = request.seed_repo_path {
+        request.progress.step(
+            "scaffold crate guides",
+            "starter AGENTS.md for missing crates",
+        );
+        managed_paths.extend(request.progress.log_blocked_on_err(
+            scaffold_missing_crate_guides(seed_repo_path, &destination, request.answers),
+        )?);
+    }
     request
         .progress
         .step("generate agent map", "native renderer");
@@ -129,6 +138,96 @@ fn render_template_files(
     }
 
     Ok(managed_paths)
+}
+
+fn scaffold_missing_crate_guides(
+    seed_repo_path: &Path,
+    destination: &Path,
+    answers: &RenderAnswers,
+) -> Result<BTreeSet<PathBuf>> {
+    let mut scaffolded = BTreeSet::new();
+    for root in answers.rust_crate_roots() {
+        let crate_root = seed_repo_path.join(root);
+        if !crate_root.is_dir() {
+            continue;
+        }
+        // Crate roots are expected to contain direct child crates. Configure
+        // additional roots for nested crate groups that need starter guides.
+        for entry in fs::read_dir(&crate_root)
+            .with_context(|| format!("Failed to read {}", crate_root.display()))?
+        {
+            let entry = entry?;
+            if !entry.file_type()?.is_dir() {
+                continue;
+            }
+            let crate_dir = entry.path();
+            if !crate_dir.join("Cargo.toml").is_file() {
+                continue;
+            }
+            let relative_crate_dir = crate_dir.strip_prefix(seed_repo_path).with_context(|| {
+                format!(
+                    "{} is not under {}",
+                    crate_dir.display(),
+                    seed_repo_path.display()
+                )
+            })?;
+            let relative_guide = relative_crate_dir.join("AGENTS.md");
+            let destination_guide = destination.join(&relative_guide);
+            // Existing crate guides were copied into the staging directory by
+            // seed_preview_workspace before this runs; only scaffold gaps.
+            if destination_guide.exists() {
+                continue;
+            }
+            let crate_name = crate_package_name(&crate_dir);
+            write_rendered_file(
+                destination,
+                &relative_guide,
+                starter_crate_guide(&crate_name).as_bytes(),
+            )?;
+            scaffolded.insert(relative_guide);
+        }
+    }
+    Ok(scaffolded)
+}
+
+fn crate_package_name(crate_dir: &Path) -> String {
+    let fallback = crate_dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("crate")
+        .to_string();
+    let Ok(cargo_toml) = fs::read_to_string(crate_dir.join("Cargo.toml")) else {
+        return fallback;
+    };
+    let Ok(parsed) = toml::from_str::<toml::Value>(&cargo_toml) else {
+        return fallback;
+    };
+    parsed
+        .get("package")
+        .and_then(|package| package.get("name"))
+        .and_then(toml::Value::as_str)
+        .filter(|name| !name.trim().is_empty())
+        .map(str::to_string)
+        .unwrap_or(fallback)
+}
+
+fn starter_crate_guide(crate_name: &str) -> String {
+    format!(
+        "# {crate_name} crate guide\n\n\
+## Purpose\n\n\
+Document what this crate owns before adding substantial behavior.\n\n\
+## Key entrypoints\n\n\
+- `src/lib.rs`: library entrypoint when present.\n\
+- `src/main.rs`: binary entrypoint when present.\n\n\
+## Edit here for X\n\n\
+- Update this section with the crate's main responsibilities.\n\n\
+## Invariants\n\n\
+- Keep crate-specific rules here instead of in the root `AGENTS.md`.\n\n\
+## Common commands\n\n\
+- `cargo test -p {crate_name}`\n\
+\n\
+Adjust the package name in commands if this starter guide could not infer it from `Cargo.toml`.\n"
+    )
 }
 
 fn merge_existing_root_agents(

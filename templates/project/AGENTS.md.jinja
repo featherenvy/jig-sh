@@ -25,6 +25,7 @@ This repository uses the shared `jig.sh` workflow. Keep repo-local business rule
 ## Backend Defaults
 
 - Treat [% for root in rust_crate_roots %]`<<[ root ]>>`[% if not loop.last %], [% endif %][% endfor %] as Rust crate roots.
+- Adoption scaffolds crate guides for direct child crates of each configured root; add more `rust_crate_roots` entries for nested crate groups.
 [% if sqlx_enabled %]
 - SQL migrations live under `<<[ rust_migration_dir ]>>`.
 - SQLx metadata is committed in `<<[ rust_sqlx_metadata_dir ]>>`.
@@ -44,6 +45,10 @@ Configured web apps:
 [% endfor %]
 
 Each configured app is expected to support `lint`, `typecheck`, `build:bundle`, and `test:coverage`.
+Jig validates those scripts during adoption; generated web CI validates them again before running.
+Generated install steps use a repo-root lockfile when one exists, otherwise the app-local lockfile.
+`[[frontend_apps]]` keeps CI and coverage metadata; generated `[[dev.apps]]` drives `scripts/jig dev` and takes precedence for local dev settings. When both sections are present, Jig requires a matching dev app name and dir for every frontend app. Use the optional fourth `--frontend-app` field or answers-file `kind` for `vite` versus `env-port`; extra `[[dev.apps]]` entries without `[[frontend_apps]]` are treated as dev-only and are not covered by generated web CI.
+Remove legacy `dev_command` keys; local dev now runs through `[dev]` and `[[dev.apps]]`.
 [% else -%]
 No web apps are configured in `.jig.toml`.
 [% endif %]

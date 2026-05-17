@@ -4,8 +4,9 @@ SHELL := /bin/bash
 
 CARGO ?= cargo
 NODE ?= node
-<<[ web_package_manager | upper ]>> ?= <<[ web_package_manager ]>>
-BUN_INSTALL_FLAGS ?= --frozen-lockfile
+WEB_PACKAGE_MANAGER ?= <<[ web_package_manager ]>>
+WEB_INSTALL_COMMAND ?= <<[ web_install_command ]>>
+WEB_RUN_COMMAND ?= <<[ web_run_command ]>>
 
 DEFAULT_BRANCH ?= <<[ default_branch ]>>
 JIG_VERSION ?= <<[ jig_version ]>>
@@ -13,7 +14,6 @@ RUST_CRATE_ROOTS := [% for root in rust_crate_roots %]<<[ root ]>>[% if not loop
 [% if sqlx_enabled %]
 RUST_MIGRATION_DIR := <<[ rust_migration_dir ]>>
 [% endif %]
-DEV_COMMAND := <<[ dev_command ]>>
 
 .PHONY: help bootstrap deps dev fmt-check clippy test-rust test-rust-locked test
 [% if sqlx_enabled %]
@@ -40,14 +40,38 @@ deps: ## Install Rust and optional webapp dependencies
 	$(CARGO) fetch
 [% if frontend_apps | length > 0 %]
 [% for app in frontend_apps %]
-	cd <<[ app.dir ]>> && $(<<[ web_package_manager | upper ]>>) install $(BUN_INSTALL_FLAGS)
+[% if web_package_manager == "bun" %]
+	@if [ -f package.json ] && { [ -f bun.lock ] || [ -f bun.lockb ]; }; then \
+	  $(WEB_INSTALL_COMMAND); \
+	else \
+	  cd <<[ app.dir ]>> && $(WEB_INSTALL_COMMAND); \
+	fi
+[% elif web_package_manager == "npm" %]
+	@if [ -f package.json ] && [ -f package-lock.json ]; then \
+	  $(WEB_INSTALL_COMMAND); \
+	else \
+	  cd <<[ app.dir ]>> && $(WEB_INSTALL_COMMAND); \
+	fi
+[% elif web_package_manager == "pnpm" %]
+	@if [ -f package.json ] && [ -f pnpm-lock.yaml ]; then \
+	  $(WEB_INSTALL_COMMAND); \
+	else \
+	  cd <<[ app.dir ]>> && $(WEB_INSTALL_COMMAND); \
+	fi
+[% elif web_package_manager == "yarn" %]
+	@if [ -f package.json ] && [ -f yarn.lock ]; then \
+	  $(WEB_INSTALL_COMMAND); \
+	else \
+	  cd <<[ app.dir ]>> && $(WEB_INSTALL_COMMAND); \
+	fi
+[% endif %]
 [% endfor %]
 [% else %]
 	@echo "No web apps configured."
 [% endif %]
 
 dev: ## Run the configured dev command
-	@bash -lc '$(DEV_COMMAND)'
+	scripts/jig dev
 
 fmt-check: ## Check Rust formatting
 	scripts/jig check fmt
@@ -121,11 +145,36 @@ enforce-coverage: ## Enforce a coverage threshold from COVERAGE_THRESHOLD agains
 [% if frontend_apps | length > 0 %]
 [% for app in frontend_apps %]
 ci-webapp-<<[ app.name | replace('-', '_') ]>>: ## Run CI-style checks for <<[ app.name ]>>
-	cd <<[ app.dir ]>> && $(<<[ web_package_manager | upper ]>>) install $(BUN_INSTALL_FLAGS)
-	cd <<[ app.dir ]>> && $(<<[ web_package_manager | upper ]>>) run lint
-	cd <<[ app.dir ]>> && $(<<[ web_package_manager | upper ]>>) run typecheck
-	cd <<[ app.dir ]>> && $(<<[ web_package_manager | upper ]>>) run build:bundle
-	cd <<[ app.dir ]>> && $(<<[ web_package_manager | upper ]>>) run test:coverage
+	$(NODE) scripts/check-webapp-scripts.mjs <<[ app.dir ]>> lint typecheck build:bundle test:coverage
+[% if web_package_manager == "bun" %]
+	@if [ -f package.json ] && { [ -f bun.lock ] || [ -f bun.lockb ]; }; then \
+	  $(WEB_INSTALL_COMMAND); \
+	else \
+	  cd <<[ app.dir ]>> && $(WEB_INSTALL_COMMAND); \
+	fi
+[% elif web_package_manager == "npm" %]
+	@if [ -f package.json ] && [ -f package-lock.json ]; then \
+	  $(WEB_INSTALL_COMMAND); \
+	else \
+	  cd <<[ app.dir ]>> && $(WEB_INSTALL_COMMAND); \
+	fi
+[% elif web_package_manager == "pnpm" %]
+	@if [ -f package.json ] && [ -f pnpm-lock.yaml ]; then \
+	  $(WEB_INSTALL_COMMAND); \
+	else \
+	  cd <<[ app.dir ]>> && $(WEB_INSTALL_COMMAND); \
+	fi
+[% elif web_package_manager == "yarn" %]
+	@if [ -f package.json ] && [ -f yarn.lock ]; then \
+	  $(WEB_INSTALL_COMMAND); \
+	else \
+	  cd <<[ app.dir ]>> && $(WEB_INSTALL_COMMAND); \
+	fi
+[% endif %]
+	cd <<[ app.dir ]>> && $(WEB_RUN_COMMAND) lint
+	cd <<[ app.dir ]>> && $(WEB_RUN_COMMAND) typecheck
+	cd <<[ app.dir ]>> && $(WEB_RUN_COMMAND) build:bundle
+	cd <<[ app.dir ]>> && $(WEB_RUN_COMMAND) test:coverage
 	$(MAKE) enforce-coverage COVERAGE_DIR=<<[ app.dir ]>>/coverage COVERAGE_THRESHOLD=<<[ app.coverage_threshold ]>>
 
 [% endfor %]

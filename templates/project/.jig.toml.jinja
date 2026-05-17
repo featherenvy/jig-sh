@@ -22,9 +22,9 @@ schema_dump_command = "<<[ schema_dump_command | replace("\\", "\\\\") | replace
 sqlx_check_command = "<<[ sqlx_check_command | replace("\\", "\\\\") | replace("\"", "\\\"") ]>>"
 [% endif %]
 bootstrap_command = "<<[ bootstrap_command | replace("\\", "\\\\") | replace("\"", "\\\"") ]>>"
-[% if makefile_enabled %]
-# Legacy Makefile-adapter dev command; scripts/jig dev uses [dev] below.
-dev_command = "<<[ dev_command | replace("\\", "\\\\") | replace("\"", "\\\"") ]>>"
+[% if legacy_dev_command %]
+# Deprecated and ignored by generated commands; preserved only so you can migrate it into [dev] / [[dev.apps]].
+dev_command = "<<[ legacy_dev_command | replace("\\", "\\\\") | replace("\"", "\\\"") ]>>"
 [% endif %]
 rust_fmt_check_command = "<<[ rust_fmt_check_command | replace("\\", "\\\\") | replace("\"", "\\\"") ]>>"
 rust_clippy_command = "<<[ rust_clippy_command | replace("\\", "\\\\") | replace("\"", "\\\"") ]>>"
@@ -51,11 +51,19 @@ http2 = true
 lan = false
 # Must be localhost, local, test, internal, or a subdomain below one of them.
 tld = "localhost"
-# Keep false when legacy [[frontend_apps]] are configured; set true to discover
-# JavaScript workspace packages that expose dev scripts.
+# Set true to discover JavaScript workspace packages that expose dev scripts.
 workspace_discovery = false
-# Explicit [[dev.apps]] entries are authoritative. Legacy [[frontend_apps]]
-# entries remain a fallback when no dev apps are configured.
+[% for app in frontend_apps %]
+
+# Generated from [[frontend_apps]] so local dev uses explicit app settings while
+# web CI keeps its coverage threshold metadata above. Jig validates that name
+# and dir stay aligned with the matching frontend app.
+[[dev.apps]]
+name = "<<[ app.name | replace("\\", "\\\\") | replace("\"", "\\\"") ]>>"
+dir = "<<[ app.dir | replace("\\", "\\\\") | replace("\"", "\\\"") ]>>"
+kind = "<<[ app.kind | replace("\\", "\\\\") | replace("\"", "\\\"") ]>>"
+argv = ["<<[ web_package_manager | replace("\\", "\\\\") | replace("\"", "\\\"") ]>>", "run", "dev"]
+[% endfor %]
 
 [[work.gates]]
 id = "contract"
