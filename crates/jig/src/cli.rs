@@ -159,7 +159,10 @@ pub(crate) enum CommandKind {
     #[command(name = tool_defs::cli_command::AGENT_MAP, subcommand)]
     AgentMap(AgentMapCommand),
     /// Generate a TODO report for unchecked SQLx queries.
-    #[command(name = tool_defs::cli_command::GENERATE_SQLX_UNCHECKED_QUERIES_TODO)]
+    #[command(
+        name = tool_defs::cli_command::GENERATE_SQLX_UNCHECKED_QUERIES_TODO,
+        hide = true
+    )]
     GenerateSqlxUncheckedQueriesTodo(GenerateSqlxUncheckedQueriesTodoOpts),
     /// Run configured development apps through the local dev proxy.
     #[command(name = tool_defs::cli_command::DEV)]

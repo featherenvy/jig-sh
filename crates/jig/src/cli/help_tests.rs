@@ -20,6 +20,13 @@ fn assert_help_contains(help: &str, expected: &str) {
     );
 }
 
+fn assert_help_omits(help: &str, unexpected: &str) {
+    assert!(
+        !help.contains(unexpected),
+        "expected rendered help to omit {unexpected:?}\n\n{help}"
+    );
+}
+
 #[test]
 fn top_level_help_describes_common_commands() {
     let help = Cli::command().render_help().to_string();
@@ -30,6 +37,7 @@ fn top_level_help_describes_common_commands() {
     assert_help_contains(&help, "Run configured project checks");
     assert_help_contains(&help, "Manage structured work plans");
     assert_help_contains(&help, "Inspect or bootstrap local agent tooling");
+    assert_help_omits(&help, "generate-sqlx-unchecked-queries-todo");
 }
 
 #[test]

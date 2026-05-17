@@ -94,6 +94,23 @@ fn parses_check_namespace_commands() {
 }
 
 #[test]
+fn parses_hidden_sqlx_todo_generator_for_compatibility() {
+    let cli = Cli::try_parse_from([
+        "jig",
+        "generate-sqlx-unchecked-queries-todo",
+        "sqlx-todo.md",
+    ])
+    .unwrap();
+
+    match cli.command {
+        CommandKind::GenerateSqlxUncheckedQueriesTodo(opts) => {
+            assert_eq!(opts.output, Some(PathBuf::from("sqlx-todo.md")));
+        }
+        other => panic!("expected hidden SQLx TODO generator command, got {other:?}"),
+    }
+}
+
+#[test]
 fn adopt_and_init_default_to_official_template() {
     let adopt = Cli::try_parse_from(["jig", "adopt", ".", "--repo-name", "demo"]).unwrap();
     match adopt.command {
