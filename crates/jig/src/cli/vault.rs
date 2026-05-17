@@ -1,0 +1,161 @@
+use std::path::PathBuf;
+
+use clap::{ArgAction, ArgGroup, Args, Subcommand};
+
+use crate::tool_defs;
+
+const VAULT_RUN_AFTER_HELP: &str = "\
+The brokered command must come after --. Secrets are resolved from the local
+vault and injected only into the child process environment. Output is buffered,
+then redacted. Stdout and stderr are capped at 1 MiB each; brokered runs have a
+30-minute timeout.
+
+Examples:
+  jig vault run --env TOKEN=api_token -- sh -c 'printf \"%s\" \"$TOKEN\"'";
+
+const VAULT_INIT_AFTER_HELP: &str = "\
+Jig prompts twice for a new vault passphrase when run from a terminal. Scripts
+can set JIG_VAULT_PASSPHRASE instead. Command-line passphrases are not accepted.
+
+Examples:
+  export JIG_VAULT_PASSPHRASE='choose-a-long-local-passphrase'
+  jig vault init";
+
+const VAULT_SECRET_SET_AFTER_HELP: &str = "\
+Use --value-prompt for hidden terminal input, or --value-stdin for automation.
+Stdin must be piped or redirected and is read byte-for-byte; use printf instead
+of echo when a trailing newline is not part of the secret.
+
+Examples:
+  jig vault secret set api_token --value-prompt
+  printf '%s' 'secret-value' | jig vault secret set api_token --value-stdin";
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum VaultCommand {
+    /// Inspect or verify the local vault audit log.
+    #[command(name = tool_defs::cli_command::VAULT_AUDIT, subcommand)]
+    Audit(VaultAuditCommand),
+    /// Create a local encrypted vault.
+    #[command(
+        name = tool_defs::cli_command::VAULT_INIT,
+        after_help = VAULT_INIT_AFTER_HELP
+    )]
+    Init(VaultInitOpts),
+    /// Inspect local vault presence without decrypting values.
+    #[command(name = tool_defs::cli_command::VAULT_STATUS)]
+    Status(VaultStatusOpts),
+    /// Add, list, or remove vault secrets.
+    #[command(name = tool_defs::cli_command::VAULT_SECRET, subcommand)]
+    Secret(VaultSecretCommand),
+    /// Run a command with selected secrets injected and output redacted.
+    #[command(name = tool_defs::cli_command::VAULT_RUN, after_help = VAULT_RUN_AFTER_HELP)]
+    Run(VaultRunOpts),
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum VaultAuditCommand {
+    /// Verify the local tamper-evident audit chain.
+    #[command(name = tool_defs::cli_command::VAULT_AUDIT_VERIFY)]
+    Verify(VaultAuditVerifyOpts),
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum VaultSecretCommand {
+    /// List secret metadata without values.
+    #[command(name = tool_defs::cli_command::VAULT_SECRET_LIST)]
+    List(VaultSecretListOpts),
+    /// Set a secret value.
+    #[command(
+        name = tool_defs::cli_command::VAULT_SECRET_SET,
+        after_help = VAULT_SECRET_SET_AFTER_HELP
+    )]
+    Set(VaultSecretSetOpts),
+    /// Remove a secret from the vault.
+    #[command(name = tool_defs::cli_command::VAULT_SECRET_REMOVE)]
+    Remove(VaultSecretRemoveOpts),
+}
+
+#[derive(Args, Clone, Debug, Default)]
+pub(crate) struct VaultRuntimeOpts {
+    #[arg(
+        long,
+        help = "Vault home directory; defaults to JIG_VAULT_HOME or ~/.jig/vault"
+    )]
+    pub(crate) home: Option<PathBuf>,
+}
+
+#[derive(Args, Debug, Default)]
+pub(crate) struct VaultInitOpts {
+    #[command(flatten)]
+    pub(crate) vault: VaultRuntimeOpts,
+}
+
+#[derive(Args, Debug, Default)]
+pub(crate) struct VaultStatusOpts {
+    #[command(flatten)]
+    pub(crate) vault: VaultRuntimeOpts,
+}
+
+#[derive(Args, Debug, Default)]
+pub(crate) struct VaultAuditVerifyOpts {
+    #[command(flatten)]
+    pub(crate) vault: VaultRuntimeOpts,
+}
+
+#[derive(Args, Debug, Default)]
+pub(crate) struct VaultSecretListOpts {
+    #[command(flatten)]
+    pub(crate) vault: VaultRuntimeOpts,
+}
+
+#[derive(Args, Debug)]
+#[command(group(
+    ArgGroup::new("value_source")
+        .required(true)
+        .args(["value_stdin", "value_prompt"])
+))]
+pub(crate) struct VaultSecretSetOpts {
+    #[arg(help = "Secret name to set; names appear in local audit metadata")]
+    pub(crate) name: String,
+    #[arg(
+        long = "value-stdin",
+        action = ArgAction::SetTrue,
+        help = "Read a 4 byte to 1 MiB secret value from stdin and store the bytes exactly as provided; the 4 byte minimum keeps redaction matchable"
+    )]
+    pub(crate) value_stdin: bool,
+    #[arg(
+        long = "value-prompt",
+        action = ArgAction::SetTrue,
+        help = "Prompt for a UTF-8 secret value with hidden terminal input; no trailing newline is stored"
+    )]
+    pub(crate) value_prompt: bool,
+    #[command(flatten)]
+    pub(crate) vault: VaultRuntimeOpts,
+}
+
+#[derive(Args, Debug)]
+pub(crate) struct VaultSecretRemoveOpts {
+    #[arg(help = "Secret name to remove; names appear in local audit metadata")]
+    pub(crate) name: String,
+    #[command(flatten)]
+    pub(crate) vault: VaultRuntimeOpts,
+}
+
+#[derive(Args, Debug)]
+pub(crate) struct VaultRunOpts {
+    #[arg(
+        long = "env",
+        required = true,
+        help = "Environment mapping VAR=SECRET_NAME; VAR must match [A-Za-z_][A-Za-z0-9_]* and must not be a preserved process variable such as PATH or HOME; may be repeated"
+    )]
+    pub(crate) env: Vec<String>,
+    #[command(flatten)]
+    pub(crate) vault: VaultRuntimeOpts,
+    #[arg(
+        last = true,
+        allow_hyphen_values = true,
+        required = true,
+        help = "Command to run after --"
+    )]
+    pub(crate) command: Vec<String>,
+}

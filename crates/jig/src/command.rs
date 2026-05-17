@@ -111,6 +111,78 @@ pub(crate) struct SqlxTodoRequest {
 }
 
 #[derive(Debug)]
+pub(crate) enum VaultCommand {
+    Audit(VaultAuditCommand),
+    Init(VaultInitRequest),
+    Status(VaultStatusRequest),
+    Secret(VaultSecretCommand),
+    Run(VaultRunRequest),
+}
+
+#[derive(Debug)]
+pub(crate) enum VaultAuditCommand {
+    Verify(VaultAuditVerifyRequest),
+}
+
+#[derive(Debug)]
+pub(crate) enum VaultSecretCommand {
+    List(VaultSecretListRequest),
+    Set(VaultSecretSetRequest),
+    Remove(VaultSecretRemoveRequest),
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct VaultRuntimeOptions {
+    pub(crate) home: Option<PathBuf>,
+}
+
+#[derive(Debug)]
+pub(crate) struct VaultInitRequest {
+    pub(crate) vault: VaultRuntimeOptions,
+}
+
+#[derive(Debug)]
+pub(crate) struct VaultStatusRequest {
+    pub(crate) vault: VaultRuntimeOptions,
+}
+
+#[derive(Debug)]
+pub(crate) struct VaultAuditVerifyRequest {
+    pub(crate) vault: VaultRuntimeOptions,
+}
+
+#[derive(Debug)]
+pub(crate) struct VaultSecretListRequest {
+    pub(crate) vault: VaultRuntimeOptions,
+}
+
+#[derive(Debug)]
+pub(crate) struct VaultSecretSetRequest {
+    pub(crate) name: String,
+    pub(crate) value_source: VaultSecretValueSource,
+    pub(crate) vault: VaultRuntimeOptions,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum VaultSecretValueSource {
+    Stdin,
+    Prompt,
+}
+
+#[derive(Debug)]
+pub(crate) struct VaultSecretRemoveRequest {
+    pub(crate) name: String,
+    pub(crate) vault: VaultRuntimeOptions,
+}
+
+#[derive(Debug)]
+pub(crate) struct VaultRunRequest {
+    pub(crate) env: Vec<String>,
+    pub(crate) command: Vec<String>,
+    pub(crate) vault: VaultRuntimeOptions,
+}
+
+#[derive(Debug)]
 pub(crate) enum AgentCommand {
     Doctor,
     Bootstrap(AgentBootstrapRequest),

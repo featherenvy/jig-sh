@@ -3,6 +3,6 @@ fn main() {
         if !jig::error_is_structured_command_failure(&error) {
             eprintln!("{error:#}");
         }
-        std::process::exit(1);
+        std::process::exit(jig::error_exit_code(&error).unwrap_or(1));
     }
 }

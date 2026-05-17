@@ -14,6 +14,7 @@ use crate::state::{ReceiptInput, now_ms, record_receipt};
 use crate::tool_defs::{self, JsonObject, MemoryTool, args, string_arg, tool};
 
 mod agent;
+mod vault;
 mod work;
 
 pub(crate) fn dispatch(ctx: &RepoContext, command: RuntimeCommand) -> Result<Value> {
@@ -72,6 +73,22 @@ pub(crate) fn dispatch(ctx: &RepoContext, command: RuntimeCommand) -> Result<Val
         RuntimeCommand::Agent(command) => agent::dispatch(ctx, command),
         RuntimeCommand::Work(command) => work::dispatch(ctx, command),
     }
+}
+
+pub(crate) fn dispatch_vault(command: crate::command::VaultCommand) -> Result<Value> {
+    vault::dispatch(command)
+}
+
+pub(crate) fn capture_vault_passphrase() -> Result<()> {
+    // SAFETY: Callers must invoke this before starting background threads in the
+    // process; `runtime::vault` clears the captured environment variable.
+    vault::capture_passphrase()
+}
+
+pub(crate) fn capture_new_vault_passphrase() -> Result<()> {
+    // SAFETY: Callers must invoke this before starting background threads in the
+    // process; `runtime::vault` clears the captured environment variable.
+    vault::capture_new_passphrase()
 }
 
 fn dispatch_check(ctx: &RepoContext, command: CheckCommand) -> Result<Value> {

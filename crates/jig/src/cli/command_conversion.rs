@@ -7,9 +7,11 @@ use super::{
     ProxyCertGenerateOpts, ProxyCertRuntimeOpts, ProxyCertTrustOpts, ProxyCertUntrustOpts,
     ProxyCommand, ProxyListOpts, ProxyPruneOpts, ProxyRunOpts, ProxyRuntimeOpts,
     ProxyServiceCommand, ProxyServiceInstallOpts, ProxyServiceRuntimeOpts, ProxyStartOpts,
-    ProxyStopOpts, RunTargetOpts, ToolOpts, WorkAppendOpts, WorkCheckOpts, WorkCommand,
-    WorkDecisionAddOpts, WorkFinishOpts, WorkGatesOpts, WorkGoalOpts, WorkReceiptsOpts,
-    WorkStartOpts,
+    ProxyStopOpts, RunTargetOpts, ToolOpts, VaultAuditCommand, VaultAuditVerifyOpts, VaultCommand,
+    VaultInitOpts, VaultRunOpts, VaultRuntimeOpts, VaultSecretCommand, VaultSecretListOpts,
+    VaultSecretRemoveOpts, VaultSecretSetOpts, VaultStatusOpts, WorkAppendOpts, WorkCheckOpts,
+    WorkCommand, WorkDecisionAddOpts, WorkFinishOpts, WorkGatesOpts, WorkGoalOpts,
+    WorkReceiptsOpts, WorkStartOpts,
 };
 
 impl From<ToolOpts> for command::ToolRequest {
@@ -94,6 +96,108 @@ impl From<RunTargetOpts> for command::RunTargetRequest {
         Self {
             name: opts.name,
             tool: opts.tool.into(),
+        }
+    }
+}
+
+impl From<VaultCommand> for command::VaultCommand {
+    fn from(command: VaultCommand) -> Self {
+        match command {
+            VaultCommand::Audit(command) => Self::Audit(command.into()),
+            VaultCommand::Init(opts) => Self::Init(opts.into()),
+            VaultCommand::Status(opts) => Self::Status(opts.into()),
+            VaultCommand::Secret(command) => Self::Secret(command.into()),
+            VaultCommand::Run(opts) => Self::Run(opts.into()),
+        }
+    }
+}
+
+impl From<VaultAuditCommand> for command::VaultAuditCommand {
+    fn from(command: VaultAuditCommand) -> Self {
+        match command {
+            VaultAuditCommand::Verify(opts) => Self::Verify(opts.into()),
+        }
+    }
+}
+
+impl From<VaultSecretCommand> for command::VaultSecretCommand {
+    fn from(command: VaultSecretCommand) -> Self {
+        match command {
+            VaultSecretCommand::List(opts) => Self::List(opts.into()),
+            VaultSecretCommand::Set(opts) => Self::Set(opts.into()),
+            VaultSecretCommand::Remove(opts) => Self::Remove(opts.into()),
+        }
+    }
+}
+
+impl From<VaultRuntimeOpts> for command::VaultRuntimeOptions {
+    fn from(opts: VaultRuntimeOpts) -> Self {
+        Self { home: opts.home }
+    }
+}
+
+impl From<VaultInitOpts> for command::VaultInitRequest {
+    fn from(opts: VaultInitOpts) -> Self {
+        Self {
+            vault: opts.vault.into(),
+        }
+    }
+}
+
+impl From<VaultStatusOpts> for command::VaultStatusRequest {
+    fn from(opts: VaultStatusOpts) -> Self {
+        Self {
+            vault: opts.vault.into(),
+        }
+    }
+}
+
+impl From<VaultAuditVerifyOpts> for command::VaultAuditVerifyRequest {
+    fn from(opts: VaultAuditVerifyOpts) -> Self {
+        Self {
+            vault: opts.vault.into(),
+        }
+    }
+}
+
+impl From<VaultSecretListOpts> for command::VaultSecretListRequest {
+    fn from(opts: VaultSecretListOpts) -> Self {
+        Self {
+            vault: opts.vault.into(),
+        }
+    }
+}
+
+impl From<VaultSecretSetOpts> for command::VaultSecretSetRequest {
+    fn from(opts: VaultSecretSetOpts) -> Self {
+        let value_source = if opts.value_prompt {
+            command::VaultSecretValueSource::Prompt
+        } else {
+            command::VaultSecretValueSource::Stdin
+        };
+        Self {
+            name: opts.name,
+            value_source,
+            vault: opts.vault.into(),
+        }
+    }
+}
+
+impl From<VaultSecretRemoveOpts> for command::VaultSecretRemoveRequest {
+    fn from(opts: VaultSecretRemoveOpts) -> Self {
+        Self {
+            name: opts.name,
+            vault: opts.vault.into(),
+        }
+    }
+}
+
+impl From<VaultRunOpts> for command::VaultRunRequest {
+    fn from(opts: VaultRunOpts) -> Self {
+        Self {
+            env: opts.env,
+            command: opts.command,
+            vault: opts.vault.into(),
         }
     }
 }

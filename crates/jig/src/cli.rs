@@ -11,6 +11,14 @@ use crate::{
     tool_defs::{self, DEFAULT_RECEIPTS_LIMIT},
 };
 
+mod vault;
+
+pub(crate) use vault::{
+    VaultAuditCommand, VaultAuditVerifyOpts, VaultCommand, VaultInitOpts, VaultRunOpts,
+    VaultRuntimeOpts, VaultSecretCommand, VaultSecretListOpts, VaultSecretRemoveOpts,
+    VaultSecretSetOpts, VaultStatusOpts,
+};
+
 #[derive(Debug, Parser)]
 #[command(
     name = "jig",
@@ -101,6 +109,16 @@ Examples:
   jig check contract
   jig check rust-file-loc --changed-against origin/main";
 
+const VAULT_AFTER_HELP: &str = "\
+Jig Vault stores local secrets outside the repository. Terminal use prompts for
+the vault passphrase; scripts can set JIG_VAULT_PASSPHRASE. Command-line
+passphrases are not accepted.
+
+Quick start:
+  jig vault init
+  jig vault secret set api_token --value-prompt
+  jig vault run --env TOKEN=api_token -- sh -c 'printf \"%s\" \"$TOKEN\"'";
+
 #[derive(Debug, Subcommand)]
 pub(crate) enum CommandKind {
     /// Create a new repository and render Jig harness files into it.
@@ -143,6 +161,13 @@ pub(crate) enum CommandKind {
     /// Manage the local development proxy.
     #[command(name = tool_defs::cli_command::PROXY, subcommand)]
     Proxy(ProxyCommand),
+    /// Manage the local encrypted Jig vault.
+    #[command(
+        name = tool_defs::cli_command::VAULT,
+        subcommand,
+        after_help = VAULT_AFTER_HELP
+    )]
+    Vault(VaultCommand),
     /// Inspect or bootstrap local agent tooling.
     #[command(
         name = tool_defs::cli_command::AGENT,
@@ -740,7 +765,7 @@ mod command_conversion;
 
 mod run;
 
-pub(crate) use run::{is_structured_json_failure, run};
+pub(crate) use run::{is_structured_json_failure, run, structured_error_exit_code};
 #[cfg(test)]
 use run::{
     moved_check_command_hint, require_json_ok, should_add_template_hint,

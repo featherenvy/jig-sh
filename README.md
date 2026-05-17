@@ -11,6 +11,7 @@ It makes agentic software work repeatable, inspectable, and reviewable by genera
 - **A typed `jig` runtime contract** so every machine, CI run, and agent executes the same configured commands and leaves append-only receipts under `.agent/state/`
 - **An optional `Makefile` adapter** for repos that want familiar make targets without making Make the agent-facing contract
 - **A local dev proxy** so app hostnames stay stable across port changes and machine restarts
+- **A local encrypted vault** so selected secrets can be resolved for brokered child processes without storing values in the repo
 - **Work gates backed by receipts** so a task cannot be marked done without a verifiable output artifact
 - **Repo policy scripts and CI workflows** so linting, tests, and coverage enforcement run consistently from day one
 - **Template sync via `jig update`** so the harness stays current as `jig-sh` evolves — without overwriting files you have customized
@@ -18,6 +19,22 @@ It makes agentic software work repeatable, inspectable, and reviewable by genera
 ## How It Works
 
 Jig's template lives in the `jig-sh` repository. Running `jig init` or `jig adopt` renders it into your project, producing `scripts/jig`, agent context files, CI workflows, and MCP configuration. New repos also get a Makefile adapter by default; adoption skips that adapter when the destination already has a root `Makefile`. After that first render, `jig update` keeps managed files current as the template evolves — files you have customized are never overwritten without `--force`.
+
+## Vault Quick Start
+
+Jig Vault stores selected local secrets outside the repository, unlocks them with a local passphrase, and injects only requested values into a brokered child process.
+
+```sh
+scripts/jig vault init
+scripts/jig vault secret set api_token --value-prompt
+scripts/jig vault secret list
+scripts/jig vault run --env TOKEN=api_token -- sh -c 'printf "%s\n" "$TOKEN"'
+scripts/jig vault audit verify
+```
+
+Terminal use prompts for the vault passphrase. For scripts and other non-interactive callers, export `JIG_VAULT_PASSPHRASE` before each command that unlocks the vault, including `secret list`, `run`, and `audit verify`; only `vault status` works without it.
+
+Use `--value-prompt` for hidden terminal entry, or pipe/redirect bytes with `--value-stdin` for automation. Stdin values are exact, so use `printf` instead of `echo` when the trailing newline is not part of the secret. Vault output is JSON so scripts can inspect it directly; `vault run` mirrors the child process exit status while still printing the redacted result payload.
 
 ## Quick Start
 
@@ -264,6 +281,7 @@ The default workflow assumes Bun for package installation and script execution.
 
 - `crates/jig/` — publishable `jig` runtime and MCP server
 - `crates/jig-dev-proxy/` — local HTTP/HTTPS proxy with TLS certificate management
+- `crates/jig-vault/` — local encrypted vault, redaction, audit, and brokered-run primitives
 - `templates/project/` — files rendered into downstream repos
 - `docs/` — [configuration reference](docs/configuration.md), [adoption guide](docs/adoption.md), and [public contract documentation](docs/public-contract.md)
 - `examples/` — visible `.jig.toml` answer-file examples and a short index

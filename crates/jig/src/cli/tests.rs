@@ -392,6 +392,79 @@ fn parses_proxy_run_no_proxy() {
 }
 
 #[test]
+fn parses_vault_commands() {
+    let init = Cli::try_parse_from(["jig", "vault", "init", "--home", "/tmp/jig-vault"]).unwrap();
+    match init.command {
+        CommandKind::Vault(VaultCommand::Init(opts)) => {
+            assert_eq!(opts.vault.home, Some(PathBuf::from("/tmp/jig-vault")));
+        }
+        other => panic!("expected vault init command, got {other:?}"),
+    }
+
+    let set = Cli::try_parse_from([
+        "jig",
+        "vault",
+        "secret",
+        "set",
+        "api_token",
+        "--value-stdin",
+    ])
+    .unwrap();
+    match set.command {
+        CommandKind::Vault(VaultCommand::Secret(VaultSecretCommand::Set(opts))) => {
+            assert_eq!(opts.name, "api_token");
+            assert!(opts.value_stdin);
+            assert!(!opts.value_prompt);
+        }
+        other => panic!("expected vault secret set command, got {other:?}"),
+    }
+
+    let prompted_set = Cli::try_parse_from([
+        "jig",
+        "vault",
+        "secret",
+        "set",
+        "api_token",
+        "--value-prompt",
+    ])
+    .unwrap();
+    match prompted_set.command {
+        CommandKind::Vault(VaultCommand::Secret(VaultSecretCommand::Set(opts))) => {
+            assert_eq!(opts.name, "api_token");
+            assert!(!opts.value_stdin);
+            assert!(opts.value_prompt);
+        }
+        other => panic!("expected vault secret set command, got {other:?}"),
+    }
+
+    let audit = Cli::try_parse_from(["jig", "vault", "audit", "verify"]).unwrap();
+    match audit.command {
+        CommandKind::Vault(VaultCommand::Audit(VaultAuditCommand::Verify(_))) => {}
+        other => panic!("expected vault audit verify command, got {other:?}"),
+    }
+
+    let run = Cli::try_parse_from([
+        "jig",
+        "vault",
+        "run",
+        "--env",
+        "TOKEN=api_token",
+        "--",
+        "sh",
+        "-c",
+        "true",
+    ])
+    .unwrap();
+    match run.command {
+        CommandKind::Vault(VaultCommand::Run(opts)) => {
+            assert_eq!(opts.env, vec!["TOKEN=api_token"]);
+            assert_eq!(opts.command, vec!["sh", "-c", "true"]);
+        }
+        other => panic!("expected vault run command, got {other:?}"),
+    }
+}
+
+#[test]
 fn parses_proxy_state_dir() {
     let cli = Cli::try_parse_from(["jig", "proxy", "list", "--state-dir", "/tmp/jig-proxy-test"])
         .unwrap();
@@ -489,6 +562,16 @@ fn proxy_json_ok_false_is_cli_failure() {
     )));
     assert!(test_command_reports_failure_with_ok(&CommandKind::Agent(
         AgentCommand::Doctor(AgentDoctorOpts::default())
+    )));
+    assert!(test_command_reports_failure_with_ok(&CommandKind::Vault(
+        VaultCommand::Run(VaultRunOpts {
+            env: vec!["TOKEN=api_token".into()],
+            vault: VaultRuntimeOpts::default(),
+            command: vec!["true".into()],
+        })
+    )));
+    assert!(!test_command_reports_failure_with_ok(&CommandKind::Vault(
+        VaultCommand::Status(VaultStatusOpts::default())
     )));
 }
 

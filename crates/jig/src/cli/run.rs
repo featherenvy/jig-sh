@@ -21,6 +21,9 @@ enum HumanOutput {
 #[derive(Debug)]
 struct JsonOkFalse;
 
+#[derive(Debug)]
+struct VaultChildExitStatus(i32);
+
 impl std::fmt::Display for JsonOkFalse {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("Command reported ok=false")
@@ -28,6 +31,14 @@ impl std::fmt::Display for JsonOkFalse {
 }
 
 impl std::error::Error for JsonOkFalse {}
+
+impl std::fmt::Display for VaultChildExitStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Vault child exited with status {}", self.0)
+    }
+}
+
+impl std::error::Error for VaultChildExitStatus {}
 
 pub(crate) fn run() -> Result<()> {
     let cli = parse_cli();
@@ -116,6 +127,27 @@ pub(crate) fn run() -> Result<()> {
             false,
             None,
         ),
+        CommandKind::Vault(command) => {
+            let is_run = matches!(command, VaultCommand::Run(_));
+            if vault_command_requires_passphrase(&command) {
+                // Invariant: capture and clear the process environment copy
+                // before vault runtime code can start background threads.
+                if matches!(command, VaultCommand::Init(_)) {
+                    runtime::capture_new_vault_passphrase()?;
+                } else {
+                    runtime::capture_vault_passphrase()?;
+                }
+            }
+            let output = runtime::dispatch_vault(command.into())?;
+            print_json(&output)?;
+            if is_run {
+                // `vault run` mirrors the child process status. Its JSON `ok`
+                // field is derived from that same status, so avoid reporting a
+                // second generic ok=false error for the same child failure.
+                return require_vault_child_status_ok(&output);
+            }
+            require_json_ok(true, &output)
+        }
         CommandKind::Agent(command) => {
             let require_ok = agent_command_reports_failure_with_ok(&command);
             let human_output = agent_human_output_requested(&command);
@@ -145,10 +177,20 @@ pub(super) fn test_command_reports_failure_with_ok(command: &CommandKind) -> boo
     // missing or unregistered.
     match command {
         CommandKind::Dev(_) | CommandKind::Proxy(_) => true,
+        CommandKind::Vault(command) => vault_command_reports_failure_with_ok(command),
         CommandKind::Agent(command) => agent_command_reports_failure_with_ok(command),
         CommandKind::Check(command) => check_command_reports_failure_with_ok(command),
         _ => false,
     }
+}
+
+#[cfg(test)]
+fn vault_command_reports_failure_with_ok(command: &VaultCommand) -> bool {
+    matches!(command, VaultCommand::Run(_))
+}
+
+fn vault_command_requires_passphrase(command: &VaultCommand) -> bool {
+    !matches!(command, VaultCommand::Status(_))
 }
 
 fn agent_command_reports_failure_with_ok(command: &AgentCommand) -> bool {
@@ -194,6 +236,25 @@ fn dispatch_runtime_command(
     require_json_ok(require_ok, &output)
 }
 
+fn require_vault_child_status_ok(output: &serde_json::Value) -> Result<()> {
+    let status = output
+        .get("result")
+        .and_then(|value| value.get("exit_status"))
+        .and_then(serde_json::Value::as_i64);
+    if status.is_none() && output.get("ok").and_then(serde_json::Value::as_bool) == Some(false) {
+        anyhow::bail!("vault run returned ok=false without result.exit_status");
+    }
+    let Some(status) = status else {
+        return Ok(());
+    };
+    if status != 0 {
+        // The CLI process exit API is limited to shell-style status bytes.
+        // Preserve non-zero vault child failures while keeping output portable.
+        return Err(VaultChildExitStatus(status.clamp(1, 255) as i32).into());
+    }
+    Ok(())
+}
+
 pub(super) fn require_json_ok(required: bool, output: &serde_json::Value) -> Result<()> {
     if required && output.get("ok").and_then(serde_json::Value::as_bool) == Some(false) {
         return Err(JsonOkFalse.into());
@@ -202,7 +263,13 @@ pub(super) fn require_json_ok(required: bool, output: &serde_json::Value) -> Res
 }
 
 pub(crate) fn is_structured_json_failure(error: &anyhow::Error) -> bool {
-    error.is::<JsonOkFalse>()
+    error.is::<JsonOkFalse>() || error.is::<VaultChildExitStatus>()
+}
+
+pub(crate) fn structured_error_exit_code(error: &anyhow::Error) -> Option<i32> {
+    error
+        .downcast_ref::<VaultChildExitStatus>()
+        .map(|error| error.0)
 }
 
 fn parse_cli() -> Cli {
@@ -317,6 +384,9 @@ fn print_json(value: &serde_json::Value) -> Result<()> {
     let mut handle = stdout.lock();
     serde_json::to_writer_pretty(&mut handle, value)?;
     handle.write_all(b"\n")?;
+    // `jig vault run` may return a structured non-zero child status after
+    // printing, so flush before unwinding through main.
+    handle.flush()?;
     Ok(())
 }
 

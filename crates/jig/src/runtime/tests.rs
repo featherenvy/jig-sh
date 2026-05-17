@@ -2,6 +2,8 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
+use jig_vault::{SecretBytes, Vault};
+use secrecy::{ExposeSecret, SecretString};
 use tempfile::tempdir;
 
 use common::*;
@@ -16,6 +18,108 @@ mod agent;
 mod common;
 mod mcp;
 mod work;
+
+#[test]
+fn dispatch_vault_run_injects_redacts_and_verifies_audit() {
+    let _env = lock_env();
+    let temp = tempdir().unwrap();
+    let vault_home = temp.path().join("vault");
+    let passphrase = "correct horse battery staple";
+    let _init_passphrase = EnvVarGuard::set("JIG_VAULT_PASSPHRASE", passphrase);
+
+    capture_vault_passphrase().unwrap();
+    dispatch_vault(crate::command::VaultCommand::Init(
+        crate::command::VaultInitRequest {
+            vault: crate::command::VaultRuntimeOptions {
+                home: Some(vault_home.clone()),
+            },
+        },
+    ))
+    .unwrap();
+    let vault = Vault::resolve(Some(vault_home.clone())).unwrap();
+    let passphrase = SecretString::from(passphrase.to_string());
+    vault
+        .set_secret(
+            &passphrase,
+            "api_token",
+            SecretBytes::new(b"secret-value".to_vec()),
+        )
+        .unwrap();
+
+    let _run_passphrase = EnvVarGuard::set("JIG_VAULT_PASSPHRASE", passphrase.expose_secret());
+    capture_vault_passphrase().unwrap();
+    let output = dispatch_vault(crate::command::VaultCommand::Run(
+        crate::command::VaultRunRequest {
+            env: vec!["TOKEN=api_token".into()],
+            command: vec![
+                "sh".into(),
+                "-c".into(),
+                "printf 'token=%s\\n' \"$TOKEN\"; env".into(),
+            ],
+            vault: crate::command::VaultRuntimeOptions {
+                home: Some(vault_home.clone()),
+            },
+        },
+    ))
+    .unwrap();
+
+    assert_eq!(output["ok"], true);
+    let stdout = output["result"]["stdout"].as_str().unwrap();
+    assert!(stdout.contains("token=[REDACTED]"));
+    assert!(!stdout.contains("secret-value"));
+    assert!(!stdout.contains("JIG_VAULT_PASSPHRASE"));
+    assert!(!stdout.contains("correct horse battery staple"));
+    assert_eq!(output["result"]["exit_status"], 0);
+
+    let _verify_passphrase = EnvVarGuard::set("JIG_VAULT_PASSPHRASE", passphrase.expose_secret());
+    capture_vault_passphrase().unwrap();
+    let verification = dispatch_vault(crate::command::VaultCommand::Audit(
+        crate::command::VaultAuditCommand::Verify(crate::command::VaultAuditVerifyRequest {
+            vault: crate::command::VaultRuntimeOptions {
+                home: Some(vault_home),
+            },
+        }),
+    ))
+    .unwrap();
+    assert_eq!(verification["ok"], true);
+    assert_eq!(verification["event_count"].as_u64().unwrap(), 4);
+}
+
+#[test]
+fn dispatch_vault_run_records_failure_audit_event() {
+    let _env = lock_env();
+    let temp = tempdir().unwrap();
+    let vault_home = temp.path().join("vault");
+    let passphrase = "correct horse battery staple";
+    let _passphrase = EnvVarGuard::set("JIG_VAULT_PASSPHRASE", passphrase);
+    capture_vault_passphrase().unwrap();
+    let vault = Vault::resolve(Some(vault_home.clone())).unwrap();
+    let passphrase = SecretString::from(passphrase.to_string());
+    vault.init(&passphrase).unwrap();
+    vault
+        .set_secret(
+            &passphrase,
+            "api_token",
+            SecretBytes::new(b"secret-value".to_vec()),
+        )
+        .unwrap();
+
+    let error = dispatch_vault(crate::command::VaultCommand::Run(
+        crate::command::VaultRunRequest {
+            env: vec!["TOKEN=api_token".into()],
+            command: vec!["definitely-not-a-jig-vault-test-command".into()],
+            vault: crate::command::VaultRuntimeOptions {
+                home: Some(vault_home.clone()),
+            },
+        },
+    ))
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("failed to run brokered command"));
+
+    let verification = vault.verify_audit(&passphrase).unwrap();
+    assert_eq!(verification.event_count, 4);
+}
 
 fn dispatch(ctx: &RepoContext, command: CommandKind) -> Result<Value> {
     super::dispatch(ctx, runtime_command_from_cli(command))
@@ -39,6 +143,7 @@ fn runtime_command_from_cli(command: CommandKind) -> RuntimeCommand {
         CommandKind::Init(_)
         | CommandKind::Adopt(_)
         | CommandKind::Update(_)
+        | CommandKind::Vault(_)
         | CommandKind::Mcp => {
             panic!("runtime test helper only accepts runtime commands")
         }

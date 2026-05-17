@@ -61,6 +61,10 @@ pub fn error_is_structured_command_failure(error: &anyhow::Error) -> bool {
     cli::is_structured_json_failure(error)
 }
 
+pub fn error_exit_code(error: &anyhow::Error) -> Option<i32> {
+    cli::structured_error_exit_code(error)
+}
+
 #[cfg(all(test, not(feature = "dev-proxy")))]
 mod no_dev_proxy_feature_tests {
     use std::fs;

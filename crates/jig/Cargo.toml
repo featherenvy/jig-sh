@@ -30,12 +30,16 @@ anyhow.workspace = true
 clap.workspace = true
 fs4.workspace = true
 jig-dev-proxy = { workspace = true, optional = true }
+jig-vault.workspace = true
 minijinja = { version = "2.19.0", features = ["custom_syntax"] }
+rpassword.workspace = true
+secrecy.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 time.workspace = true
 toml.workspace = true
 ulid.workspace = true
+zeroize.workspace = true
 
 [dev-dependencies]

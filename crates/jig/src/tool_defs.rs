@@ -79,6 +79,16 @@ pub(crate) mod cli_command {
     pub(crate) const RUN_TARGET: &str = "run-target";
     pub(crate) const SCHEMA_DUMP: &str = "schema-dump";
     pub(crate) const UPDATE: &str = "update";
+    pub(crate) const VAULT: &str = "vault";
+    pub(crate) const VAULT_AUDIT: &str = "audit";
+    pub(crate) const VAULT_AUDIT_VERIFY: &str = "verify";
+    pub(crate) const VAULT_INIT: &str = "init";
+    pub(crate) const VAULT_RUN: &str = "run";
+    pub(crate) const VAULT_SECRET: &str = "secret";
+    pub(crate) const VAULT_SECRET_LIST: &str = "list";
+    pub(crate) const VAULT_SECRET_REMOVE: &str = "remove";
+    pub(crate) const VAULT_SECRET_SET: &str = "set";
+    pub(crate) const VAULT_STATUS: &str = "status";
     pub(crate) const WORK: &str = "work";
     pub(crate) const WORK_APPEND: &str = "append";
     pub(crate) const WORK_CHECK: &str = "check";

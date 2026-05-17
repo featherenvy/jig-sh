@@ -89,6 +89,27 @@ fn check_help_includes_examples() {
 }
 
 #[test]
+fn vault_help_includes_quick_start_examples() {
+    let vault_help = rendered_help(&["vault"]);
+    assert_help_contains(&vault_help, "JIG_VAULT_PASSPHRASE");
+    assert_help_contains(&vault_help, "jig vault init");
+    assert_help_contains(&vault_help, "jig vault secret set api_token --value-prompt");
+
+    let vault_init_help = rendered_help(&["vault", "init"]);
+    assert_help_contains(&vault_init_help, "prompts twice for a new vault passphrase");
+    assert_help_contains(&vault_init_help, "jig vault init");
+
+    let vault_secret_set_help = rendered_help(&["vault", "secret", "set"]);
+    assert_help_contains(&vault_secret_set_help, "--value-prompt");
+    assert_help_contains(&vault_secret_set_help, "use printf instead");
+    assert_help_contains(&vault_secret_set_help, "of echo");
+    assert_help_contains(
+        &vault_secret_set_help,
+        "jig vault secret set api_token --value-stdin",
+    );
+}
+
+#[test]
 fn agent_help_includes_examples() {
     let agent_help = rendered_help(&["agent"]);
     assert_help_contains(&agent_help, "jig agent doctor");
