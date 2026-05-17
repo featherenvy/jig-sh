@@ -44,9 +44,6 @@ struct RepoConfig {
     #[serde(default)]
     template_source_url: String,
     #[allow(dead_code)]
-    #[serde(default = "default_true")]
-    makefile_enabled: bool,
-    #[allow(dead_code)]
     #[serde(default)]
     sqlx_enabled: bool,
     #[allow(dead_code)]
@@ -249,11 +246,6 @@ struct ContractManifest {
     contract_version: u32,
     tool_namespace: String,
     jig_version: String,
-    #[serde(default)]
-    required_make_targets: Vec<String>,
-    #[allow(dead_code)]
-    #[serde(default)]
-    optional_make_targets: Vec<String>,
     #[allow(dead_code)]
     #[serde(default)]
     required_commands: Vec<String>,
@@ -319,7 +311,7 @@ impl RepoContext {
         let manifest: ContractManifest = serde_json::from_str(&manifest_text)
             .with_context(|| format!("Failed to parse {}", manifest_path.display()))?;
 
-        if !matches!(manifest.contract_version, 1..=3) {
+        if !matches!(manifest.contract_version, 2..=3) {
             bail!(
                 "Unsupported jig contract version: {}",
                 manifest.contract_version
@@ -328,12 +320,9 @@ impl RepoContext {
         if manifest.tool_namespace != "jig" {
             bail!("Unsupported tool namespace: {}", manifest.tool_namespace);
         }
-        if manifest.contract_version == 1 && manifest.required_make_targets.is_empty() {
-            bail!("jig contract manifest does not declare required make targets");
-        }
         // Versions 2 and 3 share the command-backed manifest schema; v3 changes
         // the CLI command surface, not the required_commands contract shape.
-        if manifest.contract_version >= 2 && manifest.required_commands.is_empty() {
+        if manifest.required_commands.is_empty() {
             bail!("jig contract manifest does not declare required commands");
         }
         if config.jig_version != manifest.jig_version {
@@ -366,10 +355,6 @@ impl RepoContext {
         &self.manifest.required_commands
     }
 
-    pub(crate) fn required_make_targets(&self) -> &[String] {
-        &self.manifest.required_make_targets
-    }
-
     pub(crate) fn tool_spec(&self, name: &str) -> Option<&ManifestTool> {
         self.manifest.tools.iter().find(|tool| tool.name == name)
     }
@@ -388,10 +373,6 @@ impl RepoContext {
 
     pub(crate) fn jig_version(&self) -> &str {
         &self.config.jig_version
-    }
-
-    pub(crate) fn makefile_enabled(&self) -> bool {
-        self.config.makefile_enabled
     }
 
     pub(crate) fn sqlx_enabled(&self) -> bool {
@@ -536,14 +517,6 @@ impl FeatureContext for RepoContext {
 
     fn required_commands(&self) -> &[String] {
         self.required_commands()
-    }
-
-    fn required_make_targets(&self) -> &[String] {
-        self.required_make_targets()
-    }
-
-    fn makefile_enabled(&self) -> bool {
-        self.makefile_enabled()
     }
 
     fn sqlx_enabled(&self) -> bool {

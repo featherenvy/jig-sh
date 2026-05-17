@@ -9,7 +9,10 @@ on:
       - "rust-toolchain.toml"
       - ".clippy.toml"
       - "clippy.toml"
-      - "Makefile"
+      - ".jig.toml"
+      - ".agent/jig-contract.json"
+      - "scripts/jig"
+      - "scripts/install-jig.sh"
       - ".cargo/**"
       - ".github/workflows/rust-tests.yml"
   push:
@@ -22,7 +25,10 @@ on:
       - "rust-toolchain.toml"
       - ".clippy.toml"
       - "clippy.toml"
-      - "Makefile"
+      - ".jig.toml"
+      - ".agent/jig-contract.json"
+      - "scripts/jig"
+      - "scripts/install-jig.sh"
       - ".cargo/**"
       - ".github/workflows/rust-tests.yml"
   merge_group:
@@ -39,7 +45,7 @@ concurrency:
 
 jobs:
   fmt:
-    name: make fmt-check
+    name: scripts/jig check fmt
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -51,11 +57,15 @@ jobs:
           cache: false
           rustflags: ""
           components: rustfmt
+      - name: Build current Jig binary
+        run: cargo build -p jig-sh --bin jig --locked
       - name: Run rustfmt check
-        run: make fmt-check
+        env:
+          JIG_DEV_BIN: target/debug/jig
+        run: scripts/jig check fmt
 
   clippy:
-    name: make clippy
+    name: scripts/jig check clippy
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -71,11 +81,15 @@ jobs:
         uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
         with:
           shared-key: rust-${{ runner.os }}-${{ github.job }}
+      - name: Build current Jig binary
+        run: cargo build -p jig-sh --bin jig --locked
       - name: Run clippy
-        run: make clippy
+        env:
+          JIG_DEV_BIN: target/debug/jig
+        run: scripts/jig check clippy
 
   test:
-    name: make test-rust-locked
+    name: scripts/jig check test-locked
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -90,8 +104,12 @@ jobs:
         uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
         with:
           shared-key: rust-${{ runner.os }}-${{ github.job }}
+      - name: Build current Jig binary
+        run: cargo build -p jig-sh --bin jig --locked
       - name: Run locked Rust tests
-        run: make test-rust-locked
+        env:
+          JIG_DEV_BIN: target/debug/jig
+        run: scripts/jig check test-locked
 
   msrv:
     name: cargo check --workspace (MSRV 1.85)

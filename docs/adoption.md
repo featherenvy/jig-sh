@@ -6,7 +6,7 @@
 2. Render the harness into that repo with `jig adopt . --rust-migration-dir migrations`. For tooling-only repos, pass `--sqlx-enabled false` instead of the migration flag. Release builds of `jig adopt` default to the official `jig-sh` template at `https://github.com/bpcakes/jig-sh.git`, pinned to the release tag for the installed Jig version. Unreleased or dirty local builds require `--template /path/to/jig-sh --template-mode committed` or an explicit `--vcs-ref` so they do not render stale release templates.
 3. For local dogfooding, commit or stash template checkout changes before rendering. If you need to test in-progress template edits, make a temporary local commit and update from that committed source.
    When testing generated launchers with `JIG_DEV_BIN`, rebuild the dev binary after changing Jig and unset the variable if that binary no longer matches `.jig.toml`; generated launchers hard-fail on mismatches instead of falling back to the cache.
-4. Confirm `.jig.toml` was generated with the intended profile and template source. The default points at the official portable URL; override `template_source_url` only when adopting from a local checkout, fork, or private template. If the repo already had a root `Makefile`, Jig records `makefile_enabled = false` and leaves that file project-owned. Review the remaining paths, commands, and `[dev]` proxy defaults such as `tld`, `lan`, and `workspace_discovery` before committing. Command-backed `*_command` values run through non-login `bash -c`, so put any required toolchain setup in the command string or in project-owned scripts. Jig rejects unknown `.jig.toml` keys; after upgrading an existing repo, remove or rename any unknown keys reported by `scripts/jig` before rerunning commands.
+4. Confirm `.jig.toml` was generated with the intended profile and template source. The default points at the official portable URL; override `template_source_url` only when adopting from a local checkout, fork, or private template. Jig leaves any root `Makefile` project-owned and routes generated checks through `scripts/jig`. Review the remaining paths, commands, and `[dev]` proxy defaults such as `tld`, `lan`, and `workspace_discovery` before committing. Command-backed `*_command` values run through non-login `bash -c`, so put any required toolchain setup in the command string or in project-owned scripts. Jig rejects unknown `.jig.toml` keys; after upgrading an existing repo, remove or rename any unknown keys reported by `scripts/jig` before rerunning commands.
 5. Review the root `AGENTS.md`. Existing repo guidance is preserved; Jig inserts or updates only the `<!-- BEGIN JIG MANAGED BLOCK -->` section.
 6. Add or adapt crate-level `AGENTS.md` files for each backend crate.
 7. Run `scripts/jig agent doctor --summary`. If Jig Codex skills are missing and you want this client to use them, run `scripts/jig agent bootstrap`.
@@ -75,8 +75,6 @@ If SQLx and schema dumps are enabled:
 ```sh
 scripts/jig check schema
 ```
-
-When `makefile_enabled = true`, the generated Makefile adapter also exposes policy-helper targets such as `make check-agent-map`, `make check-agent-guides`, and `make check-rust-file-loc`.
 
 If web apps are configured, confirm each app has the expected package scripts before enabling the web workflow.
 

@@ -157,7 +157,7 @@ validate_jig_runtime() {
     cd "$repo_dir"
     [[ -f .mcp.json ]]
     [[ -f .agent/jig-contract.json ]]
-    make contract-check >/dev/null
+    scripts/jig check contract >/dev/null
 
     EXPECT_SCHEMA_DUMP="$expect_schema_dump" EXPECT_SQLX="$expect_sqlx" python3 <<'PY'
 import json
@@ -167,15 +167,14 @@ import pathlib
 manifest = json.loads(pathlib.Path(".agent/jig-contract.json").read_text())
 expect_schema_dump = os.environ["EXPECT_SCHEMA_DUMP"] == "1"
 expect_sqlx = os.environ["EXPECT_SQLX"] == "1"
-targets = set(manifest.get("required_make_targets", []))
 commands = set(manifest.get("required_commands", []))
 tools = {tool["name"] for tool in manifest["tools"]}
 tools_by_name = {tool["name"]: tool for tool in manifest["tools"]}
 
-assert (("schema-dump" in targets) or ("schema_dump_command" in commands)) == expect_schema_dump, manifest
+assert ("schema_dump_command" in commands) == expect_schema_dump, manifest
 assert ("jig.schema_dump" in tools) == expect_schema_dump, manifest
 assert ("jig.schema_check" in tools) == expect_schema_dump, manifest
-assert (("sqlx-check" in targets) or ("sqlx_check_command" in commands)) == expect_sqlx, manifest
+assert ("sqlx_check_command" in commands) == expect_sqlx, manifest
 assert ("jig.sqlx_check" in tools) == expect_sqlx, manifest
 assert ("jig.migration_add" in tools) == expect_sqlx, manifest
 if "jig.contract_check" in tools_by_name:
@@ -238,7 +237,7 @@ PY
       --selected-option "Use jig" \
       --rationale "Runtime contract is wired and validated." \
       --plan-id "$plan_id" \
-      --alternatives "Plain make" \
+      --alternatives "Ad-hoc shell commands" \
       >/dev/null
 
     receipts_json="$(scripts/jig work receipts --plan-id "$plan_id" --limit 20)"

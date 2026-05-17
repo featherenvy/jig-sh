@@ -124,11 +124,6 @@ pub(crate) fn run() -> Result<()> {
             false,
             None,
         ),
-        CommandKind::RunTarget(opts) => dispatch_runtime_command(
-            crate::command::RuntimeCommand::RunTarget(opts.into()),
-            false,
-            None,
-        ),
         CommandKind::Vault(command) => {
             let is_run = matches!(command, VaultCommand::Run(_));
             if vault_command_requires_passphrase(&command) {

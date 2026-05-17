@@ -19,7 +19,6 @@ pub(crate) enum RuntimeCommand {
     GenerateSqlxUncheckedQueriesTodo(SqlxTodoRequest),
     #[cfg_attr(not(feature = "dev-proxy"), allow(dead_code))]
     Dev(DevRequest),
-    RunTarget(RunTargetRequest),
     #[cfg_attr(not(feature = "dev-proxy"), allow(dead_code))]
     Proxy(ProxyCommand),
     Agent(AgentCommand),
@@ -87,12 +86,6 @@ pub(crate) struct AgentMapRequest {
 
 #[derive(Debug)]
 pub(crate) struct MigrationAddRequest {
-    pub(crate) name: String,
-    pub(crate) tool: ToolRequest,
-}
-
-#[derive(Debug)]
-pub(crate) struct RunTargetRequest {
     pub(crate) name: String,
     pub(crate) tool: ToolRequest,
 }

@@ -61,7 +61,7 @@ No web apps are configured in `.jig.toml`.
 - `scripts/jig check fmt`
 - `scripts/jig check clippy`
 - `scripts/jig work status --summary`
-[% if frontend_apps | length > 0 and makefile_enabled %]
+[% if frontend_apps | length > 0 %]
 - `scripts/jig check typescript-lint`
 - `scripts/jig check typescript-typecheck`
 - `scripts/jig check typescript-build`
@@ -76,27 +76,13 @@ No web apps are configured in `.jig.toml`.
 - `scripts/jig migration-add NAME`
 [% endif %]
 - `scripts/jig check contract`
-[% if makefile_enabled %]
-- `make bootstrap`
-- `make test`
-- `make fmt-check`
-- `make clippy`
-- `make contract-check`
-- `make check-agent-map`
-- `make check-agent-guides`
-- `make check-rust-file-loc`
-[% if sqlx_enabled %]
-- `make check-sqlx-unchecked-non-test`
-[% endif %]
-- `make ci`
-[% endif %]
 
 ## Done Means
 
 - Run the relevant local verification for the area you changed.
 - For backend changes, finish with `scripts/jig check test`.
-[% if frontend_apps | length > 0 and makefile_enabled %]
-- For frontend changes, run `make ci-webapps` or the narrower `scripts/jig check typescript-*` gates.
+[% if frontend_apps | length > 0 %]
+- For frontend changes, run the relevant `scripts/jig check typescript-*` gates.
 [% endif %]
 [% if sqlx_enabled %]
 - For SQLx or migration changes, run `scripts/jig check sqlx`.

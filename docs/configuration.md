@@ -50,12 +50,11 @@ When `sqlx_enabled` is `true`, these additional keys are required:
 
 ## Optional Keys
 
-- `makefile_enabled`: when `true`, Jig renders a root Makefile adapter; adoption defaults it to `false` if a root `Makefile` already exists
 - `schema_dump_enabled`: when `true` and `sqlx_enabled` is also `true`, the template renders schema dump and schema freshness commands; when SQLx is disabled, this is rendered as `false`. New init/adopt answers reject explicitly setting this to `true` while SQLx is disabled; `jig update --recopy` normalizes legacy SQLx-disabled configs back to `false`.
 - `schema_dump_command`: command behind `scripts/jig schema-dump` when `sqlx_enabled` and `schema_dump_enabled` are both `true`
 - `sqlx_check_command`: command behind `scripts/jig check sqlx` when `sqlx_enabled` is `true`
 - `bootstrap_command`: implementation behind `scripts/jig bootstrap`; the generated default runs `cargo fetch` only when a root `Cargo.toml` exists, otherwise exits 0 with a stdout note, so set this explicitly when bootstrap must install web dependencies, run project-specific setup, or enter a nested Rust project. If a root `Cargo.toml` exists, Cargo errors are surfaced instead of skipped.
-- `dev_command`: legacy project-owned dev command used by the optional Makefile adapter's `make dev`; Makefile-less command-backed renders omit it, and older repos that retain it do not use it for `scripts/jig dev`
+- `dev_command`: legacy project-owned dev command preserved only for older renders; `scripts/jig dev` uses `[dev]` and `[[dev.apps]]`
 - `rust_fmt_check_command`: implementation behind `scripts/jig check fmt`; the generated default exits 0 with a stdout note when no root `Cargo.toml` exists, and otherwise surfaces Cargo errors
 - `rust_clippy_command`: implementation behind `scripts/jig check clippy`; the generated default exits 0 with a stdout note when no root `Cargo.toml` exists, and otherwise surfaces Cargo errors
 - `rust_test_command`: implementation behind `scripts/jig check test`; the generated default exits 0 with a stdout note when no root `Cargo.toml` exists, and otherwise surfaces Cargo errors
@@ -66,13 +65,13 @@ When `sqlx_enabled` is `true`, these additional keys are required:
 
 The generated no-root-`Cargo.toml` Cargo defaults print a stable stdout prefix that `work check --summary` recognizes as an intentional harness skip. Reworded custom commands still run normally, but they will be summarized as ordinary command output instead of `passed (all skipped)`. Custom commands should not print the exact generated prefix unless they intentionally want to opt into that skip rendering.
 
-Top-level `*_command` values are committed repo configuration and run through non-login `bash -c` from the repo root with the user's normal process environment. Treat changes to these keys like changes to project-owned shell scripts or Makefile recipes. Jig-owned checks such as `scripts/jig check contract`, `scripts/jig migration-add NAME`, `scripts/jig check schema`, and repo policy checks run natively inside the binary.
+Top-level `*_command` values are committed repo configuration and run through non-login `bash -c` from the repo root with the user's normal process environment. Treat changes to these keys like changes to project-owned shell scripts. Jig-owned checks such as `scripts/jig check contract`, `scripts/jig migration-add NAME`, `scripts/jig check schema`, and repo policy checks run natively inside the binary.
 
 Contracts that declare `"kind": "native"` tools require the repo's pinned `scripts/jig` runtime version. Do not run an older cached `jig` binary against a repo after updating its `.agent/jig-contract.json`; use the launcher so the `jig_version` pin is enforced.
 
 ## Accepted Key Summary
 
-Jig rejects unknown `.jig.toml` keys so stale template answers fail early. The accepted top-level keys are `_src_path`, `_commit`, `_template_mode`, `_template_local_path`, `repo_name`, `default_branch`, `ci_github_runner`, `jig_version`, `template_source_url`, `makefile_enabled`, `sqlx_enabled`, `rust_crate_roots`, `rust_migration_dir`, `rust_sqlx_metadata_dir`, `schema_dump_enabled`, `schema_dump_command`, `schema_check_command`, `sqlx_check_command`, `migration_add_command`, `bootstrap_command`, `contract_check_command`, `dev_command`, `rust_fmt_check_command`, `rust_clippy_command`, `rust_test_command`, `rust_test_locked_command`, `web_package_manager`, `frontend_apps`, `dev`, `work`, and `agent_tooling`. `schema_check_command`, `migration_add_command`, and `contract_check_command` are legacy accepted keys for older rendered repos; new renders use native binary implementations. Older hand-edited v2 manifests that still list these legacy command keys must either keep the matching `.jig.toml` values until updated, or switch the corresponding tools to their native forms.
+Jig rejects unknown `.jig.toml` keys so stale template answers fail early. The accepted top-level keys are `_src_path`, `_commit`, `_template_mode`, `_template_local_path`, `repo_name`, `default_branch`, `ci_github_runner`, `jig_version`, `template_source_url`, `sqlx_enabled`, `rust_crate_roots`, `rust_migration_dir`, `rust_sqlx_metadata_dir`, `schema_dump_enabled`, `schema_dump_command`, `schema_check_command`, `sqlx_check_command`, `migration_add_command`, `bootstrap_command`, `contract_check_command`, `dev_command`, `rust_fmt_check_command`, `rust_clippy_command`, `rust_test_command`, `rust_test_locked_command`, `web_package_manager`, `frontend_apps`, `dev`, `work`, and `agent_tooling`. `schema_check_command`, `migration_add_command`, and `contract_check_command` are legacy accepted keys for older rendered repos; new renders use native binary implementations. Older hand-edited v2 manifests that still list these legacy command keys must either keep the matching `.jig.toml` values until updated, or switch the corresponding tools to their native forms.
 
 Nested accepted keys are:
 
@@ -387,37 +386,6 @@ When both `sqlx_enabled` and `schema_dump_enabled` are `true`, it also exposes:
 - `scripts/jig schema-dump`
 
 `scripts/jig check schema` reruns `schema_dump_command`, then checks `SCHEMA_DOCS_DIR` for drift. `SCHEMA_DOCS_DIR` defaults to `docs/schema` when the environment variable is unset.
-
-When `makefile_enabled = true`, the generated `Makefile` exposes these convenience adapter targets:
-
-- `bootstrap`
-- `deps`
-- `dev`
-- `fmt-check`
-- `clippy`
-- `test-rust`
-- `test-rust-locked`
-- `test`
-- `contract-check`
-- `check-agent-map`
-- `check-agent-guides`
-- `check-rust-file-loc`
-- `check-no-mod-rs`
-- `ci`
-
-When `sqlx_enabled` is `true`, generated repos also expose:
-
-- `sqlx-db-setup`
-- `sqlx-check`
-- `migration-add`
-- `check-sqlx-unchecked-non-test`
-
-When both `sqlx_enabled` and `schema_dump_enabled` are `true`, generated repos also expose:
-
-- `schema-check`
-- `schema-dump`
-
-Downstream repos may add more targets, but agents should prefer `scripts/jig` because adoption can leave an existing project Makefile unmanaged.
 
 Generated repos also get these runtime-owned files:
 

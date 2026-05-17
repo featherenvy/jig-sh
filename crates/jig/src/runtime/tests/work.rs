@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn make_cli_dispatch_requires_manifest_tool_declaration() {
+fn cli_dispatch_requires_manifest_tool_declaration() {
     let temp = tempdir().unwrap();
     write_fixture_repo(temp.path());
     let ctx = RepoContext::load_from(temp.path()).unwrap();
@@ -41,7 +41,7 @@ fn unavailable_schema_check_explains_disabled_config() {
 }
 
 #[test]
-fn unavailable_typescript_check_explains_project_owned_makefile_config() {
+fn unavailable_typescript_check_explains_missing_contract_tool() {
     let temp = tempdir().unwrap();
     fs::create_dir_all(temp.path().join(".agent")).unwrap();
     fs::write(
@@ -51,7 +51,6 @@ _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
 jig_version = "0.2.0-beta.1"
-makefile_enabled = false
 
 [[frontend_apps]]
 name = "web"
@@ -86,8 +85,8 @@ coverage_threshold = 80
     .unwrap_err()
     .to_string();
 
-    assert!(error.contains("jig.typescript_lint is not available"));
-    assert!(error.contains("makefile_enabled = false"));
+    assert!(error.contains("jig.typescript_lint is not declared"));
+    assert!(error.contains("jig update --recopy"));
     assert!(error.contains("project-owned [commands]"));
 }
 
@@ -654,11 +653,7 @@ fn work_gates_reject_stale_required_gate_receipts() {
         })),
     )
     .unwrap();
-    fs::write(
-        temp.path().join("Makefile"),
-        "custom-check:\n\t@printf 'changed target ran\\n'\n",
-    )
-    .unwrap();
+    fs::write(temp.path().join("changed.txt"), "changed\n").unwrap();
 
     let gates = dispatch(
         &ctx,
@@ -919,7 +914,7 @@ fn work_gates_keep_failed_checks_failed_when_freshness_is_unknown() {
     )
     .unwrap_err()
     .to_string();
-    assert!(error.contains("jig.custom_check failed with status 2"));
+    assert!(error.contains("jig.custom_check failed with status 7"));
 
     let gates = dispatch(
         &ctx,

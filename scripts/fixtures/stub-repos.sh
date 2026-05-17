@@ -10,6 +10,10 @@ write_backend_stub_repo() {
 
   cat > "$repo_dir/.gitignore" <<'EOF'
 /target/
+node_modules/
+coverage/
+*/node_modules/
+*/coverage/
 EOF
 
   cat > "$repo_dir/Cargo.toml" <<'EOF'
@@ -103,6 +107,54 @@ CREATE TABLE demo_items (id integer PRIMARY KEY);
 SQL
 EOF
   chmod +x "$repo_dir/scripts/dump-schema.sh"
+
+  cat > "$repo_dir/package.json" <<'EOF'
+{"name":"fixture-web-root","version":"0.0.0","private":true}
+EOF
+  cat > "$repo_dir/package-lock.json" <<'EOF'
+{
+  "name": "fixture-web-root",
+  "lockfileVersion": 3,
+  "requires": true,
+  "packages": {
+    "": {
+      "name": "fixture-web-root",
+      "version": "0.0.0"
+    }
+  }
+}
+EOF
+
+  for app_dir in frontend admin-panel; do
+    cat > "$repo_dir/$app_dir/package.json" <<EOF
+{
+  "name": "$app_dir",
+  "private": true,
+  "scripts": {
+    "lint": "node -e \"process.exit(0)\"",
+    "typecheck": "node -e \"process.exit(0)\"",
+    "build:bundle": "node -e \"process.exit(0)\"",
+    "test:coverage": "node write-coverage.mjs",
+    "dev": "node -e \"setInterval(() => {}, 1000)\""
+  }
+}
+EOF
+    cat > "$repo_dir/$app_dir/write-coverage.mjs" <<'EOF'
+import fs from "node:fs";
+
+const summary = {
+  total: {
+    lines: { pct: 100 },
+    functions: { pct: 100 },
+    statements: { pct: 100 },
+    branches: { pct: 100 },
+  },
+};
+
+fs.mkdirSync("coverage", { recursive: true });
+fs.writeFileSync("coverage/coverage-summary.json", JSON.stringify(summary));
+EOF
+  done
 }
 
 write_tooling_only_stub_repo() {
@@ -112,6 +164,10 @@ write_tooling_only_stub_repo() {
 
   cat > "$repo_dir/.gitignore" <<'EOF'
 /target/
+node_modules/
+coverage/
+*/node_modules/
+*/coverage/
 EOF
 
   cat > "$repo_dir/Cargo.toml" <<'EOF'

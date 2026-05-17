@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn mcp_call_dispatches_make_tool_declared_only_in_manifest() {
+fn mcp_call_dispatches_command_tool_declared_only_in_manifest() {
     let temp = tempdir().unwrap();
     write_fixture_repo(temp.path());
     let ctx = RepoContext::load_from(temp.path()).unwrap();
@@ -9,7 +9,7 @@ fn mcp_call_dispatches_make_tool_declared_only_in_manifest() {
     let output = call_tool(&ctx, "jig.custom_check", json!({})).unwrap();
 
     assert_eq!(output["ok"], true);
-    assert_eq!(output["target"], "custom-check");
+    assert_eq!(output["command_key"], "custom_check_command");
     assert_eq!(output["result"]["stdout"], "manifest target ran\n");
 }
 
@@ -97,7 +97,6 @@ _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
 jig_version = "0.2.0-beta.1"
-makefile_enabled = false
 bootstrap_command = "cargo fetch"
 rust_fmt_check_command = "cargo fmt --check"
 rust_clippy_command = "cargo clippy"

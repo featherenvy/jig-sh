@@ -167,9 +167,6 @@ pub(crate) enum CommandKind {
     /// Run configured development apps through the local dev proxy.
     #[command(name = tool_defs::cli_command::DEV)]
     Dev(DevOpts),
-    /// Run an arbitrary make target declared by the generated contract.
-    #[command(name = tool_defs::cli_command::RUN_TARGET)]
-    RunTarget(RunTargetOpts),
     /// Manage the local development proxy.
     #[command(name = tool_defs::cli_command::PROXY, subcommand)]
     Proxy(ProxyCommand),
@@ -648,14 +645,6 @@ pub(crate) struct ToolOpts {
 #[command(after_help = MIGRATION_ADD_AFTER_HELP)]
 pub(crate) struct MigrationAddOpts {
     /// Migration name, for example create_users.
-    pub(crate) name: String,
-    #[command(flatten)]
-    pub(crate) tool: ToolOpts,
-}
-
-#[derive(Args, Debug)]
-pub(crate) struct RunTargetOpts {
-    /// Make target name to run.
     pub(crate) name: String,
     #[command(flatten)]
     pub(crate) tool: ToolOpts,

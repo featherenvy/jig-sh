@@ -63,10 +63,10 @@ schema_dump_command = "scripts/dump-schema.sh"
 sqlx_check_command = "cargo sqlx prepare --check"
 
 [commands]
-typescript_build_command = "make typescript-build"
-typescript_coverage_command = "make typescript-coverage"
-typescript_lint_command = "make typescript-lint"
-typescript_typecheck_command = "make typescript-typecheck"
+typescript_build_command = "scripts/check-webapps.sh build"
+typescript_coverage_command = "scripts/check-webapps.sh coverage"
+typescript_lint_command = "scripts/check-webapps.sh lint"
+typescript_typecheck_command = "scripts/check-webapps.sh typecheck"
 "#,
     )
     .unwrap();
@@ -314,17 +314,16 @@ checks = ["jig.contract_check"]
     fs::write(
         temp.path().join(".agent/jig-contract.json"),
         serde_json::to_string_pretty(&json!({
-            "contract_version": 1,
+            "contract_version": 3,
             "tool_namespace": "jig",
             "jig_version": "0.2.0-beta.1",
-            "required_make_targets": ["contract-check"],
-            "optional_make_targets": [],
+            "required_commands": ["contract_check_command"],
             "tools": [
                 {
                     "name": "jig.contract_check",
-                    "kind": "make",
-                    "description": "Run make contract-check.",
-                    "target": "contract-check"
+                    "kind": "command",
+                    "description": "Run contract check.",
+                    "command": "contract_check_command"
                 }
             ],
         }))
@@ -358,11 +357,10 @@ jig_version = "0.2.0-beta.1"
     fs::write(
         temp.path().join(".agent/jig-contract.json"),
         serde_json::to_string_pretty(&json!({
-            "contract_version": 1,
+            "contract_version": 3,
             "tool_namespace": "jig",
             "jig_version": "0.2.0-beta.1",
-            "required_make_targets": ["contract-check"],
-            "optional_make_targets": [],
+            "required_commands": ["contract_check_command"],
             "tools": [],
         }))
         .unwrap(),
@@ -407,11 +405,10 @@ plugins = ["local-rust@local-skills"]
     fs::write(
         temp.path().join(".agent/jig-contract.json"),
         serde_json::to_string_pretty(&json!({
-            "contract_version": 1,
+            "contract_version": 3,
             "tool_namespace": "jig",
             "jig_version": "0.2.0-beta.1",
-            "required_make_targets": ["contract-check"],
-            "optional_make_targets": [],
+            "required_commands": ["contract_check_command"],
             "tools": [],
         }))
         .unwrap(),
@@ -462,11 +459,10 @@ argv = ["pnpm", "run", "dev"]
     fs::write(
         temp.path().join(".agent/jig-contract.json"),
         serde_json::to_string_pretty(&json!({
-            "contract_version": 1,
+            "contract_version": 3,
             "tool_namespace": "jig",
             "jig_version": "0.2.0-beta.1",
-            "required_make_targets": ["contract-check"],
-            "optional_make_targets": [],
+            "required_commands": ["contract_check_command"],
             "tools": [],
         }))
         .unwrap(),
@@ -509,11 +505,10 @@ command = "bun run dev"
     fs::write(
         temp.path().join(".agent/jig-contract.json"),
         serde_json::to_string_pretty(&json!({
-            "contract_version": 1,
+            "contract_version": 3,
             "tool_namespace": "jig",
             "jig_version": "0.2.0-beta.1",
-            "required_make_targets": ["contract-check"],
-            "optional_make_targets": [],
+            "required_commands": ["contract_check_command"],
             "tools": [],
         }))
         .unwrap(),
@@ -543,11 +538,10 @@ web_package_manager = "/tmp/run-anything"
     fs::write(
         temp.path().join(".agent/jig-contract.json"),
         serde_json::to_string_pretty(&json!({
-            "contract_version": 1,
+            "contract_version": 3,
             "tool_namespace": "jig",
             "jig_version": "0.2.0-beta.1",
-            "required_make_targets": ["contract-check"],
-            "optional_make_targets": [],
+            "required_commands": ["contract_check_command"],
             "tools": [],
         }))
         .unwrap(),
@@ -597,11 +591,10 @@ proxy_por = 1556
     fs::write(
         temp.path().join(".agent/jig-contract.json"),
         serde_json::to_string_pretty(&json!({
-            "contract_version": 1,
+            "contract_version": 3,
             "tool_namespace": "jig",
             "jig_version": "0.2.0-beta.1",
-            "required_make_targets": ["contract-check"],
-            "optional_make_targets": [],
+            "required_commands": ["contract_check_command"],
             "tools": [],
         }))
         .unwrap(),
@@ -635,11 +628,10 @@ commmand = "typo"
     fs::write(
         temp.path().join(".agent/jig-contract.json"),
         serde_json::to_string_pretty(&json!({
-            "contract_version": 1,
+            "contract_version": 3,
             "tool_namespace": "jig",
             "jig_version": "0.2.0-beta.1",
-            "required_make_targets": ["contract-check"],
-            "optional_make_targets": [],
+            "required_commands": ["contract_check_command"],
             "tools": [],
         }))
         .unwrap(),
@@ -669,11 +661,10 @@ proxy_porrt = 1355
     fs::write(
         temp.path().join(".agent/jig-contract.json"),
         serde_json::to_string_pretty(&json!({
-            "contract_version": 1,
+            "contract_version": 3,
             "tool_namespace": "jig",
             "jig_version": "0.2.0-beta.1",
-            "required_make_targets": ["contract-check"],
-            "optional_make_targets": [],
+            "required_commands": ["contract_check_command"],
             "tools": [],
         }))
         .unwrap(),
@@ -711,23 +702,22 @@ required = false
     fs::write(
         temp.path().join(".agent/jig-contract.json"),
         serde_json::to_string_pretty(&json!({
-            "contract_version": 1,
+            "contract_version": 3,
             "tool_namespace": "jig",
             "jig_version": "0.2.0-beta.1",
-            "required_make_targets": ["contract-check", "test"],
-            "optional_make_targets": [],
+            "required_commands": ["contract_check_command", "rust_test_command"],
             "tools": [
                 {
                     "name": "jig.contract_check",
-                    "kind": "make",
-                    "description": "Run make contract-check.",
-                    "target": "contract-check"
+                    "kind": "command",
+                    "description": "Run contract check.",
+                    "command": "contract_check_command"
                 },
                 {
                     "name": "jig.test",
-                    "kind": "make",
-                    "description": "Run make test.",
-                    "target": "test"
+                    "kind": "command",
+                    "description": "Run tests.",
+                    "command": "rust_test_command"
                 }
             ],
         }))
@@ -767,11 +757,10 @@ skill = "jig-rust:rust-simplify"
     fs::write(
         temp.path().join(".agent/jig-contract.json"),
         serde_json::to_string_pretty(&json!({
-            "contract_version": 1,
+            "contract_version": 3,
             "tool_namespace": "jig",
             "jig_version": "0.2.0-beta.1",
-            "required_make_targets": ["contract-check"],
-            "optional_make_targets": [],
+            "required_commands": ["contract_check_command"],
             "tools": [],
         }))
         .unwrap(),

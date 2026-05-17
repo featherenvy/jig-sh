@@ -26,12 +26,8 @@ pub(super) fn removed_managed_paths() -> impl Iterator<Item = PathBuf> {
 
 pub(super) fn should_omit_unmanaged_rendered_path(
     relative: &Path,
-    answers: &RenderAnswers,
+    _answers: &RenderAnswers,
 ) -> bool {
-    !answers.makefile_enabled() && is_makefile_path(relative)
-}
-
-fn is_makefile_path(relative: &Path) -> bool {
     relative == Path::new("Makefile")
 }
 

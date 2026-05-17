@@ -253,7 +253,7 @@ fn adopt_accepts_npm_frontend_app_and_renders_current_web_and_dev_config() {
     assert!(answers.contains("web_package_manager = \"npm\""));
     assert!(answers.contains("[[frontend_apps]]"));
     assert!(answers.contains("[commands]"));
-    assert!(answers.contains("typescript_lint_command = \"make typescript-lint\""));
+    assert!(answers.contains("typescript_lint_command = \"scripts/check-webapps.sh lint\""));
     assert!(answers.contains("tool = \"jig.typescript_lint\""));
     assert!(answers.contains("tool = \"jig.typescript_typecheck\""));
     assert!(answers.contains("tool = \"jig.typescript_build\""));
@@ -262,23 +262,13 @@ fn adopt_accepts_npm_frontend_app_and_renders_current_web_and_dev_config() {
     assert!(answers.contains("argv = [\"npm\", \"run\", \"dev\"]"));
     assert!(!answers.contains("dev_command"));
 
-    let makefile = fs::read_to_string(repo.join("Makefile")).unwrap();
-    assert!(makefile.contains("WEB_INSTALL_COMMAND ?= npm ci"));
-    assert!(
-        makefile.contains("WEB_DEPS_STAMP ?= .agent/.cache/web-deps-$(WEB_PACKAGE_MANAGER).stamp")
-    );
-    assert!(!makefile.contains("Web deps up to date."));
-    assert!(makefile.contains("if [ -f package.json ] && [ -f package-lock.json ]"));
-    assert!(
-        makefile.contains(
-            "$(NODE) scripts/check-webapp-scripts.mjs apps/web lint typecheck build:bundle test:coverage"
-        )
-    );
-    assert!(makefile.contains("typescript-lint: web-deps"));
-    assert!(makefile.contains("typescript-typecheck: web-deps"));
-    assert!(makefile.contains("typescript-build: web-deps"));
-    assert!(makefile.contains("typescript-coverage: web-deps"));
-    assert!(makefile.contains("scripts/jig dev"));
+    assert!(!repo.join("Makefile").exists());
+    let web_check = fs::read_to_string(repo.join("scripts/check-webapps.sh")).unwrap();
+    assert!(web_check.contains("npm ci"));
+    assert!(web_check.contains("npm run"));
+    assert!(web_check.contains("if [ -f package.json ] && [ -f package-lock.json ]"));
+    assert!(web_check.contains("scripts/check-webapp-scripts.mjs"));
+    assert!(web_check.contains("scripts/enforce-coverage.js"));
     let contract = fs::read_to_string(repo.join(".agent/jig-contract.json")).unwrap();
     assert!(contract.contains("\"typescript_lint_command\""));
     assert!(contract.contains(r#""name": "jig.typescript_lint""#));
@@ -296,6 +286,8 @@ fn adopt_accepts_npm_frontend_app_and_renders_current_web_and_dev_config() {
     assert!(web_workflow.contains("cache: npm"));
     assert!(web_workflow.contains("npm ci"));
     assert!(web_workflow.contains("node scripts/check-webapp-scripts.mjs"));
+    assert!(web_workflow.contains("node scripts/enforce-coverage.js"));
+    assert!(!web_workflow.contains("make enforce-coverage"));
     assert!(!web_workflow.contains("oven-sh/setup-bun"));
 
     let rust_workflow = fs::read_to_string(repo.join(".github/workflows/rust-tests.yml")).unwrap();
@@ -309,7 +301,7 @@ fn adopt_accepts_npm_frontend_app_and_renders_current_web_and_dev_config() {
 }
 
 #[test]
-fn adopt_with_project_owned_makefile_does_not_emit_make_backed_typescript_gates() {
+fn adopt_with_project_owned_makefile_keeps_file_and_emits_direct_typescript_gates() {
     let _guard = lock_env();
     let temp = tempdir().unwrap();
     let repo = temp.path().join("repo");
@@ -363,17 +355,18 @@ fn adopt_with_project_owned_makefile_does_not_emit_make_backed_typescript_gates(
     );
 
     let answers = fs::read_to_string(repo.join(".jig.toml")).unwrap();
-    assert!(answers.contains("makefile_enabled = false"));
+    assert!(!answers.contains("makefile_enabled"));
     assert!(answers.contains("[[frontend_apps]]"));
-    assert!(!answers.contains("[commands]"));
-    assert!(!answers.contains("jig.typescript_lint"));
+    assert!(answers.contains("[commands]"));
+    assert!(answers.contains("typescript_lint_command = \"scripts/check-webapps.sh lint\""));
+    assert!(answers.contains("jig.typescript_lint"));
 
     let contract = fs::read_to_string(repo.join(".agent/jig-contract.json")).unwrap();
-    assert!(!contract.contains("typescript_lint_command"));
-    assert!(!contract.contains("jig.typescript_lint"));
+    assert!(contract.contains("typescript_lint_command"));
+    assert!(contract.contains("jig.typescript_lint"));
 
     let agent_guide = fs::read_to_string(repo.join("AGENTS.md")).unwrap();
-    assert!(!agent_guide.contains("scripts/jig check typescript-lint"));
+    assert!(agent_guide.contains("scripts/jig check typescript-lint"));
     assert!(!agent_guide.contains("make ci-webapps"));
 }
 
@@ -414,13 +407,14 @@ fn init_renders_web_commands_for_all_supported_package_managers() {
         })
         .unwrap();
 
-        let makefile = fs::read_to_string(repo.join("Makefile")).unwrap();
+        assert!(!repo.join("Makefile").exists());
+        let web_check = fs::read_to_string(repo.join("scripts/check-webapps.sh")).unwrap();
         assert!(
-            makefile.contains(&format!("WEB_INSTALL_COMMAND ?= {install_command}")),
+            web_check.contains(install_command),
             "missing install command for {package_manager}"
         );
         assert!(
-            makefile.contains(&format!("WEB_RUN_COMMAND ?= {run_command}")),
+            web_check.contains(run_command),
             "missing run command for {package_manager}"
         );
         let answers = fs::read_to_string(repo.join(".jig.toml")).unwrap();

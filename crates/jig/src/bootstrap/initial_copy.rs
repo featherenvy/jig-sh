@@ -37,17 +37,13 @@ pub(super) struct BootstrapCopyResult {
 pub(super) fn render_and_copy_bootstrap_template(
     request: BootstrapCopyRequest<'_>,
 ) -> Result<BootstrapCopyResult> {
-    let mut answer_opts = request.answers.clone();
-    if answer_opts.makefile_enabled.is_none() {
-        answer_opts.makefile_enabled = Some(default_makefile_enabled(
-            request.destination,
-            request.seed_repo_path,
-        ));
-    }
     request.progress.step("resolve answers", ANSWERS_DETAIL);
     let answers = request
         .progress
-        .log_blocked_on_err(RenderAnswers::from_opts(&answer_opts, request.destination))?;
+        .log_blocked_on_err(RenderAnswers::from_opts(
+            request.answers,
+            request.destination,
+        ))?;
     if request.seed_repo_path.is_some() && !answers.frontend_apps().is_empty() {
         request
             .progress
@@ -85,14 +81,6 @@ pub(super) fn render_and_copy_bootstrap_template(
             Vec::new()
         },
     })
-}
-
-fn default_makefile_enabled(destination: &Path, seed_repo_path: Option<&Path>) -> bool {
-    // Init renders into a new or explicitly forced destination, so keep the
-    // human-friendly Makefile adapter. Adoption is different: an existing
-    // project Makefile is repo-owned and should not become a Jig conflict by
-    // default.
-    seed_repo_path.is_none() || !destination.join("Makefile").exists()
 }
 
 fn validate_frontend_app_scripts(destination: &Path, answers: &RenderAnswers) -> Result<()> {
@@ -197,7 +185,6 @@ pub(super) fn seed_answers_toml(
         "template_source_url",
         opts.template_source_url.as_deref(),
     );
-    insert_bool(&mut mapping, "makefile_enabled", opts.makefile_enabled);
     insert_bool(&mut mapping, "sqlx_enabled", opts.sqlx_enabled);
     insert_string(
         &mut mapping,

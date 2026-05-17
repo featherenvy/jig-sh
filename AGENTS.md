@@ -37,21 +37,11 @@ No web apps are configured in `.jig.toml`.
 - `scripts/jig check fmt`
 - `scripts/jig check clippy`
 - `scripts/jig check contract`
-- `make bootstrap`
-- `make dev`
-- `make test`
-- `make fmt-check`
-- `make clippy`
-- `make contract-check`
-- `make check-agent-map`
-- `make check-agent-guides`
-- `make check-rust-file-loc`
-- `make ci`
 
 ## Done Means
 
 - Run the relevant local verification for the area you changed.
-- For backend changes, finish with `scripts/jig check test` and `make test`.
+- For backend changes, finish with `scripts/jig check test`.
 - Review the generated diff for stale docs, policy drift, or missing dependent updates.
 
 ## Crate Guide Requirements

@@ -212,7 +212,6 @@ fn receipt_summary(receipt: &ReceiptRecord) -> Value {
         "session_id": receipt.session_id,
         "plan_id": receipt.plan_id,
         "tool_name": receipt.tool_name,
-        "invoked_make_target": receipt.invoked_make_target,
         "invoked_command_key": receipt.invoked_command_key,
         "exit_status": receipt.exit_status,
         "started_at_ms": receipt.started_at_ms,

@@ -17,7 +17,6 @@ use super::sessions::current_session;
 pub(crate) struct ReceiptInput<'a> {
     pub(crate) tool_name: &'a str,
     pub(crate) args: Value,
-    pub(crate) invoked_make_target: Option<String>,
     pub(crate) invoked_command_key: Option<String>,
     pub(crate) plan_id: Option<String>,
     pub(crate) started_at_ms: u64,
@@ -182,7 +181,6 @@ pub(crate) fn record_receipt(ctx: &RepoContext, input: ReceiptInput<'_>) -> Resu
         plan_id: input.plan_id,
         tool_name: input.tool_name.to_string(),
         args: input.args,
-        invoked_make_target: input.invoked_make_target,
         invoked_command_key: input.invoked_command_key,
         started_at_ms: input.started_at_ms,
         ended_at_ms: input.ended_at_ms,
@@ -210,7 +208,6 @@ pub(super) fn record_successful_state_tool(
         ReceiptInput {
             tool_name: input.tool_name,
             args: input.args,
-            invoked_make_target: None,
             invoked_command_key: None,
             plan_id: input.plan_id,
             started_at_ms: input.started_at_ms,

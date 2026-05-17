@@ -15,9 +15,6 @@ on:
       - ".agent/jig-contract.json"
       - "scripts/jig"
       - "scripts/install-jig.sh"
-[% if makefile_enabled %]
-      - "Makefile"
-[% endif %]
       - ".cargo/**"
       - ".github/workflows/rust-tests.yml"
   push:
@@ -36,9 +33,6 @@ on:
       - ".agent/jig-contract.json"
       - "scripts/jig"
       - "scripts/install-jig.sh"
-[% if makefile_enabled %]
-      - "Makefile"
-[% endif %]
       - ".cargo/**"
       - ".github/workflows/rust-tests.yml"
   merge_group:

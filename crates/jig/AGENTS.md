@@ -2,14 +2,14 @@
 
 ## Purpose
 
-`crates/jig` contains the repo-local `jig` CLI and MCP runtime used by generated repositories. It executes the generated command contract, keeps legacy Makefile-backed repos working, manages append-only `.agent/state` memory, and handles template init/adopt/update flows.
+`crates/jig` contains the repo-local `jig` CLI and MCP runtime used by generated repositories. It executes the generated command contract, manages append-only `.agent/state` memory, and handles template init/adopt/update flows.
 
 ## Key entrypoints
 
 - `src/main.rs`: binary entrypoint.
 - `src/lib.rs`: library entrypoint and module wiring.
 - `src/cli.rs`: clap command definitions and top-level command dispatch.
-- `src/runtime.rs`: command-backed and legacy make-backed tool execution plus MCP tool call dispatch.
+- `src/runtime.rs`: command-backed tool execution plus MCP tool call dispatch.
 - `src/mcp.rs`: JSON-RPC/MCP stdio server.
 - `src/state.rs`: sessions, plans, receipts, and decisions stored under `.agent/state`.
 - `src/bootstrap.rs`: init/adopt/update command surface.
@@ -39,6 +39,6 @@
 - `cargo test --workspace`
 - `cargo build -p jig-sh --bin jig`
 - `JIG_DEV_BIN=target/debug/jig scripts/jig work status`
-- `make contract-check`
-- `make check-agent-guides`
-- `make check-agent-map`
+- `JIG_DEV_BIN=target/debug/jig scripts/jig check contract`
+- `JIG_DEV_BIN=target/debug/jig scripts/jig check agent-guides`
+- `JIG_DEV_BIN=target/debug/jig scripts/jig check agent-map`

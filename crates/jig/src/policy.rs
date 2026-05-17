@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 
 use crate::context::RepoContext;
 use crate::process::require_success;
+use crate::tool_defs::kind;
 
 const EMPTY_TREE_HASH: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 // New or growing files above this fail unless an explicit exception is present.
@@ -106,26 +107,10 @@ pub(crate) fn contract_check(ctx: &RepoContext) -> Result<NativeToolOutput> {
     if !install_script.exists() {
         errors.push("Missing scripts/install-jig.sh installer.".into());
     }
-    if ctx.makefile_enabled() && !root.join("Makefile").exists() {
-        errors.push("makefile_enabled is true, but Makefile is missing.".into());
-    }
     if ctx.sqlx_enabled() && ctx.rust_migration_dir().is_empty() {
         errors.push("sqlx_enabled is true, but rust_migration_dir is empty.".into());
     }
     match ctx.contract_version() {
-        1 => {
-            let makefile_path = root.join("Makefile");
-            if !makefile_path.exists() {
-                errors.push("Missing Makefile required by contract version 1.".into());
-            } else if let Ok(makefile) = fs::read_to_string(&makefile_path) {
-                let targets = makefile_targets(&makefile);
-                for target in ctx.required_make_targets() {
-                    if !targets.contains(target.as_str()) {
-                        errors.push(format!("Missing required Make target: {target}."));
-                    }
-                }
-            }
-        }
         2 | 3 => {
             for command_key in ctx.required_commands() {
                 if !ctx.supports_command_key(command_key) {
@@ -154,12 +139,12 @@ pub(crate) fn contract_check(ctx: &RepoContext) -> Result<NativeToolOutput> {
     }
     for tool in ctx.tool_specs() {
         match tool.kind.as_str() {
-            "native" => {
+            kind::NATIVE => {
                 if !jig_features::is_supported_native_tool(&tool.name) {
                     errors.push(format!("Unsupported native tool: {}.", tool.name));
                 }
             }
-            "command" => {
+            kind::COMMAND => {
                 let Some(command_key) = tool.command.as_deref().filter(|key| !key.is_empty())
                 else {
                     errors.push(format!(
@@ -175,20 +160,6 @@ pub(crate) fn contract_check(ctx: &RepoContext) -> Result<NativeToolOutput> {
                 {
                     errors.push(format!(
                         "Command-backed tool {} references undeclared command {command_key}.",
-                        tool.name
-                    ));
-                }
-            }
-            "make" => {
-                if ctx.makefile_enabled() && !root.join("Makefile").exists() {
-                    errors.push(format!(
-                        "Make-backed tool {} requires Makefile, but Makefile is missing.",
-                        tool.name
-                    ));
-                }
-                if !ctx.makefile_enabled() {
-                    errors.push(format!(
-                        "Make-backed tool {} is declared while makefile_enabled is false.",
                         tool.name
                     ));
                 }
@@ -301,23 +272,6 @@ pub(crate) fn schema_check(ctx: &RepoContext) -> Result<NativeToolOutput> {
         stdout: "Schema dump is up to date.\n".into(),
         stderr: String::new(),
     })
-}
-
-fn makefile_targets(makefile: &str) -> HashSet<&str> {
-    makefile
-        .lines()
-        .filter_map(|line| {
-            let (target, _) = line.split_once(':')?;
-            if target
-                .chars()
-                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-'))
-            {
-                Some(target)
-            } else {
-                None
-            }
-        })
-        .collect()
 }
 
 pub(crate) fn write_agent_map(root: &Path, map_path: &Path) -> Result<()> {

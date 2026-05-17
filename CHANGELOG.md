@@ -29,10 +29,11 @@
 
 ### Changed
 - Default release builds of `jig init` and `jig adopt` to the official `jig-sh` template source pinned to the installed Jig version's release tag; unreleased or dirty local builds now refuse that implicit release pin and require `--template /path/to/jig-sh` or `--vcs-ref <ref>` so local binaries do not render stale release templates.
-- Make the generated `scripts/jig` runtime the primary command contract with `contract_version = 2`; `jig adopt` now leaves an existing project `Makefile` unmanaged by default and records `makefile_enabled = false`, while new repos still render an optional Makefile adapter.
-- Change the default generated `bootstrap_command` from `make deps` to `cargo fetch` so default command-backed repos do not require a generated Makefile. Repos with web apps should set an explicit `bootstrap_command` when bootstrap must install web dependencies.
-- Render schema-check commands, tools, gates, and Makefile adapter targets only when both SQLx and schema dumps are enabled; SQLx-only repos keep `sqlx-check` and migration support without a disabled placeholder schema gate.
-- Command-backed `.jig.toml` `*_command` values now run through non-login `bash -c`; put any required toolchain setup in the configured command or project-owned scripts. `scripts/jig bootstrap` is available in contract version 2 repos; legacy contract version 1 repos should continue using their generated Makefile bootstrap target until updated.
+- Remove generated Makefile support and hard cut the runtime to command-backed `scripts/jig` execution. Root `Makefile` files remain project-owned during adoption.
+- Route generated TypeScript/web checks through direct `scripts/jig check typescript-*` commands backed by `scripts/check-webapps.sh`.
+- Change the default generated `bootstrap_command` from `make deps` to `cargo fetch` so default command-backed repos do not require a project Makefile. Repos with web apps should set an explicit `bootstrap_command` when bootstrap must install web dependencies.
+- Render schema-check commands, tools, and gates only when both SQLx and schema dumps are enabled; SQLx-only repos keep `sqlx-check` and migration support without a disabled placeholder schema gate.
+- Command-backed `.jig.toml` `*_command` values now run through non-login `bash -c`; put any required toolchain setup in the configured command or project-owned scripts. `scripts/jig bootstrap` is available in supported command-backed repos.
 - Generated Cargo command defaults now skip with exit 0 and a stdout note when no root `Cargo.toml` exists, so harness-only repos can verify immediately after `jig init`.
 - Regenerating defaults with `jig update --recopy` rewrites `bootstrap_command`, `rust_fmt_check_command`, `rust_clippy_command`, `rust_test_command`, and `rust_test_locked_command` to the no-root-`Cargo.toml` skip form unless the repo has customized those answers.
 - `scripts/jig work check` now rejects unknown or closed plan IDs before running tools; `scripts/jig work gates` still reports status for any existing plan, including closed plans.

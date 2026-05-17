@@ -1,21 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-pub mod legacy_make_target {
-    pub const BOOTSTRAP: &str = "bootstrap";
-    pub const CLIPPY: &str = "clippy";
-    pub const FMT_CHECK: &str = "fmt-check";
-    pub const MIGRATION_ADD: &str = "migration-add";
-    pub const SCHEMA_CHECK: &str = "schema-check";
-    pub const SCHEMA_DUMP: &str = "schema-dump";
-    pub const SQLX_CHECK: &str = "sqlx-check";
-    pub const TEST: &str = "test";
-    pub const TEST_LOCKED: &str = "test-locked";
-    pub const TEST_RUST_LOCKED: &str = "test-rust-locked";
-}
-
 pub mod kind {
     pub const COMMAND: &str = "command";
-    pub const MAKE: &str = "make";
     pub const NATIVE: &str = "native";
 }
 
@@ -30,7 +16,6 @@ pub mod tool {
     pub const PLANS_APPEND: &str = "jig.plans_append";
     pub const PLANS_CLOSE: &str = "jig.plans_close";
     pub const PLANS_OPEN: &str = "jig.plans_open";
-    pub const RUN_TARGET: &str = "jig.run_target";
     pub const SCHEMA_CHECK: &str = "jig.schema_check";
     pub const SCHEMA_DUMP: &str = "jig.schema_dump";
     pub const SESSION_END: &str = "jig.session_end";
@@ -60,8 +45,6 @@ pub struct ManifestTool {
     pub kind: String,
     pub description: String,
     #[serde(default)]
-    pub target: Option<String>,
-    #[serde(default)]
     pub command: Option<String>,
 }
 
@@ -75,14 +58,8 @@ impl ManifestTool {
             name: name.into(),
             kind: kind.into(),
             description: description.into(),
-            target: None,
             command: None,
         }
-    }
-
-    pub fn with_target(mut self, target: impl Into<String>) -> Self {
-        self.target = Some(target.into());
-        self
     }
 
     pub fn with_command(mut self, command: impl Into<String>) -> Self {
@@ -144,8 +121,6 @@ impl FeatureDescriptor {
 pub trait FeatureContext {
     fn contract_version(&self) -> u32;
     fn required_commands(&self) -> &[String];
-    fn required_make_targets(&self) -> &[String];
-    fn makefile_enabled(&self) -> bool;
     fn sqlx_enabled(&self) -> bool;
     fn schema_dump_enabled(&self) -> bool;
     fn frontend_app_count(&self) -> usize;
@@ -154,15 +129,5 @@ pub trait FeatureContext {
         self.required_commands()
             .iter()
             .any(|command| command == command_key)
-    }
-
-    fn has_required_make_target(&self, legacy_make_target_key: &str) -> bool {
-        self.required_make_targets()
-            .iter()
-            .any(|target| target == legacy_make_target_key)
-    }
-
-    fn has_required_key(&self, legacy_required_key: &str, command_key: &str) -> bool {
-        self.has_required_make_target(legacy_required_key) || self.has_required_command(command_key)
     }
 }

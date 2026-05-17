@@ -152,7 +152,6 @@ require_clean_tree() {
 require_version_consistency() {
   local version="$1"
   local cargo_version
-  local make_version
   local contract_version
   local launcher_version
   local proxy_dependency_version
@@ -183,16 +182,6 @@ PY
   fi
   if [[ "$proxy_dependency_version" != "$version" ]]; then
     echo "jig-dev-proxy dependency version is $proxy_dependency_version, expected $version." >&2
-    exit 1
-  fi
-
-  make_version="$(sed -n 's/^JIG_VERSION[[:space:]]*[:?]\{0,1\}=[[:space:]]*//p' "$ROOT_DIR/Makefile" | sed 's/[[:space:]]*#.*$//; s/[[:space:]]*$//')"
-  if [[ -z "$make_version" ]]; then
-    echo "Could not read JIG_VERSION from Makefile." >&2
-    exit 1
-  fi
-  if [[ "$make_version" != "$version" ]]; then
-    echo "Makefile JIG_VERSION is $make_version, expected $version." >&2
     exit 1
   fi
 
@@ -453,12 +442,6 @@ for package in ("jig-dev-proxy", "jig-sh"):
         f"Cargo.lock {package} package version",
     )
 replace_exactly_once(
-    root / "Makefile",
-    r'(?m)^JIG_VERSION\s*\?=\s*[^\n]+$',
-    f"JIG_VERSION ?= {version}",
-    "JIG_VERSION",
-)
-replace_exactly_once(
     root / "scripts" / "jig",
     r'(?m)^JIG_VERSION="[^"]*"$',
     f'JIG_VERSION="{version}"',
@@ -487,12 +470,6 @@ for path in sorted(jig_toml_paths):
     update_jig_toml(path)
 
 replace_optional(
-    root / "scripts" / "fixtures" / "rendered-repos.sh",
-    # This file stores the expected grep pattern literally, including ^ and $.
-    r"\^JIG_VERSION \?= [^$]+\$",
-    f"^JIG_VERSION ?= {version}$",
-)
-replace_optional(
     root / "scripts" / "fixtures" / "runtime-smoke.sh",
     r"\.git/jig-tools/[^/]+/bin/jig",
     f".git/jig-tools/{version}/bin/jig",
@@ -509,7 +486,7 @@ release_stage() {
   local release_path
 
   for release_path in \
-    Cargo.toml Cargo.lock crates/jig/Cargo.toml Makefile scripts/jig .agent/jig-contract.json CHANGELOG.md \
+    Cargo.toml Cargo.lock crates/jig/Cargo.toml scripts/jig .agent/jig-contract.json CHANGELOG.md \
     scripts/fixtures/rendered-repos.sh scripts/fixtures/runtime-smoke.sh
   do
     if [[ -e "$ROOT_DIR/$release_path" ]]; then
@@ -646,6 +623,48 @@ publish_package_if_missing() {
   esac
 }
 
+check_launcher_template() {
+  normalize_launcher() {
+    sed \
+      -e '/^# Keep launcher behavior synchronized /,+1d' \
+      -e '/^\[% if repo_name == "jig-sh" %\]$/d' \
+      -e '/^\[% endif %\]$/d' \
+      -e 's/^JIG_VERSION="[^"]*"$/JIG_VERSION="<<[ jig_version ]>>"/' \
+      "$1"
+  }
+
+  if ! diff -u \
+    <(normalize_launcher "$ROOT_DIR/scripts/jig") \
+    <(normalize_launcher "$ROOT_DIR/templates/project/scripts/jig.jinja")
+  then
+    echo "scripts/jig and templates/project/scripts/jig.jinja drifted." >&2
+    exit 1
+  fi
+}
+
+run_ci_checks() {
+  local base_ref
+
+  run cargo build -p jig-sh --bin jig --locked
+  run env JIG_DEV_BIN=target/debug/jig scripts/jig check fmt --no-receipt
+  run env JIG_DEV_BIN=target/debug/jig scripts/jig check clippy --no-receipt
+  run env JIG_DEV_BIN=target/debug/jig scripts/jig check test-locked --no-receipt
+  run env JIG_DEV_BIN=target/debug/jig scripts/jig check contract --no-receipt
+
+  if git rev-parse --verify origin/master >/dev/null 2>&1; then
+    base_ref="$(git merge-base HEAD origin/master)"
+  elif git rev-parse --verify HEAD^ >/dev/null 2>&1; then
+    base_ref="HEAD^"
+  else
+    base_ref="4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+  fi
+  run env JIG_DEV_BIN=target/debug/jig scripts/jig check rust-file-loc --changed-against "$base_ref"
+  run env JIG_DEV_BIN=target/debug/jig scripts/jig check no-mod-rs
+  run env JIG_DEV_BIN=target/debug/jig scripts/jig check agent-map
+  run env JIG_DEV_BIN=target/debug/jig scripts/jig check agent-guides
+  check_launcher_template
+}
+
 release_check() {
   local version="$1"
   local package_name
@@ -657,7 +676,7 @@ release_check() {
   require_expected_binary_name
   require_changelog_entry "$version"
 
-  run make ci
+  run_ci_checks
   run bash scripts/validate-fixtures.sh
   for package_name in "${PUBLISH_PACKAGE_NAMES[@]}"; do
     if [[ "$package_name" == "$PACKAGE_NAME" ]]; then

@@ -311,9 +311,9 @@ fn parses_work_goal() {
         "--success",
         "all handlers use the new type",
         "--validation",
-        "make test",
+        "scripts/jig check test",
         "--validation",
-        "make clippy",
+        "scripts/jig check clippy",
         "--constraint",
         "do not change public routes",
         "--checkpoint",
@@ -329,7 +329,10 @@ fn parses_work_goal() {
         CommandKind::Work(WorkCommand::Goal(opts)) => {
             assert_eq!(opts.objective, "Migrate the API");
             assert_eq!(opts.success, "all handlers use the new type");
-            assert_eq!(opts.validations, vec!["make test", "make clippy"]);
+            assert_eq!(
+                opts.validations,
+                vec!["scripts/jig check test", "scripts/jig check clippy"]
+            );
             assert_eq!(opts.constraints, vec!["do not change public routes"]);
             assert_eq!(opts.checkpoints, vec!["baseline current tests"]);
             assert_eq!(opts.title.as_deref(), Some("API migration"));

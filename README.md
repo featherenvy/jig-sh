@@ -9,7 +9,6 @@ It makes agentic software work repeatable, inspectable, and reviewable by genera
 
 - **Agent context files** (`AGENTS.md`, `agent-map.md`) so coding agents know the repo layout and conventions without reading source
 - **A typed `jig` runtime contract** so every machine, CI run, and agent executes the same configured commands and leaves append-only receipts under `.agent/state/`
-- **An optional `Makefile` adapter** for repos that want familiar make targets without making Make the agent-facing contract
 - **A local dev proxy** so app hostnames stay stable across port changes and machine restarts
 - **A local encrypted vault** so selected secrets can be resolved for brokered child processes without storing values in the repo
 - **Work gates backed by receipts** so a task cannot be marked done without a verifiable output artifact
@@ -18,7 +17,7 @@ It makes agentic software work repeatable, inspectable, and reviewable by genera
 
 ## How It Works
 
-Jig's template lives in the `jig-sh` repository. Running `jig init` or `jig adopt` renders it into your project, producing `scripts/jig`, agent context files, CI workflows, and MCP configuration. New repos also get a Makefile adapter by default; adoption skips that adapter when the destination already has a root `Makefile`. After that first render, `jig update` keeps managed files current as the template evolves — files you have customized are never overwritten without `--force`.
+Jig's template lives in the `jig-sh` repository. Running `jig init` or `jig adopt` renders it into your project, producing `scripts/jig`, agent context files, CI workflows, and MCP configuration. `scripts/jig` is the generated command surface. After that first render, `jig update` keeps managed files current as the template evolves — files you have customized are never overwritten without `--force`.
 
 ## Vault Quick Start
 
@@ -75,7 +74,7 @@ jig adopt . \
 
 For a tooling-only repo, replace the migration flag with `--sqlx-enabled false`.
 
-If the destination already has a root `Makefile`, `jig adopt` keeps it project-owned and records `makefile_enabled = false` in `.jig.toml`. Pass `--makefile-enabled true` only when you intentionally want Jig to manage the root Makefile adapter.
+If the destination already has a root `Makefile`, `jig adopt` keeps it project-owned. Generated Jig commands always run through `scripts/jig`.
 
 **Update an adopted repo:**
 
@@ -186,12 +185,11 @@ The template renders these repo-owned assets into a consumer repository:
 - `agent-map.md`
 - `.agent/PLANS.md`
 - `.agent/jig-contract.json`
-- `Makefile` when `makefile_enabled = true`
 - `scripts/*.sh`
 - `scripts/enforce-coverage.js`
 - `.github/workflows/*.yml`
 
-Generated repos use `scripts/jig` as the execution backend. The generated `Makefile`, when enabled, is only a convenience adapter over `scripts/jig` and project-owned helper scripts.
+Generated repos use `scripts/jig` as the execution backend.
 
 On fresh machines, generated repos can check and bootstrap expected agent skills through the launcher:
 

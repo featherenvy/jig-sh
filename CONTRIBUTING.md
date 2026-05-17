@@ -14,30 +14,30 @@ Use the GitHub Actions `Release` workflow for the lowest-touch release path. Lea
 
 ### Local release steps
 
-The local release script is the typed entrypoint for validation and manual recovery. The `release-github` target requires the GitHub CLI (`gh`) with permission to create releases.
+The local release script is the typed entrypoint for validation and manual recovery. The `github` subcommand requires the GitHub CLI (`gh`) with permission to create releases.
 
 ```sh
-make release-prepare RELEASE_VERSION=0.1.1
-ALLOW_DIRTY=1 make release-check RELEASE_VERSION=0.1.1
-make release-stage
+scripts/release.sh prepare 0.1.1
+ALLOW_DIRTY=1 scripts/release.sh check 0.1.1
+scripts/release.sh stage
 git commit -m "Release v0.1.1"
-make release-check RELEASE_VERSION=0.1.1
-make release-tag RELEASE_VERSION=0.1.1
-make release-publish RELEASE_VERSION=0.1.1
-make release-github RELEASE_VERSION=0.1.1
+scripts/release.sh check 0.1.1
+scripts/release.sh tag 0.1.1
+scripts/release.sh publish 0.1.1
+scripts/release.sh github 0.1.1
 ```
 
-- `release-prepare` — updates all pinned version files and regenerates `CHANGELOG.md`
-- `release-check` — requires a clean worktree, verifies version wiring and changelog coverage, runs `make ci`, validates rendered fixtures, and runs crates.io publish dry runs
-- `release-tag` — creates the annotated local `vVERSION` tag after the same checks
-- `release-publish` — requires the tag to point at `HEAD`, publishes `jig-dev-proxy`, waits for crates.io to see it, publishes `jig-sh`, then pushes the tag to origin
-- `release-github` — creates the GitHub Release from the matching `CHANGELOG.md` section
+- `prepare` — updates all pinned version files and regenerates `CHANGELOG.md`
+- `check` — requires a clean worktree, verifies version wiring and changelog coverage, runs the direct `scripts/jig` CI checks, validates rendered fixtures, and runs crates.io publish dry runs
+- `tag` — creates the annotated local `vVERSION` tag after the same checks
+- `publish` — requires the tag to point at `HEAD`, publishes `jig-dev-proxy`, waits for crates.io to see it, publishes `jig-sh`, then pushes the tag to origin
+- `github` — creates the GitHub Release from the matching `CHANGELOG.md` section
 
 ### crates.io trusted publishing setup
 
 Before the first split-crate release, pre-create crates.io Trusted Publishing configuration for both packages (`jig-dev-proxy` and `jig-sh`), repository `bpcakes/jig-sh`, workflow `release.yml`, and environment `crates-io`. Protect that GitHub environment with required reviewers.
 
-`release-publish` skips package versions already present on crates.io and pushes the remote tag only after every crate is published. If only part of the crate set was published, keep the same version for remaining packages; bump only when a published crate version itself must change, since crates.io versions cannot be overwritten after yank.
+`publish` skips package versions already present on crates.io and pushes the remote tag only after every crate is published. If only part of the crate set was published, keep the same version for remaining packages; bump only when a published crate version itself must change, since crates.io versions cannot be overwritten after yank.
 
 If a workflow run pushes the release commit but fails before the tag is pushed, rerun the workflow with the explicit prepared version instead of leaving `version` blank.
 

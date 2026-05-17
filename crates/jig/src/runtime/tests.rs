@@ -1,6 +1,4 @@
 use std::fs;
-use std::path::Path;
-use std::process::Command;
 
 use jig_vault::{SecretBytes, Vault};
 use secrecy::{ExposeSecret, SecretString};
@@ -136,7 +134,6 @@ fn runtime_command_from_cli(command: CommandKind) -> RuntimeCommand {
             RuntimeCommand::GenerateSqlxUncheckedQueriesTodo(opts.into())
         }
         CommandKind::Dev(opts) => RuntimeCommand::Dev(opts.into()),
-        CommandKind::RunTarget(opts) => RuntimeCommand::RunTarget(opts.into()),
         CommandKind::Proxy(command) => RuntimeCommand::Proxy(command.into()),
         CommandKind::Agent(command) => RuntimeCommand::Agent(command.into()),
         CommandKind::Work(command) => RuntimeCommand::Work(command.into()),
@@ -232,64 +229,6 @@ rust_test_command = "printf 'command tool ran\n'"
 }
 
 #[test]
-fn make_tool_no_receipt_skips_receipt_append() {
-    let temp = tempdir().unwrap();
-    fs::create_dir_all(temp.path().join(".agent")).unwrap();
-    fs::write(
-        temp.path().join(".jig.toml"),
-        r#"_src_path = "/tmp/template"
-_commit = "abc123"
-repo_name = "demo"
-default_branch = "main"
-jig_version = "0.2.0-beta.1"
-"#,
-    )
-    .unwrap();
-    fs::write(
-        temp.path().join("Makefile"),
-        "custom-check:\n\t@printf 'make target ran\\n'\n",
-    )
-    .unwrap();
-    fs::write(
-        temp.path().join(".agent/jig-contract.json"),
-        serde_json::to_string_pretty(&json!({
-            "contract_version": 1,
-            "tool_namespace": "jig",
-            "jig_version": "0.2.0-beta.1",
-            "required_make_targets": ["custom-check"],
-            "optional_make_targets": [],
-            "tools": [
-                {
-                    "name": "jig.run_target",
-                    "kind": "make",
-                    "description": "Run an arbitrary declared make target."
-                }
-            ],
-        }))
-        .unwrap(),
-    )
-    .unwrap();
-
-    let ctx = RepoContext::load_from(temp.path()).unwrap();
-    let output = dispatch(
-        &ctx,
-        CommandKind::RunTarget(crate::cli::RunTargetOpts {
-            name: "custom-check".into(),
-            tool: crate::cli::ToolOpts {
-                plan_id: None,
-                no_receipt: true,
-            },
-        }),
-    )
-    .unwrap();
-
-    assert_eq!(output["ok"], true);
-    assert_eq!(output["receipt_id"], serde_json::Value::Null);
-    assert_eq!(output["result"]["stdout"], "make target ran\n");
-    assert!(!temp.path().join(".agent/state/receipts.jsonl").exists());
-}
-
-#[test]
 fn native_tool_no_receipt_skips_receipt_append() {
     let temp = tempdir().unwrap();
     fs::create_dir_all(temp.path().join(".agent")).unwrap();
@@ -304,41 +243,57 @@ _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
 jig_version = "0.2.0-beta.1"
-makefile_enabled = true
+bootstrap_command = "printf 'bootstrap\n'"
+rust_fmt_check_command = "printf 'fmt\n'"
+rust_clippy_command = "printf 'clippy\n'"
+rust_test_command = "printf 'test\n'"
+rust_test_locked_command = "printf 'test locked\n'"
 "#,
-    )
-    .unwrap();
-    fs::write(
-        temp.path().join("Makefile"),
-        "fmt-check:\nclippy:\ntest:\ncontract-check:\n",
     )
     .unwrap();
     fs::write(
         temp.path().join(".agent/jig-contract.json"),
         serde_json::to_string_pretty(&json!({
-            "contract_version": 1,
+            "contract_version": 3,
             "tool_namespace": "jig",
             "jig_version": "0.2.0-beta.1",
-            "required_make_targets": ["fmt-check", "clippy", "test", "contract-check"],
-            "optional_make_targets": [],
+            "required_commands": [
+                "bootstrap_command",
+                "rust_fmt_check_command",
+                "rust_clippy_command",
+                "rust_test_command",
+                "rust_test_locked_command"
+            ],
             "tools": [
                 {
+                    "name": "jig.bootstrap",
+                    "kind": "command",
+                    "description": "Run bootstrap.",
+                    "command": "bootstrap_command"
+                },
+                {
                     "name": "jig.fmt_check",
-                    "kind": "make",
+                    "kind": "command",
                     "description": "Run fmt.",
-                    "target": "fmt-check"
+                    "command": "rust_fmt_check_command"
                 },
                 {
                     "name": "jig.clippy",
-                    "kind": "make",
+                    "kind": "command",
                     "description": "Run clippy.",
-                    "target": "clippy"
+                    "command": "rust_clippy_command"
                 },
                 {
                     "name": "jig.test",
-                    "kind": "make",
+                    "kind": "command",
                     "description": "Run tests.",
-                    "target": "test"
+                    "command": "rust_test_command"
+                },
+                {
+                    "name": "jig.test_locked",
+                    "kind": "command",
+                    "description": "Run locked tests.",
+                    "command": "rust_test_locked_command"
                 },
                 {
                     "name": "jig.contract_check",

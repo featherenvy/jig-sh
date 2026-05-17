@@ -24,11 +24,10 @@ jig_version = "0.2.0-beta.1"
     fs::write(
         root.join(".agent/jig-contract.json"),
         serde_json::to_string_pretty(&json!({
-            "contract_version": 1,
+            "contract_version": 3,
             "tool_namespace": "jig",
             "jig_version": "0.2.0-beta.1",
-            "required_make_targets": ["fmt-check"],
-            "optional_make_targets": [],
+            "required_commands": ["rust_fmt_check_command"],
             "tools": [],
         }))
         .unwrap(),
@@ -431,7 +430,6 @@ fn receipt_record(
         plan_id: Some("plan_1".into()),
         tool_name: tool_name.into(),
         args: json!({}),
-        invoked_make_target: None,
         invoked_command_key: None,
         started_at_ms: 1,
         ended_at_ms: 2,

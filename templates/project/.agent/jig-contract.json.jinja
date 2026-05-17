@@ -7,7 +7,7 @@
     "rust_fmt_check_command",
     "rust_clippy_command",
     "rust_test_command",
-    "rust_test_locked_command"[% if frontend_apps | length > 0 and makefile_enabled %],
+    "rust_test_locked_command"[% if frontend_apps | length > 0 %],
     "typescript_lint_command",
     "typescript_typecheck_command",
     "typescript_build_command",
@@ -46,7 +46,7 @@
       "description": "Run the configured locked test command.",
       "command": "rust_test_locked_command"
     },
-[% if frontend_apps | length > 0 and makefile_enabled %]
+[% if frontend_apps | length > 0 %]
     {
       "name": "jig.typescript_lint",
       "kind": "command",
@@ -103,14 +103,5 @@
       "kind": "native",
       "description": "Run the native Jig contract check."
     }
-[% if makefile_enabled %]
-    ,
-    {
-      "name": "jig.run_target",
-      "kind": "make",
-      "description": "Run an arbitrary make target by name.",
-      "target": null
-    }
-[% endif %]
   ]
 }

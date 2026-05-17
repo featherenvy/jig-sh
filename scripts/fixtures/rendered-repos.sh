@@ -29,7 +29,7 @@ validate_backend_fixture() {
     scripts/jig agent-map generate >/dev/null
     git add .
     git commit -m "fixture" >/dev/null
-    make help >/dev/null
+    [[ ! -f Makefile ]]
     scripts/jig check agent-map >/dev/null
     scripts/jig check agent-guides >/dev/null
     scripts/jig check rust-file-loc --all >/dev/null
@@ -42,8 +42,9 @@ validate_backend_fixture() {
     git add .jig.toml
     git commit -m "change answers" >/dev/null
     scripts/jig update --recopy --force >/dev/null
-    grep -q '^DEFAULT_BRANCH ?= dev$' Makefile
-    grep -q '^JIG_VERSION ?= 0.2.0-beta.1$' Makefile
+    [[ ! -f Makefile ]]
+    grep -q '^default_branch = "dev"$' .jig.toml
+    grep -q '^jig_version = "0.2.0-beta.1"$' .jig.toml
     if [[ -f .github/workflows/webapp-checks.yml ]]; then
       rg -q "No web apps configured" .github/workflows/webapp-checks.yml
     fi
@@ -65,7 +66,7 @@ validate_full_stack_fixture() {
     scripts/jig agent-map generate >/dev/null
     git add .
     git commit -m "fixture" >/dev/null
-    make help >/dev/null
+    [[ ! -f Makefile ]]
     scripts/jig check agent-map >/dev/null
     scripts/jig check agent-guides >/dev/null
     scripts/jig check rust-file-loc --all >/dev/null
@@ -94,7 +95,7 @@ validate_tooling_only_fixture() {
     scripts/jig agent-map generate >/dev/null
     git add .
     git commit -m "fixture" >/dev/null
-    make help >/dev/null
+    [[ ! -f Makefile ]]
     scripts/jig check agent-map >/dev/null
     scripts/jig check agent-guides >/dev/null
     scripts/jig check rust-file-loc --all >/dev/null
@@ -106,12 +107,7 @@ validate_tooling_only_fixture() {
     [[ ! -f scripts/check-schema-dump.sh ]]
     [[ ! -f scripts/check-sqlx-unchecked-non-test.sh ]]
     [[ ! -f scripts/generate-sqlx-unchecked-queries-todo.sh ]]
-    ! rg -q '^sqlx-db-setup:' Makefile
-    ! rg -q '^sqlx-check:' Makefile
-    ! rg -q '^schema-check:' Makefile
-    ! rg -q '^schema-dump:' Makefile
-    ! rg -q '^migration-add:' Makefile
-    ! rg -q '^check-sqlx-unchecked-non-test:' Makefile
+    [[ ! -f Makefile ]]
     ! rg -q '"jig\\.sqlx_check"' .agent/jig-contract.json
     ! rg -q '"jig\\.schema_check"' .agent/jig-contract.json
     ! rg -q '"jig\\.schema_dump"' .agent/jig-contract.json
@@ -122,7 +118,8 @@ validate_tooling_only_fixture() {
     git add .jig.toml
     git commit -m "change answers" >/dev/null
     scripts/jig update --recopy --force >/dev/null
-    grep -q '^DEFAULT_BRANCH ?= dev$' Makefile
+    [[ ! -f Makefile ]]
+    grep -q '^default_branch = "dev"$' .jig.toml
     [[ ! -f scripts/add-migration.sh ]]
     [[ ! -f scripts/check-migration-immutability.sh ]]
     [[ ! -f scripts/check-schema-dump.sh ]]

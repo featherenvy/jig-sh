@@ -453,7 +453,6 @@ fn check_tools(ctx: &RepoContext, plan_id: &str, tools: Vec<String>) -> Result<V
                 "tools": tools,
                 "receipt_ids": receipt_ids,
             }),
-            invoked_make_target: None,
             invoked_command_key: None,
             plan_id: Some(plan_id.to_string()),
             started_at_ms: started,

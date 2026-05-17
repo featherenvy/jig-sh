@@ -79,11 +79,6 @@ pub struct AnswerOpts {
         help = "Portable canonical template source URL for future updates"
     )]
     pub template_source_url: Option<String>,
-    #[arg(
-        long,
-        help = "Render and manage Jig's Makefile adapter; defaults to false when adopting a repo that already has Makefile"
-    )]
-    pub makefile_enabled: Option<bool>,
     #[arg(long, help = "Generate SQLx and migration contract tools")]
     pub sqlx_enabled: Option<bool>,
     #[arg(

@@ -96,7 +96,7 @@ fn init_git(root: &Path) {
 }
 
 #[test]
-fn contract_check_does_not_require_v2_only_tools_for_v1_contracts() {
+fn contract_check_rejects_make_tool_kind() {
     let temp = tempdir().unwrap();
     fs::create_dir_all(temp.path().join(".agent")).unwrap();
     fs::create_dir_all(temp.path().join("scripts")).unwrap();
@@ -110,46 +110,33 @@ _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
 jig_version = "0.2.0-beta.1"
-makefile_enabled = true
+bootstrap_command = "true"
 "#,
-    )
-    .unwrap();
-    fs::write(
-        temp.path().join("Makefile"),
-        "fmt-check:\nclippy:\ntest:\ncontract-check:\n",
     )
     .unwrap();
     fs::write(
         temp.path().join(".agent/jig-contract.json"),
         serde_json::to_string_pretty(&json!({
-            "contract_version": 1,
+            "contract_version": 3,
             "tool_namespace": "jig",
             "jig_version": "0.2.0-beta.1",
-            "required_make_targets": ["fmt-check", "clippy", "test", "contract-check"],
+            "required_commands": ["bootstrap_command"],
             "tools": [
                 {
-                    "name": tool::FMT_CHECK,
-                    "kind": kind::MAKE,
-                    "description": "Run fmt.",
-                    "target": "fmt-check"
-                },
-                {
-                    "name": tool::CLIPPY,
-                    "kind": kind::MAKE,
-                    "description": "Run clippy.",
-                    "target": "clippy"
-                },
-                {
-                    "name": tool::TEST,
-                    "kind": kind::MAKE,
-                    "description": "Run tests.",
-                    "target": "test"
+                    "name": tool::BOOTSTRAP,
+                    "kind": kind::COMMAND,
+                    "description": "Bootstrap.",
+                    "command": "bootstrap_command"
                 },
                 {
                     "name": tool::CONTRACT_CHECK,
-                    "kind": kind::MAKE,
-                    "description": "Run contract check.",
-                    "target": "contract-check"
+                    "kind": kind::NATIVE,
+                    "description": "Run contract check."
+                },
+                {
+                    "name": "jig.legacy_make",
+                    "kind": "make",
+                    "description": "Unsupported legacy make tool."
                 }
             ],
         }))
@@ -160,7 +147,14 @@ makefile_enabled = true
     let ctx = RepoContext::load_from(temp.path()).unwrap();
     let output = contract_check(&ctx).unwrap();
 
-    assert_eq!(output.exit_status, 0, "{}", output.stderr);
+    assert_eq!(output.exit_status, 1);
+    assert!(
+        output
+            .stderr
+            .contains("Unsupported tool kind for jig.legacy_make: make"),
+        "{}",
+        output.stderr
+    );
 }
 
 #[test]
@@ -178,14 +172,13 @@ _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
 jig_version = "0.2.0-beta.1"
-makefile_enabled = false
 bootstrap_command = "true"
 rust_fmt_check_command = "true"
 rust_clippy_command = "true"
 rust_test_command = "true"
 
 [commands]
-typescript_lint_command = "make typescript-lint"
+typescript_lint_command = "scripts/check-webapps.sh lint"
 "#,
     )
     .unwrap();
@@ -265,7 +258,6 @@ _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
 jig_version = "0.2.0-beta.1"
-makefile_enabled = false
 bootstrap_command = "true"
 
 [commands]
@@ -328,7 +320,6 @@ _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
 jig_version = "0.2.0-beta.1"
-makefile_enabled = false
 bootstrap_command = "true"
 rust_fmt_check_command = "true"
 rust_clippy_command = "true"
@@ -390,7 +381,6 @@ _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
 jig_version = "0.2.0-beta.1"
-makefile_enabled = true
 bootstrap_command = "true"
 
 [[frontend_apps]]
@@ -457,7 +447,6 @@ fn contract_check_does_not_require_generated_typescript_gates_for_legacy_contrac
     fs::create_dir_all(temp.path().join(".agent")).unwrap();
     fs::create_dir_all(temp.path().join("scripts")).unwrap();
     fs::write(temp.path().join(".mcp.json"), "{}").unwrap();
-    fs::write(temp.path().join("Makefile"), "bootstrap:\n").unwrap();
     fs::write(temp.path().join("scripts/jig"), "#!/bin/sh\n").unwrap();
     fs::write(temp.path().join("scripts/install-jig.sh"), "#!/bin/sh\n").unwrap();
     fs::write(
@@ -467,7 +456,6 @@ _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
 jig_version = "0.2.0-beta.1"
-makefile_enabled = true
 bootstrap_command = "true"
 
 [[frontend_apps]]
@@ -523,7 +511,6 @@ _commit = "abc123"
 repo_name = "demo"
 default_branch = "main"
 jig_version = "0.2.0-beta.1"
-makefile_enabled = false
 bootstrap_command = "true"
 rust_fmt_check_command = "true"
 rust_clippy_command = "true"

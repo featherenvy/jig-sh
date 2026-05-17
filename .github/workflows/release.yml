@@ -67,7 +67,7 @@ jobs:
         with:
           cache: false
           # Keep cargo publish verification on Cargo's default rustc warning
-          # behavior; make ci still enforces clippy warnings explicitly.
+          # behavior; scripts/release.sh check still enforces clippy warnings explicitly.
           rustflags: ""
           components: rustfmt,clippy
 

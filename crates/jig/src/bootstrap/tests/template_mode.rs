@@ -268,13 +268,17 @@ fn update_refuses_managed_file_changes_without_force() {
     write_test_crate_guide(&repo);
 
     adopt_repo_for_test(&repo, template.path(), TemplateMode::Committed);
-    let original_makefile = fs::read_to_string(repo.join("Makefile")).unwrap();
+    let original_mcp = fs::read_to_string(repo.join(".mcp.json")).unwrap();
     fs::write(
-        template.path().join("templates/project/Makefile.jinja"),
-        "changed-target:\n\t@echo changed\n",
+        template.path().join("templates/project/.mcp.json.jinja"),
+        "{\n  \"changed\": true\n}\n",
     )
     .unwrap();
-    git(template.path(), ["add", "templates/project/Makefile.jinja"]).unwrap();
+    git(
+        template.path(),
+        ["add", "templates/project/.mcp.json.jinja"],
+    )
+    .unwrap();
     git(template.path(), ["commit", "-m", "template update"]).unwrap();
 
     let error = run_update(UpdateOpts {
@@ -291,10 +295,10 @@ fn update_refuses_managed_file_changes_without_force() {
     .to_string();
 
     assert!(error.contains("Update would overwrite or remove template-managed paths"));
-    assert!(error.contains("Makefile"));
+    assert!(error.contains(".mcp.json"));
     assert_eq!(
-        fs::read_to_string(repo.join("Makefile")).unwrap(),
-        original_makefile
+        fs::read_to_string(repo.join(".mcp.json")).unwrap(),
+        original_mcp
     );
 
     run_update(UpdateOpts {
@@ -309,8 +313,8 @@ fn update_refuses_managed_file_changes_without_force() {
     })
     .unwrap();
 
-    let makefile = fs::read_to_string(repo.join("Makefile")).unwrap();
-    assert!(makefile.contains("changed-target:"));
+    let mcp = fs::read_to_string(repo.join(".mcp.json")).unwrap();
+    assert!(mcp.contains("\"changed\": true"));
 }
 
 #[test]

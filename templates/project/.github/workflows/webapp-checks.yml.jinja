@@ -7,8 +7,9 @@ on:
 [% for app in frontend_apps %]
       - "<<[ app.dir ]>>/**"
 [% endfor %]
-      - "Makefile"
+      - "scripts/check-webapps.sh"
       - "scripts/check-webapp-scripts.mjs"
+      - "scripts/enforce-coverage.js"
       - ".github/workflows/webapp-checks.yml"
   push:
     branches:
@@ -17,8 +18,9 @@ on:
 [% for app in frontend_apps %]
       - "<<[ app.dir ]>>/**"
 [% endfor %]
-      - "Makefile"
+      - "scripts/check-webapps.sh"
       - "scripts/check-webapp-scripts.mjs"
+      - "scripts/enforce-coverage.js"
       - ".github/workflows/webapp-checks.yml"
   merge_group:
     types:
@@ -150,7 +152,10 @@ jobs:
       - name: Run tests with coverage
         run: cd "${{ matrix.app.dir }}" && <<[ web_run_command ]>> test:coverage
       - name: Enforce coverage threshold
-        run: make enforce-coverage COVERAGE_DIR="${{ matrix.app.dir }}/coverage" COVERAGE_THRESHOLD="${{ matrix.app.coverage_threshold }}"
+        run: |
+          COVERAGE_DIR="${{ matrix.app.dir }}/coverage" \
+            COVERAGE_THRESHOLD="${{ matrix.app.coverage_threshold }}" \
+            node scripts/enforce-coverage.js
 [% else %]
 name: Webapp Checks (Disabled)
 

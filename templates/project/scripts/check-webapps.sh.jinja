@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+mode="${1:-}"
+node_bin="${NODE:-node}"
+
+usage() {
+  echo "Usage: scripts/check-webapps.sh lint|typecheck|build|coverage" >&2
+}
+
+install_dependencies() {
+  local app_dir="$1"
+[% if web_package_manager == "bun" %]
+  if [ -f package.json ] && { [ -f bun.lock ] || [ -f bun.lockb ]; }; then
+    <<[ web_install_command ]>>
+  else
+    (cd "$app_dir" && <<[ web_install_command ]>>)
+  fi
+[% elif web_package_manager == "npm" %]
+  if [ -f package.json ] && [ -f package-lock.json ]; then
+    <<[ web_install_command ]>>
+  else
+    (cd "$app_dir" && <<[ web_install_command ]>>)
+  fi
+[% elif web_package_manager == "pnpm" %]
+  if [ -f package.json ] && [ -f pnpm-lock.yaml ]; then
+    <<[ web_install_command ]>>
+  else
+    (cd "$app_dir" && <<[ web_install_command ]>>)
+  fi
+[% elif web_package_manager == "yarn" %]
+  if [ -f package.json ] && [ -f yarn.lock ]; then
+    <<[ web_install_command ]>>
+  else
+    (cd "$app_dir" && <<[ web_install_command ]>>)
+  fi
+[% endif %]
+}
+
+run_package_script() {
+  local app_dir="$1"
+  local script_name="$2"
+
+  (cd "$app_dir" && <<[ web_run_command ]>> "$script_name")
+}
+
+run_check() {
+  local app_dir="$1"
+  local coverage_threshold="$2"
+  local script_name="$3"
+
+  "$node_bin" scripts/check-webapp-scripts.mjs "$app_dir" "$script_name"
+  install_dependencies "$app_dir"
+  run_package_script "$app_dir" "$script_name"
+
+  if [ "$mode" = "coverage" ]; then
+    COVERAGE_DIR="$app_dir/coverage" COVERAGE_THRESHOLD="$coverage_threshold" \
+      "$node_bin" scripts/enforce-coverage.js
+  fi
+}
+
+case "$mode" in
+  lint)
+[% if frontend_apps | length > 0 %]
+[% for app in frontend_apps %]
+    run_check "<<[ app.dir ]>>" "<<[ app.coverage_threshold ]>>" "lint"
+[% endfor %]
+[% else %]
+    echo "No web apps configured."
+[% endif %]
+    ;;
+  typecheck)
+[% if frontend_apps | length > 0 %]
+[% for app in frontend_apps %]
+    run_check "<<[ app.dir ]>>" "<<[ app.coverage_threshold ]>>" "typecheck"
+[% endfor %]
+[% else %]
+    echo "No web apps configured."
+[% endif %]
+    ;;
+  build)
+[% if frontend_apps | length > 0 %]
+[% for app in frontend_apps %]
+    run_check "<<[ app.dir ]>>" "<<[ app.coverage_threshold ]>>" "build:bundle"
+[% endfor %]
+[% else %]
+    echo "No web apps configured."
+[% endif %]
+    ;;
+  coverage)
+[% if frontend_apps | length > 0 %]
+[% for app in frontend_apps %]
+    run_check "<<[ app.dir ]>>" "<<[ app.coverage_threshold ]>>" "test:coverage"
+[% endfor %]
+[% else %]
+    echo "No web apps configured."
+[% endif %]
+    ;;
+  *)
+    usage
+    exit 2
+    ;;
+esac

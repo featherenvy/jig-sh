@@ -11,7 +11,6 @@ This matrix captures what was extracted from the source application workflow and
 | `.agent/state/*.jsonl` | Runtime-owned | Append-only repo memory populated by `jig`. |
 | `scripts/jig agent doctor` / `scripts/jig agent doctor --summary` + `scripts/jig agent bootstrap` | Runtime-owned | Checks and explicitly installs expected Codex-side Jig skills without adding more rendered shell scripts. JSON remains the default automation output; `--summary` is for terminal scanning. |
 | `.mcp.json` | Templated | Repo-local MCP entrypoint that launches `scripts/jig mcp`. |
-| `Makefile` | Optional templated subset | Kept as a convenience adapter when `makefile_enabled = true`; existing project Makefiles stay repo-owned on adoption. |
 | `crates/jig` | Added | Publishable runtime that exposes the typed CLI/MCP surface over the generated command contract and runtime-owned state. |
 | Agent map, guide, Rust LOC, `mod.rs`, migration immutability, and SQLx unchecked-query checks | Runtime-owned | Implemented natively in `crates/jig`; generated repos call `scripts/jig ...` instead of rendered helper scripts. |
 | `scripts/jig migration-add` | Runtime-owned | Adds timestamped forward-only migration stubs when `sqlx_enabled` is `true`. |
@@ -23,6 +22,6 @@ This matrix captures what was extracted from the source application workflow and
 | `.github/workflows/repo-policy.yml` | Templated subset | Keeps core policy checks and only includes SQLx/migration jobs when `sqlx_enabled` is `true`. |
 | `.github/workflows/rust-tests.yml` | Templated subset | Simplified to generic fmt, clippy, and locked workspace tests. |
 | `.github/workflows/webapp-checks-reusable.yml` + app workflows | Consolidated | Replaced with one generated matrix-style workflow or a disabled placeholder. |
-| `scripts/dev.sh` | Excluded | Too application-specific. Downstream repos implement dev orchestration in project-owned scripts, Make targets, or `dev_command` when the optional Makefile adapter is enabled. |
+| `scripts/dev.sh` | Excluded | Too application-specific. Downstream repos implement dev orchestration through `[dev]`, `[[dev.apps]]`, or project-owned scripts. |
 | `scripts/dev-bootstrap.sh` | Excluded | App-specific onboarding/bootstrap logic. |
 | Source crate guides | Excluded | Remain project-owned because ownership and entrypoints are repo-specific. |

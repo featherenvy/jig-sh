@@ -551,7 +551,7 @@ fn adopt_with_real_template_runs_destination_tasks() {
 }
 
 #[test]
-fn adopt_skips_makefile_by_default_when_destination_already_has_one() {
+fn adopt_keeps_project_owned_makefile() {
     let _guard = lock_env();
     let temp = tempdir().unwrap();
     let repo = temp.path().join("repo");
@@ -580,42 +580,11 @@ fn adopt_skips_makefile_by_default_when_destination_already_has_one() {
         "project-owned:\n\t@true\n"
     );
     let answers = fs::read_to_string(repo.join(".jig.toml")).unwrap();
-    assert!(answers.contains("makefile_enabled = false"));
+    assert!(!answers.contains("makefile_enabled"));
     let contract = fs::read_to_string(repo.join(".agent/jig-contract.json")).unwrap();
     assert!(contract.contains(r#""contract_version": 3"#));
     assert!(contract.contains(r#""kind": "command""#));
     assert!(!contract.contains("jig.run_target"));
-}
-
-#[test]
-fn adopt_can_be_told_to_manage_makefile_and_reports_conflict() {
-    let _guard = lock_env();
-    let temp = tempdir().unwrap();
-    let repo = temp.path().join("repo");
-    let template = materialize_template_git_worktree();
-    write_test_crate_guide(&repo);
-    fs::write(repo.join("Makefile"), "project-owned:\n\t@true\n").unwrap();
-
-    let error = run_adopt(AdoptOpts {
-        path: repo,
-        template: Some(template.path().display().to_string()),
-        template_mode: Some(TemplateMode::Committed),
-        vcs_ref: None,
-        force: false,
-        defaults: true,
-        no_input: true,
-        answers: AnswerOpts {
-            repo_name: Some("demo".into()),
-            makefile_enabled: Some(true),
-            sqlx_enabled: Some(false),
-            ..AnswerOpts::default()
-        },
-    })
-    .unwrap_err()
-    .to_string();
-
-    assert!(error.contains("Adopt would overwrite template-managed paths"));
-    assert!(error.contains("Makefile"));
 }
 
 #[test]
@@ -846,9 +815,7 @@ fn adopt_with_sqlx_and_schema_dumps_disabled_hides_schema_dump_target() {
     })
     .unwrap();
 
-    let makefile = fs::read_to_string(repo.join("Makefile")).unwrap();
-    assert!(!makefile.contains("schema-dump: ##"));
-    assert!(!makefile.contains(" schema-dump "));
+    assert!(!repo.join("Makefile").exists());
 
     let contract = fs::read_to_string(repo.join(".agent/jig-contract.json")).unwrap();
     assert!(!contract.contains("\"schema-dump\""));

@@ -1,4 +1,5 @@
 use super::*;
+use std::path::Path;
 
 pub(super) fn write_fixture_repo(root: &Path) {
     fs::create_dir_all(root.join(".agent")).unwrap();
@@ -10,6 +11,9 @@ repo_name = "demo"
 default_branch = "main"
 jig_version = "0.2.0-beta.1"
 
+[commands]
+custom_check_command = "printf 'manifest target ran\n'"
+
 [[work.gates]]
 id = "custom"
 kind = "check"
@@ -18,24 +22,18 @@ tool = "jig.custom_check"
     )
     .unwrap();
     fs::write(
-        root.join("Makefile"),
-        "custom-check:\n\t@printf 'manifest target ran\\n'\n",
-    )
-    .unwrap();
-    fs::write(
         root.join(".agent/jig-contract.json"),
         serde_json::to_string_pretty(&json!({
-            "contract_version": 1,
+            "contract_version": 3,
             "tool_namespace": "jig",
             "jig_version": "0.2.0-beta.1",
-            "required_make_targets": ["custom-check"],
-            "optional_make_targets": [],
+            "required_commands": ["custom_check_command"],
             "tools": [
                 {
                     "name": "jig.custom_check",
-                    "kind": "make",
-                    "description": "Run make custom-check.",
-                    "target": "custom-check"
+                    "kind": "command",
+                    "description": "Run configured custom check.",
+                    "command": "custom_check_command"
                 }
             ],
         }))
@@ -99,6 +97,10 @@ repo_name = "demo"
 default_branch = "main"
 jig_version = "0.2.0-beta.1"
 
+[commands]
+first_check_command = "printf 'first ran\n'"
+mutating_check_command = "printf 'generated\n' > generated.txt"
+
 [[work.gates]]
 id = "first"
 kind = "check"
@@ -112,30 +114,24 @@ tool = "jig.mutating_check"
     )
     .unwrap();
     fs::write(
-        root.join("Makefile"),
-        "first-check:\n\t@printf 'first ran\\n'\nmutating-check:\n\t@printf 'generated\\n' > generated.txt\n",
-    )
-    .unwrap();
-    fs::write(
         root.join(".agent/jig-contract.json"),
         serde_json::to_string_pretty(&json!({
-            "contract_version": 1,
+            "contract_version": 3,
             "tool_namespace": "jig",
             "jig_version": "0.2.0-beta.1",
-            "required_make_targets": ["first-check", "mutating-check"],
-            "optional_make_targets": [],
+            "required_commands": ["first_check_command", "mutating_check_command"],
             "tools": [
                 {
                     "name": "jig.first_check",
-                    "kind": "make",
-                    "description": "Run make first-check.",
-                    "target": "first-check"
+                    "kind": "command",
+                    "description": "Run configured first check.",
+                    "command": "first_check_command"
                 },
                 {
                     "name": "jig.mutating_check",
-                    "kind": "make",
-                    "description": "Run make mutating-check.",
-                    "target": "mutating-check"
+                    "kind": "command",
+                    "description": "Run configured mutating check.",
+                    "command": "mutating_check_command"
                 }
             ],
         }))
@@ -155,6 +151,9 @@ repo_name = "demo"
 default_branch = "main"
 jig_version = "0.2.0-beta.1"
 
+[commands]
+custom_check_command = "printf 'check failed\n' >&2; exit 7"
+
 [[work.gates]]
 id = "custom"
 kind = "check"
@@ -163,24 +162,18 @@ tool = "jig.custom_check"
     )
     .unwrap();
     fs::write(
-        root.join("Makefile"),
-        "custom-check:\n\t@printf 'check failed\\n' >&2\n\t@exit 7\n",
-    )
-    .unwrap();
-    fs::write(
         root.join(".agent/jig-contract.json"),
         serde_json::to_string_pretty(&json!({
-            "contract_version": 1,
+            "contract_version": 3,
             "tool_namespace": "jig",
             "jig_version": "0.2.0-beta.1",
-            "required_make_targets": ["custom-check"],
-            "optional_make_targets": [],
+            "required_commands": ["custom_check_command"],
             "tools": [
                 {
                     "name": "jig.custom_check",
-                    "kind": "make",
-                    "description": "Run make custom-check.",
-                    "target": "custom-check"
+                    "kind": "command",
+                    "description": "Run configured custom check.",
+                    "command": "custom_check_command"
                 }
             ],
         }))
@@ -231,7 +224,6 @@ pub(super) fn record_test_receipt(ctx: &RepoContext, receipt: TestReceipt<'_>) -
         ReceiptInput {
             tool_name: receipt.tool_name,
             args: receipt.args,
-            invoked_make_target: None,
             invoked_command_key: None,
             plan_id: Some(receipt.plan_id.to_string()),
             started_at_ms: receipt.started_at_ms,

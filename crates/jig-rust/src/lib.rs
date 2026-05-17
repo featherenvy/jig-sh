@@ -1,10 +1,20 @@
-use jig_contract::{FeatureContext, FeatureDescriptor, legacy_make_target, tool};
+use jig_contract::{FeatureContext, FeatureDescriptor, tool};
 
+const CLIPPY_COMMAND: &str = "rust_clippy_command";
+const FMT_CHECK_COMMAND: &str = "rust_fmt_check_command";
+const TEST_COMMAND: &str = "rust_test_command";
+const TEST_LOCKED_COMMAND: &str = "rust_test_locked_command";
 const COMMAND_KEYS: &[&str] = &[
-    "rust_clippy_command",
-    "rust_fmt_check_command",
-    "rust_test_command",
-    "rust_test_locked_command",
+    CLIPPY_COMMAND,
+    FMT_CHECK_COMMAND,
+    TEST_COMMAND,
+    TEST_LOCKED_COMMAND,
+];
+const COMMAND_TOOLS: &[(&str, &str)] = &[
+    (FMT_CHECK_COMMAND, tool::FMT_CHECK),
+    (CLIPPY_COMMAND, tool::CLIPPY),
+    (TEST_COMMAND, tool::TEST),
+    (TEST_LOCKED_COMMAND, tool::TEST_LOCKED),
 ];
 
 pub const FEATURE: FeatureDescriptor = FeatureDescriptor::new(
@@ -15,29 +25,12 @@ pub const FEATURE: FeatureDescriptor = FeatureDescriptor::new(
 );
 
 fn required_tools(ctx: &dyn FeatureContext) -> Vec<&'static str> {
-    let mut required = Vec::new();
-    if ctx.has_required_command("rust_fmt_check_command")
-        || ctx.has_required_make_target(legacy_make_target::FMT_CHECK)
-    {
-        required.push(tool::FMT_CHECK);
-    }
-    if ctx.has_required_command("rust_clippy_command")
-        || ctx.has_required_make_target(legacy_make_target::CLIPPY)
-    {
-        required.push(tool::CLIPPY);
-    }
-    if ctx.has_required_command("rust_test_command")
-        || ctx.has_required_make_target(legacy_make_target::TEST)
-    {
-        required.push(tool::TEST);
-    }
-    if ctx.has_required_command("rust_test_locked_command")
-        || ctx.has_required_make_target(legacy_make_target::TEST_RUST_LOCKED)
-        || ctx.has_required_make_target(legacy_make_target::TEST_LOCKED)
-    {
-        required.push(tool::TEST_LOCKED);
-    }
-    required
+    COMMAND_TOOLS
+        .iter()
+        .filter_map(|(command_key, tool_name)| {
+            ctx.has_required_command(command_key).then_some(*tool_name)
+        })
+        .collect()
 }
 
 fn no_unavailable_tool_message(_ctx: &dyn FeatureContext, _tool_name: &str) -> Option<String> {

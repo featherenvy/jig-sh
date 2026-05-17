@@ -10,9 +10,6 @@ on:
       - ".agent/jig-contract.json"
       - "scripts/jig"
       - "scripts/install-jig.sh"
-[% if makefile_enabled %]
-      - "Makefile"
-[% endif %]
 [% if sqlx_enabled %]
       - "<<[ rust_migration_dir ]>>/**"
 [% endif %]
@@ -28,9 +25,6 @@ on:
       - ".agent/jig-contract.json"
       - "scripts/jig"
       - "scripts/install-jig.sh"
-[% if makefile_enabled %]
-      - "Makefile"
-[% endif %]
 [% if sqlx_enabled %]
       - "<<[ rust_migration_dir ]>>/**"
 [% endif %]

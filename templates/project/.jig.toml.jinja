@@ -7,7 +7,6 @@ default_branch = "<<[ default_branch | replace("\\", "\\\\") | replace("\"", "\\
 ci_github_runner = "<<[ ci_github_runner | replace("\\", "\\\\") | replace("\"", "\\\"") ]>>"
 jig_version = "<<[ jig_version | replace("\\", "\\\\") | replace("\"", "\\\"") ]>>"
 template_source_url = "<<[ template_source_url | replace("\\", "\\\\") | replace("\"", "\\\"") ]>>"
-makefile_enabled = [% if makefile_enabled %]true[% else %]false[% endif %]
 sqlx_enabled = [% if sqlx_enabled %]true[% else %]false[% endif %]
 rust_crate_roots = [[% for root in rust_crate_roots %]"<<[ root | replace("\\", "\\\\") | replace("\"", "\\\"") ]>>"[% if not loop.last %], [% endif %][% endfor %]]
 [% if sqlx_enabled %]
@@ -45,15 +44,15 @@ coverage_threshold = <<[ app.coverage_threshold ]>>
 [% endfor %]
 [% endif %]
 
-[% if frontend_apps | length > 0 and makefile_enabled %]
+[% if frontend_apps | length > 0 %]
 # Extra command keys must use *_command names so contract required_commands
 # stay distinct from tool names and gate ids. Entries here override same-named
 # legacy top-level command fields.
 [commands]
-typescript_lint_command = "make typescript-lint"
-typescript_typecheck_command = "make typescript-typecheck"
-typescript_build_command = "make typescript-build"
-typescript_coverage_command = "make typescript-coverage"
+typescript_lint_command = "<<[ typescript_lint_command | replace("\\", "\\\\") | replace("\"", "\\\"") ]>>"
+typescript_typecheck_command = "<<[ typescript_typecheck_command | replace("\\", "\\\\") | replace("\"", "\\\"") ]>>"
+typescript_build_command = "<<[ typescript_build_command | replace("\\", "\\\\") | replace("\"", "\\\"") ]>>"
+typescript_coverage_command = "<<[ typescript_coverage_command | replace("\\", "\\\\") | replace("\"", "\\\"") ]>>"
 
 [% endif %]
 [dev]
@@ -89,7 +88,7 @@ id = "tests"
 kind = "check"
 tool = "jig.test"
 
-[% if frontend_apps | length > 0 and makefile_enabled %]
+[% if frontend_apps | length > 0 %]
 [[work.gates]]
 id = "typescript-lint"
 kind = "check"

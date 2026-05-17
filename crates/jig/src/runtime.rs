@@ -1,4 +1,3 @@
-use std::borrow::Cow;
 use std::process::{Command, Output};
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -12,7 +11,7 @@ use crate::policy::{
     PolicyDirectCommand, RustFileLocInput, SqlxTodoInput,
 };
 use crate::state::{ReceiptInput, now_ms, record_receipt};
-use crate::tool_defs::{self, JsonObject, MemoryTool, args, string_arg, tool};
+use crate::tool_defs::{self, JsonObject, MemoryTool, args, kind, string_arg, tool};
 
 mod agent;
 mod vault;
@@ -60,16 +59,6 @@ pub(crate) fn dispatch(ctx: &RepoContext, command: RuntimeCommand) -> Result<Val
             }),
         ),
         RuntimeCommand::Dev(opts) => crate::dev_proxy::commands::dev(ctx, opts),
-        RuntimeCommand::RunTarget(opts) => {
-            let (plan_id, record_receipt) = opts.tool.into_parts();
-            execute_manifest_tool(
-                ctx,
-                tool::RUN_TARGET,
-                json!({ args::NAME: opts.name }),
-                plan_id,
-                record_receipt,
-            )
-        }
         RuntimeCommand::Proxy(command) => crate::dev_proxy::commands::proxy(ctx, command),
         RuntimeCommand::Agent(command) => agent::dispatch(ctx, command),
         RuntimeCommand::Work(command) => work::dispatch(ctx, command),
@@ -234,60 +223,36 @@ fn execute_manifest_tool_with_options(
     let tool = ctx
         .tool_spec(tool_name)
         .ok_or_else(|| anyhow!("{}", undeclared_tool_message(ctx, tool_name)))?;
-    if tool_defs::is_make_tool(tool) {
-        let target = match tool.target.as_deref() {
-            Some(target) => Cow::Borrowed(target),
-            None => args
-                .get(args::NAME)
-                .and_then(Value::as_str)
-                .ok_or_else(|| anyhow!("{tool_name} requires a name argument"))?
-                .to_string()
-                .into(),
-        };
-
-        return execute_make_tool(
-            ctx,
-            &tool.name,
-            target.as_ref(),
-            args,
-            plan_id,
-            record_receipt,
-            collect_worktree_fingerprint,
-        );
-    }
-
-    if tool_defs::is_native_tool(tool) {
-        return execute_native_tool(
+    match tool.kind.as_str() {
+        kind::NATIVE => execute_native_tool(
             ctx,
             &tool.name,
             args,
             plan_id,
             record_receipt,
             collect_worktree_fingerprint,
-        );
+        ),
+        kind::COMMAND => {
+            let command_key = tool
+                .command
+                .as_deref()
+                .ok_or_else(|| anyhow!("Command-backed tool is missing command: {tool_name}"))?;
+            let command = ctx.command_for_key(command_key)?;
+            execute_command_tool(
+                ctx,
+                CommandToolInvocation {
+                    tool_name: &tool.name,
+                    command_key,
+                    command_text: command,
+                },
+                args,
+                plan_id,
+                record_receipt,
+                collect_worktree_fingerprint,
+            )
+        }
+        _ => bail!("Unsupported tool kind '{}' for {tool_name}", tool.kind),
     }
-
-    if tool_defs::is_command_tool(tool) {
-        let command_key = tool
-            .command
-            .as_deref()
-            .ok_or_else(|| anyhow!("Command-backed tool is missing command: {tool_name}"))?;
-        let command = ctx.command_for_key(command_key)?;
-        return execute_command_tool(
-            ctx,
-            CommandToolInvocation {
-                tool_name: &tool.name,
-                command_key,
-                command_text: command,
-            },
-            args,
-            plan_id,
-            record_receipt,
-            collect_worktree_fingerprint,
-        );
-    }
-
-    bail!("Unsupported tool kind '{}' for {tool_name}", tool.kind)
 }
 
 fn undeclared_tool_message(ctx: &RepoContext, tool_name: &str) -> String {
@@ -337,7 +302,6 @@ fn execute_native_tool(
         ReceiptInput {
             tool_name,
             args: args.clone(),
-            invoked_make_target: None,
             invoked_command_key: None,
             plan_id,
             started_at_ms: started,
@@ -391,66 +355,6 @@ fn receipt_id_or_preserve_tool_error(
     }
 }
 
-fn execute_make_tool(
-    ctx: &RepoContext,
-    tool_name: &str,
-    target: &str,
-    args: Value,
-    plan_id: Option<String>,
-    record_receipt: bool,
-    collect_worktree_fingerprint: bool,
-) -> Result<Value> {
-    let started = now_ms();
-    let output = run_make(ctx, target, &args)?;
-    let ended = now_ms();
-    let exit_status = output.status.code().unwrap_or(1);
-    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-
-    let receipt_result = maybe_record_receipt(
-        ctx,
-        record_receipt,
-        ReceiptInput {
-            tool_name,
-            args: args.clone(),
-            invoked_make_target: Some(target.to_string()),
-            invoked_command_key: None,
-            plan_id,
-            started_at_ms: started,
-            ended_at_ms: ended,
-            exit_status,
-            stdout: &stdout,
-            stderr: &stderr,
-            session_override: None,
-            collect_git_metadata: true,
-            collect_worktree_fingerprint,
-            worktree_fingerprint_override: None,
-        },
-    );
-
-    let receipt_id = receipt_id_or_preserve_tool_error(
-        (!output.status.success()).then(|| {
-            format!(
-                "{tool_name} failed with status {exit_status}\nstdout:\n{stdout}\nstderr:\n{stderr}"
-            )
-        }),
-        receipt_result,
-    )?;
-
-    Ok(json!({
-        "ok": true,
-        "tool": tool_name,
-        "target": target,
-        "args": args,
-        "result": {
-            "exit_status": exit_status,
-            "stdout": stdout,
-            "stderr": stderr,
-        },
-        "receipt_id": receipt_id,
-    }))
-}
-
 struct CommandToolInvocation<'a> {
     tool_name: &'a str,
     command_key: &'a str,
@@ -478,7 +382,6 @@ fn execute_command_tool(
         ReceiptInput {
             tool_name: invocation.tool_name,
             args: args.clone(),
-            invoked_make_target: None,
             invoked_command_key: Some(invocation.command_key.to_string()),
             plan_id,
             started_at_ms: started,
@@ -528,28 +431,6 @@ fn maybe_record_receipt(
     } else {
         Ok(None)
     }
-}
-
-fn run_make(ctx: &RepoContext, target: &str, args: &Value) -> Result<Output> {
-    let mut command = Command::new("make");
-    command.current_dir(ctx.root()).arg(target);
-
-    if target == tool_defs::cli_command::MIGRATION_ADD {
-        let name = args
-            .get(args::NAME)
-            .and_then(Value::as_str)
-            .ok_or_else(|| {
-                anyhow!(
-                    "{} requires a name argument",
-                    tool_defs::cli_command::MIGRATION_ADD
-                )
-            })?;
-        command.arg(format!("NAME={name}"));
-    }
-
-    command
-        .output()
-        .with_context(|| format!("Failed to run make {target}"))
 }
 
 fn run_configured_command(

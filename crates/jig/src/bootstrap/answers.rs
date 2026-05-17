@@ -18,7 +18,6 @@ pub(super) struct RenderAnswers {
     ci_github_runner: String,
     jig_version: String,
     template_source_url: String,
-    makefile_enabled: bool,
     sqlx_enabled: bool,
     rust_crate_roots: Vec<String>,
     rust_migration_dir: Option<String>,
@@ -38,6 +37,10 @@ pub(super) struct RenderAnswers {
     web_package_manager: String,
     web_install_command: String,
     web_run_command: String,
+    typescript_lint_command: String,
+    typescript_typecheck_command: String,
+    typescript_build_command: String,
+    typescript_coverage_command: String,
     frontend_apps: Vec<FrontendApp>,
     agent_tooling: AgentToolingAnswers,
 }
@@ -68,10 +71,6 @@ impl RenderAnswers {
         &self.template_source_url
     }
 
-    pub(super) fn makefile_enabled(&self) -> bool {
-        self.makefile_enabled
-    }
-
     pub(super) fn rust_crate_roots(&self) -> &[String] {
         &self.rust_crate_roots
     }
@@ -96,7 +95,6 @@ struct RawAnswers {
     ci_github_runner: Option<String>,
     jig_version: Option<String>,
     template_source_url: Option<String>,
-    makefile_enabled: Option<bool>,
     sqlx_enabled: Option<bool>,
     rust_crate_roots: Option<Vec<String>>,
     rust_migration_dir: Option<String>,
@@ -162,7 +160,6 @@ impl RawAnswers {
             &mut self.template_source_url,
             opts.template_source_url.clone(),
         );
-        merge_option(&mut self.makefile_enabled, opts.makefile_enabled);
         merge_option(&mut self.sqlx_enabled, opts.sqlx_enabled);
         if !opts.rust_crate_roots.is_empty() {
             self.rust_crate_roots = Some(opts.rust_crate_roots.clone());
@@ -296,7 +293,6 @@ impl RawAnswers {
                 .jig_version
                 .unwrap_or_else(|| env!("CARGO_PKG_VERSION").into()),
             template_source_url: self.template_source_url.unwrap_or_default(),
-            makefile_enabled: self.makefile_enabled.unwrap_or(true),
             sqlx_enabled,
             rust_crate_roots: self
                 .rust_crate_roots
@@ -331,6 +327,10 @@ impl RawAnswers {
             web_package_manager,
             web_install_command,
             web_run_command,
+            typescript_lint_command: "scripts/check-webapps.sh lint".into(),
+            typescript_typecheck_command: "scripts/check-webapps.sh typecheck".into(),
+            typescript_build_command: "scripts/check-webapps.sh build".into(),
+            typescript_coverage_command: "scripts/check-webapps.sh coverage".into(),
             frontend_apps,
             agent_tooling: self.agent_tooling.unwrap_or_default(),
         })

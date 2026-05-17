@@ -1,9 +1,7 @@
-use jig_contract::{
-    FeatureContext, FeatureDescriptor, NativeToolDescriptor, NativeToolKind, legacy_make_target,
-    tool,
-};
+use jig_contract::{FeatureContext, FeatureDescriptor, NativeToolDescriptor, NativeToolKind, tool};
 
-const COMMAND_KEYS: &[&str] = &["bootstrap_command", "contract_check_command"];
+const BOOTSTRAP_COMMAND: &str = "bootstrap_command";
+const COMMAND_KEYS: &[&str] = &[BOOTSTRAP_COMMAND, "contract_check_command"];
 const NATIVE_TOOLS: &[NativeToolDescriptor] = &[NativeToolDescriptor::new(
     tool::CONTRACT_CHECK,
     false,
@@ -19,9 +17,7 @@ pub const FEATURE: FeatureDescriptor = FeatureDescriptor::new(
 
 fn required_tools(ctx: &dyn FeatureContext) -> Vec<&'static str> {
     let mut required = vec![tool::CONTRACT_CHECK];
-    if ctx.contract_version() >= 2
-        || ctx.has_required_key(legacy_make_target::BOOTSTRAP, "bootstrap_command")
-    {
+    if ctx.contract_version() >= 2 || ctx.has_required_command(BOOTSTRAP_COMMAND) {
         required.push(tool::BOOTSTRAP);
     }
     required
@@ -39,7 +35,6 @@ mod tests {
     struct StubContext {
         contract_version: u32,
         required_commands: Vec<String>,
-        required_make_targets: Vec<String>,
     }
 
     impl FeatureContext for StubContext {
@@ -49,14 +44,6 @@ mod tests {
 
         fn required_commands(&self) -> &[String] {
             &self.required_commands
-        }
-
-        fn required_make_targets(&self) -> &[String] {
-            &self.required_make_targets
-        }
-
-        fn makefile_enabled(&self) -> bool {
-            false
         }
 
         fn sqlx_enabled(&self) -> bool {
@@ -96,10 +83,9 @@ mod tests {
     }
 
     #[test]
-    fn core_bootstrap_is_required_for_legacy_make_contracts_that_declare_it() {
+    fn core_bootstrap_is_required_when_command_is_declared() {
         let ctx = StubContext {
-            contract_version: 1,
-            required_make_targets: vec![legacy_make_target::BOOTSTRAP.to_string()],
+            required_commands: vec![BOOTSTRAP_COMMAND.to_string()],
             ..StubContext::default()
         };
 

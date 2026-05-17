@@ -80,7 +80,6 @@ pub(crate) mod cli_command {
     pub(crate) const PROXY_SERVICE_UNINSTALL: &str = "uninstall";
     pub(crate) const PROXY_START: &str = "start";
     pub(crate) const PROXY_STOP: &str = "stop";
-    pub(crate) const RUN_TARGET: &str = "run-target";
     pub(crate) const SCHEMA_DUMP: &str = "schema-dump";
     pub(crate) const UPDATE: &str = "update";
     pub(crate) const VAULT: &str = "vault";
@@ -310,10 +309,6 @@ fn memory_tool_descriptor(tool: MemoryTool) -> Value {
     })
 }
 
-pub(crate) fn is_make_tool(tool: &ManifestTool) -> bool {
-    tool.kind == kind::MAKE
-}
-
 pub(crate) fn is_command_tool(tool: &ManifestTool) -> bool {
     tool.kind == kind::COMMAND
 }
@@ -323,7 +318,7 @@ pub(crate) fn is_native_tool(tool: &ManifestTool) -> bool {
 }
 
 pub(crate) fn is_execution_tool(tool: &ManifestTool) -> bool {
-    is_make_tool(tool) || is_command_tool(tool) || is_native_tool(tool)
+    is_command_tool(tool) || is_native_tool(tool)
 }
 
 pub(crate) fn execution_tool_args(tool: &ManifestTool, args_obj: &JsonObject) -> Result<Value> {
@@ -337,7 +332,6 @@ pub(crate) fn execution_tool_args(tool: &ManifestTool, args_obj: &JsonObject) ->
 
 pub(crate) fn execution_tool_requires_name(tool: &ManifestTool) -> bool {
     jig_features::native_tool_requires_name(&tool.name)
-        || (is_make_tool(tool) && tool.target.is_none())
 }
 
 fn execution_input_schema(tool: &ManifestTool) -> Value {
@@ -399,20 +393,4 @@ pub(crate) fn required_string_arg(map: &JsonObject, key: &str) -> Result<String>
 
 pub(crate) fn string_arg(map: &JsonObject, key: &str) -> Option<String> {
     map.get(key).and_then(Value::as_str).map(str::to_string)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::cli_command;
-    use jig_contract::legacy_make_target;
-
-    #[test]
-    fn legacy_make_target_aliases_match_cli_labels_when_shared() {
-        assert_eq!(legacy_make_target::BOOTSTRAP, cli_command::BOOTSTRAP);
-        assert_eq!(
-            legacy_make_target::MIGRATION_ADD,
-            cli_command::MIGRATION_ADD
-        );
-        assert_eq!(legacy_make_target::SCHEMA_DUMP, cli_command::SCHEMA_DUMP);
-    }
 }

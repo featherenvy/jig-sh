@@ -7,11 +7,11 @@ use super::{
     ProxyCertGenerateOpts, ProxyCertRuntimeOpts, ProxyCertTrustOpts, ProxyCertUntrustOpts,
     ProxyCommand, ProxyListOpts, ProxyPruneOpts, ProxyRunOpts, ProxyRuntimeOpts,
     ProxyServiceCommand, ProxyServiceInstallOpts, ProxyServiceRuntimeOpts, ProxyStartOpts,
-    ProxyStopOpts, RunTargetOpts, ToolOpts, VaultAuditCommand, VaultAuditVerifyOpts, VaultCommand,
-    VaultInitOpts, VaultRunOpts, VaultRuntimeOpts, VaultSecretCommand, VaultSecretListOpts,
-    VaultSecretRemoveOpts, VaultSecretSetOpts, VaultStatusOpts, WorkAppendOpts, WorkCheckOpts,
-    WorkCommand, WorkDecisionAddOpts, WorkFinishOpts, WorkGatesOpts, WorkGoalOpts,
-    WorkReceiptsOpts, WorkStartOpts,
+    ProxyStopOpts, ToolOpts, VaultAuditCommand, VaultAuditVerifyOpts, VaultCommand, VaultInitOpts,
+    VaultRunOpts, VaultRuntimeOpts, VaultSecretCommand, VaultSecretListOpts, VaultSecretRemoveOpts,
+    VaultSecretSetOpts, VaultStatusOpts, WorkAppendOpts, WorkCheckOpts, WorkCommand,
+    WorkDecisionAddOpts, WorkFinishOpts, WorkGatesOpts, WorkGoalOpts, WorkReceiptsOpts,
+    WorkStartOpts,
 };
 
 impl From<ToolOpts> for command::ToolRequest {
@@ -88,15 +88,6 @@ impl From<GenerateSqlxUncheckedQueriesTodoOpts> for command::SqlxTodoRequest {
 
 impl From<MigrationAddOpts> for command::MigrationAddRequest {
     fn from(opts: MigrationAddOpts) -> Self {
-        Self {
-            name: opts.name,
-            tool: opts.tool.into(),
-        }
-    }
-}
-
-impl From<RunTargetOpts> for command::RunTargetRequest {
-    fn from(opts: RunTargetOpts) -> Self {
         Self {
             name: opts.name,
             tool: opts.tool.into(),

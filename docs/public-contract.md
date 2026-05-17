@@ -38,7 +38,7 @@ Runtime-owned `.jig.toml` sections are intentionally strict: unknown keys are re
 
 - `contract_version`: version of the generated tool manifest and command surface
 
-Version `1` is the legacy make-backed contract. Version `2` is the legacy root-check command-backed contract. Version `3` is the current command-backed contract with checks grouped under `scripts/jig check ...`. Moving a repo from version `2` to `3` requires updating CI, scripts, docs, and agent instructions that invoke the old top-level check commands. A compatible change may add optional fields, optional tools, optional commands, optional make targets, or new CLI/MCP commands. A breaking change must increment `contract_version` before generated repos depend on it.
+Version `2` is the legacy root-check command-backed contract. Version `3` is the current command-backed contract with checks grouped under `scripts/jig check ...`. Moving a repo from version `2` to `3` requires updating CI, scripts, docs, and agent instructions that invoke the old top-level check commands. A compatible change may add optional fields, optional tools, optional commands, or new CLI/MCP commands. A breaking change must increment `contract_version` before generated repos depend on it.
 
 Breaking `contract_version` changes include:
 
@@ -56,7 +56,6 @@ Generated repos and MCP clients may rely on these top-level fields in `.agent/ji
 - `tool_namespace`
 - `jig_version`
 - `required_commands` for command-backed contract versions `2` and `3`
-- `required_make_targets` and `optional_make_targets` for legacy contract version `1`
 - `tools`
 
 Each tool entry has these stable fields:
@@ -65,9 +64,8 @@ Each tool entry has these stable fields:
 - `kind`
 - `description`
 - `command` for `kind: "command"` tools
-- `target` for `kind: "make"` tools
 
-For `kind: "command"` tools, `command` is the top-level `.jig.toml` command key the runtime executes from the repo root. For `kind: "make"` tools, `target` is either the generated make target to invoke or `null` for tools that accept a target-like argument, such as `jig.run_target`.
+For `kind: "command"` tools, `command` is the top-level `.jig.toml` command key the runtime executes from the repo root.
 
 Command-backed contract versions intentionally have no `optional_commands` field. A command-backed tool is valid only when its command key is listed in `required_commands`; optional capability is represented by omitting the tool entirely when the rendered repo profile does not support it.
 
@@ -90,15 +88,6 @@ SQLx-specific tools are stable when the rendered repo profile includes them:
 - `jig.migration_add`
 - `jig.schema_check` when schema dumps are enabled
 - `jig.schema_dump` when schema dumps are enabled
-
-Contract version `1` exposed these legacy make-backed tool names:
-
-- `jig.fmt_check`
-- `jig.clippy`
-- `jig.test`
-- `jig.test_locked`
-- `jig.contract_check`
-- `jig.run_target`
 
 SQLx-specific tools are stable when `sqlx_enabled` rendered them into the manifest:
 
