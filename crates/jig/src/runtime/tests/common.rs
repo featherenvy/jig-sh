@@ -42,6 +42,7 @@ tool = "jig.custom_check"
         .unwrap(),
     )
     .unwrap();
+    write_open_plan(root);
 }
 
 pub(super) fn write_command_fixture_repo(root: &Path) {
@@ -85,6 +86,7 @@ tool = "jig.custom_check"
         .unwrap(),
     )
     .unwrap();
+    write_open_plan(root);
 }
 
 pub(super) fn write_mutating_check_fixture_repo(root: &Path) {
@@ -140,6 +142,7 @@ tool = "jig.mutating_check"
         .unwrap(),
     )
     .unwrap();
+    write_open_plan(root);
 }
 
 pub(super) fn write_failing_check_fixture_repo(root: &Path) {
@@ -184,9 +187,22 @@ tool = "jig.custom_check"
         .unwrap(),
     )
     .unwrap();
+    write_open_plan(root);
+}
+
+fn write_open_plan(root: &Path) {
+    let ctx = RepoContext::load_from(root).unwrap();
+    crate::state::seed_open_plan_for_test(&ctx, "plan_1", "Test plan", "# Test plan\n").unwrap();
 }
 
 pub(super) fn open_test_plan(ctx: &RepoContext) -> String {
+    // Most runtime fixtures seed plan_1 because work-check tests exercise that
+    // stable id directly. Reuse it while it remains open; otherwise fall back to
+    // opening a fresh plan for tests that deliberately closed the seeded one.
+    if crate::state::ensure_plan_is_open(ctx, "plan_1").is_ok() {
+        return "plan_1".into();
+    }
+
     let plan = crate::state::plans_open(
         ctx,
         crate::state::PlanOpenRequest {

@@ -10,7 +10,7 @@ use crate::context::{RepoContext, WorkGateConfig};
 use crate::state::{
     DecisionAddRequest, PlanAppendRequest, PlanCloseRequest, PlanOpenRequest, ReceiptInput,
     ReceiptListFilter, SessionEndRequest, current_session, current_worktree_fingerprint,
-    decisions_add, ensure_plan_is_open, latest_plan_tool_receipt,
+    decisions_add, ensure_plan_exists, ensure_plan_is_open, latest_plan_tool_receipt,
     latest_plan_work_check_receipt_for_tool, now_ms, plans_append, plans_close, plans_open,
     receipts_list, record_receipt, session_end, session_start, state_summary,
 };
@@ -183,10 +183,12 @@ pub(super) fn start(ctx: &RepoContext, plan: PlanOpenRequest) -> Result<Value> {
 }
 
 pub(super) fn check(ctx: &RepoContext, opts: WorkCheckRequest) -> Result<Value> {
+    ensure_plan_is_open(ctx, &opts.plan_id)?;
     check_tools(ctx, &opts.plan_id, selected_tools(ctx, &opts.tools)?)
 }
 
 pub(super) fn gates(ctx: &RepoContext, opts: WorkGatesRequest) -> Result<Value> {
+    ensure_plan_exists(ctx, &opts.plan_id)?;
     gate_status(ctx, &opts.plan_id)
 }
 
@@ -229,7 +231,7 @@ pub(super) fn append_from_args(ctx: &RepoContext, args: Value) -> Result<Value> 
 
 pub(super) fn check_from_args(ctx: &RepoContext, args: Value) -> Result<Value> {
     let request: WorkCheckRequest = request_from_args(args)?;
-    check_tools(ctx, &request.plan_id, selected_tools(ctx, &request.tools)?)
+    check(ctx, request)
 }
 
 pub(super) fn gates_from_args(ctx: &RepoContext, args: Value) -> Result<Value> {
@@ -732,7 +734,7 @@ fn concise_error(error: &str) -> String {
 fn validate_check_tool(ctx: &RepoContext, name: &str, label: &str) -> Result<()> {
     let tool = ctx
         .tool_spec(name)
-        .ok_or_else(|| anyhow!("{label} is not declared in .agent/jig-contract.json: {name}"))?;
+        .ok_or_else(|| anyhow!("{}", super::undeclared_tool_message(ctx, name)))?;
     if !tool_defs::is_execution_tool(tool) {
         bail!("{label} is not an execution tool: {name}");
     }

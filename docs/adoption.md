@@ -10,7 +10,7 @@
 5. Review the root `AGENTS.md`. Existing repo guidance is preserved; Jig inserts or updates only the `<!-- BEGIN JIG MANAGED BLOCK -->` section.
 6. Add or adapt crate-level `AGENTS.md` files for each backend crate.
 7. Run `scripts/jig agent doctor --summary`. If Jig Codex skills are missing and you want this client to use them, run `scripts/jig agent bootstrap`.
-8. Run the generated local checks and `scripts/jig check contract`. If web app dependencies or other project setup must happen during bootstrap, set `bootstrap_command` explicitly; the default is `cargo fetch`.
+8. Run the generated local checks and `scripts/jig check contract`. If web app dependencies, nested Rust projects, or other project setup must happen during bootstrap, set `bootstrap_command` explicitly; the generated default runs `cargo fetch` only when a root `Cargo.toml` exists.
 9. Wire any missing project-owned scripts such as `scripts/dump-schema.sh` if schema dumps are enabled.
 10. Commit the generated files and then switch CI to use the new workflows.
 

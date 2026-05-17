@@ -288,6 +288,66 @@ fn run_init_uses_native_renderer_and_git() {
 }
 
 #[test]
+fn run_init_sqlx_disabled_defaults_to_harness_only_safe_commands() {
+    let _guard = lock_env();
+    let temp = tempdir().unwrap();
+    let template = materialize_template_worktree();
+    let destination = temp.path().join("repo");
+
+    run_init(InitOpts {
+        path: destination.clone(),
+        template: Some(template.path().display().to_string()),
+        template_mode: None,
+        vcs_ref: None,
+        force: false,
+        defaults: true,
+        no_input: true,
+        answers: AnswerOpts {
+            repo_name: Some("demo".into()),
+            sqlx_enabled: Some(false),
+            ..AnswerOpts::default()
+        },
+    })
+    .unwrap();
+
+    let answers = fs::read_to_string(destination.join(".jig.toml")).unwrap();
+    assert!(answers.contains("sqlx_enabled = false"));
+    assert!(answers.contains("schema_dump_enabled = false"));
+    assert!(answers.contains("Command values are project-owned."));
+    assert!(answers.contains("No Cargo.toml found; skipping cargo bootstrap."));
+    assert!(answers.contains("No Cargo.toml found; skipping cargo test."));
+}
+
+#[test]
+fn run_init_rejects_schema_dumps_when_sqlx_is_disabled() {
+    let _guard = lock_env();
+    let temp = tempdir().unwrap();
+    let template = materialize_template_worktree();
+    let destination = temp.path().join("repo");
+
+    let error = run_init(InitOpts {
+        path: destination,
+        template: Some(template.path().display().to_string()),
+        template_mode: None,
+        vcs_ref: None,
+        force: false,
+        defaults: true,
+        no_input: true,
+        answers: AnswerOpts {
+            repo_name: Some("demo".into()),
+            sqlx_enabled: Some(false),
+            schema_dump_enabled: Some(true),
+            ..AnswerOpts::default()
+        },
+    })
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("schema_dump_enabled cannot be true"));
+    assert!(error.contains("sqlx_enabled is false"));
+}
+
+#[test]
 fn adopt_without_template_uses_official_template_release_tag_and_records_metadata() {
     let _guard = lock_env();
     let temp = tempdir().unwrap();

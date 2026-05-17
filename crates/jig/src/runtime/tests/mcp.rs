@@ -317,6 +317,29 @@ fn mcp_work_tools_tolerate_null_optional_defaults() {
 }
 
 #[test]
+fn mcp_work_check_rejects_unknown_plan_before_running_tools() {
+    let temp = tempdir().unwrap();
+    write_fixture_repo(temp.path());
+    let ctx = RepoContext::load_from(temp.path()).unwrap();
+
+    let error = call_tool(
+        &ctx,
+        tool::WORK_CHECK,
+        json!({
+            "plan_id": "plan_missing",
+            "tools": null
+        }),
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("Plan not found: plan_missing"));
+    let receipts_path = temp.path().join(".agent/state/receipts.jsonl");
+    let receipts = fs::read_to_string(receipts_path).unwrap_or_default();
+    assert!(!receipts.contains("jig.custom_check"));
+}
+
+#[test]
 fn mcp_work_tools_reject_invalid_typed_arguments() {
     let temp = tempdir().unwrap();
     write_fixture_repo(temp.path());

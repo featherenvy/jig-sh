@@ -83,10 +83,19 @@ Examples:
 
 const WORK_CHECK_AFTER_HELP: &str = "\
 Run all required gates for a plan, or use --tool to run one configured gate.
+Use --summary for terminal scanning; JSON remains the default for automation.
 
 Examples:
   jig work check --plan-id plan_abc123
+  jig work check --plan-id plan_abc123 --summary
   jig work check --plan-id plan_abc123 --tool jig.test";
+
+const WORK_GATES_AFTER_HELP: &str = "\
+Use --summary for terminal scanning; JSON remains the default for automation.
+
+Examples:
+  jig work gates --plan-id plan_abc123
+  jig work gates --plan-id plan_abc123 --summary";
 
 const WORK_FINISH_AFTER_HELP: &str = "\
 Close a plan after required gates pass; use --outcome for a machine-readable result.
@@ -264,7 +273,10 @@ pub(crate) enum WorkCommand {
     )]
     Check(WorkCheckOpts),
     /// Show required gate status for a plan.
-    #[command(name = tool_defs::cli_command::WORK_GATES)]
+    #[command(
+        name = tool_defs::cli_command::WORK_GATES,
+        after_help = WORK_GATES_AFTER_HELP
+    )]
     Gates(WorkGatesOpts),
     /// Record a durable decision for the current work.
     #[command(name = tool_defs::cli_command::WORK_DECIDE)]
@@ -694,12 +706,18 @@ pub(crate) struct WorkCheckOpts {
         help = "Specific gate tool to run; defaults to configured gates"
     )]
     pub(crate) tools: Vec<String>,
+
+    #[arg(long, help = "Print a concise human-readable check summary")]
+    pub(crate) summary: bool,
 }
 
 #[derive(Args, Debug)]
 pub(crate) struct WorkGatesOpts {
     #[arg(long, help = "Plan id to inspect")]
     pub(crate) plan_id: String,
+
+    #[arg(long, help = "Print a concise human-readable gate summary")]
+    pub(crate) summary: bool,
 }
 
 #[derive(Args, Debug, Default)]

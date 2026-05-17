@@ -203,6 +203,63 @@ fn update_replaces_jig_block_without_overwriting_custom_root_agents() {
 }
 
 #[test]
+fn update_recopy_normalizes_legacy_schema_dump_true_when_sqlx_disabled() {
+    let _guard = lock_env();
+    let temp = tempdir().unwrap();
+    let repo = temp.path().join("repo");
+    let template = materialize_template_git_worktree();
+    write_test_crate_guide(&repo);
+
+    adopt_repo_for_test(&repo, template.path(), TemplateMode::Committed);
+    let answers_path = repo.join(".jig.toml");
+    let mut answers = read_answers_toml(&answers_path).unwrap();
+    answers.insert("schema_dump_enabled".into(), TomlValue::Boolean(true));
+    answers.insert(
+        "bootstrap_command".into(),
+        TomlValue::String("cargo fetch".into()),
+    );
+    answers.insert(
+        "rust_fmt_check_command".into(),
+        TomlValue::String("cargo fmt --all -- --check".into()),
+    );
+    answers.insert(
+        "rust_clippy_command".into(),
+        TomlValue::String("cargo clippy --workspace --all-targets --locked -- -D warnings".into()),
+    );
+    answers.insert(
+        "rust_test_command".into(),
+        TomlValue::String("cargo test --workspace".into()),
+    );
+    answers.insert(
+        "rust_test_locked_command".into(),
+        TomlValue::String("cargo test --workspace --locked".into()),
+    );
+    write_answers_toml(&answers_path, &answers).unwrap();
+
+    run_update(UpdateOpts {
+        path: repo.clone(),
+        template: None,
+        template_mode: None,
+        recopy: true,
+        force: true,
+        vcs_ref: None,
+        defaults: true,
+        no_input: true,
+    })
+    .unwrap();
+
+    let answers = fs::read_to_string(repo.join(".jig.toml")).unwrap();
+    assert!(answers.contains("sqlx_enabled = false"));
+    assert!(answers.contains("schema_dump_enabled = false"));
+    assert!(answers.contains("No Cargo.toml found; skipping cargo bootstrap."));
+    assert!(answers.contains("No Cargo.toml found; skipping cargo fmt."));
+    assert!(answers.contains("No Cargo.toml found; skipping cargo clippy."));
+    assert!(answers.contains("No Cargo.toml found; skipping cargo test."));
+    assert!(answers.contains("No Cargo.toml found; skipping cargo test-locked."));
+    assert!(!answers.contains("tool = \"jig.schema_check\""));
+}
+
+#[test]
 fn update_refuses_managed_file_changes_without_force() {
     let _guard = lock_env();
     let temp = tempdir().unwrap();

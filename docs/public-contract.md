@@ -156,7 +156,7 @@ Structured work commands use the `jig.work_*` CLI and MCP namespace, but state-o
 
 ## Work Gates
 
-`work.gates` in `.jig.toml` declares required evidence before structured work can finish. `kind: check` gates reference execution tools from `.agent/jig-contract.json`; `scripts/jig work check --plan-id ...` runs them and records normal receipts. `scripts/jig work gates --plan-id ...` reports gate status from the latest fresh receipt for each gate tool on that plan.
+`work.gates` in `.jig.toml` declares required evidence before structured work can finish. `kind: check` gates reference execution tools from `.agent/jig-contract.json`; `scripts/jig work check --plan-id ...` runs them and records normal receipts for an open plan. `scripts/jig work gates --plan-id ...` reports gate status from the latest fresh receipt for each gate tool on any existing plan, including a closed plan. Both commands accept `--summary` for concise terminal output while preserving JSON as the default automation output.
 
 `scripts/jig work finish --plan-id ...` fails when any required gate is missing, failed, stale, unknown, or unsupported. Older `work.checks` entries are still accepted for compatibility and backfill missing required check gates during migration. If the same tool is declared in `work.gates`, that explicit gate entry is authoritative.
 

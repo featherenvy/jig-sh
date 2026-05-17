@@ -51,18 +51,20 @@ When `sqlx_enabled` is `true`, these additional keys are required:
 ## Optional Keys
 
 - `makefile_enabled`: when `true`, Jig renders a root Makefile adapter; adoption defaults it to `false` if a root `Makefile` already exists
-- `schema_dump_enabled`: when `true` and `sqlx_enabled` is also `true`, the template renders schema dump and schema freshness commands
+- `schema_dump_enabled`: when `true` and `sqlx_enabled` is also `true`, the template renders schema dump and schema freshness commands; when SQLx is disabled, this is rendered as `false`. New init/adopt answers reject explicitly setting this to `true` while SQLx is disabled; `jig update --recopy` normalizes legacy SQLx-disabled configs back to `false`.
 - `schema_dump_command`: command behind `scripts/jig schema-dump` when `sqlx_enabled` and `schema_dump_enabled` are both `true`
 - `sqlx_check_command`: command behind `scripts/jig check sqlx` when `sqlx_enabled` is `true`
-- `bootstrap_command`: implementation behind `scripts/jig bootstrap`; set this explicitly when bootstrap must install web dependencies or run project-specific setup beyond the default `cargo fetch`
+- `bootstrap_command`: implementation behind `scripts/jig bootstrap`; the generated default runs `cargo fetch` only when a root `Cargo.toml` exists, otherwise exits 0 with a stdout note, so set this explicitly when bootstrap must install web dependencies, run project-specific setup, or enter a nested Rust project. If a root `Cargo.toml` exists, Cargo errors are surfaced instead of skipped.
 - `dev_command`: legacy project-owned dev command used by the optional Makefile adapter's `make dev`; Makefile-less command-backed renders omit it, and older repos that retain it do not use it for `scripts/jig dev`
-- `rust_fmt_check_command`
-- `rust_clippy_command`
-- `rust_test_command`
-- `rust_test_locked_command`
+- `rust_fmt_check_command`: implementation behind `scripts/jig check fmt`; the generated default exits 0 with a stdout note when no root `Cargo.toml` exists, and otherwise surfaces Cargo errors
+- `rust_clippy_command`: implementation behind `scripts/jig check clippy`; the generated default exits 0 with a stdout note when no root `Cargo.toml` exists, and otherwise surfaces Cargo errors
+- `rust_test_command`: implementation behind `scripts/jig check test`; the generated default exits 0 with a stdout note when no root `Cargo.toml` exists, and otherwise surfaces Cargo errors
+- `rust_test_locked_command`: implementation behind `scripts/jig check test-locked`; the generated default exits 0 with a stdout note when no root `Cargo.toml` exists, and otherwise surfaces Cargo errors
 - `web_package_manager`: currently `bun`
 - `frontend_apps`: list of app definitions
 - `dev`: Jig-native local development proxy settings and app definitions
+
+The generated no-root-`Cargo.toml` Cargo defaults print a stable stdout prefix that `work check --summary` recognizes as an intentional harness skip. Reworded custom commands still run normally, but they will be summarized as ordinary command output instead of `passed (all skipped)`. Custom commands should not print the exact generated prefix unless they intentionally want to opt into that skip rendering.
 
 Top-level `*_command` values are committed repo configuration and run through non-login `bash -c` from the repo root with the user's normal process environment. Treat changes to these keys like changes to project-owned shell scripts or Makefile recipes. Jig-owned checks such as `scripts/jig check contract`, `scripts/jig migration-add NAME`, `scripts/jig check schema`, and repo policy checks run natively inside the binary.
 
@@ -128,9 +130,9 @@ kind = "check"
 tool = "jig.test"
 ```
 
-`kind: check` gates must reference execution tool names declared in `.agent/jig-contract.json`. `scripts/jig work check --plan-id ...` runs configured check gates in order unless one or more `--tool` values are passed explicitly.
+`kind: check` gates must reference execution tool names declared in `.agent/jig-contract.json`. `scripts/jig work check --plan-id ...` runs configured check gates in order unless one or more `--tool` values are passed explicitly. Add `--summary` for concise terminal output; JSON remains the default automation output.
 
-`scripts/jig work gates --plan-id ...` reports each configured gate as `passed`, `missing`, `failed`, `stale`, `unknown`, or `unsupported`. `scripts/jig work finish --plan-id ...` refuses to close work while required gates are missing, failed, stale, unknown, or unsupported. Check gate freshness is based on the non-`.agent/` worktree fingerprint from the latest check or check-batch receipt that proves the gate.
+`scripts/jig work gates --plan-id ...` reports each configured gate as `passed`, `missing`, `failed`, `stale`, `unknown`, or `unsupported`. Add `--summary` for the human scan path. `scripts/jig work finish --plan-id ...` refuses to close work while required gates are missing, failed, stale, unknown, or unsupported. Check gate freshness is based on the non-`.agent/` worktree fingerprint from the latest check or check-batch receipt that proves the gate.
 
 Required check gates should not create or modify non-`.agent/` files during `work check`. Build outputs, generated metadata, and lockfiles should be committed when they are source-of-truth, ignored when they are disposable, or generated before running the fingerprinted check. If a check does intentionally settle generated files, rerun `scripts/jig work check --plan-id ...` after reviewing those changes so the gate evidence matches the final worktree.
 
@@ -443,7 +445,9 @@ It also provides runtime-owned append-only memory under `.agent/state/*.jsonl` t
 - `scripts/jig work start --title ... --print-plan-id`
 - `scripts/jig work append --plan-id ...`
 - `scripts/jig work check --plan-id ...`
+- `scripts/jig work check --plan-id ... --summary`
 - `scripts/jig work gates --plan-id ...`
+- `scripts/jig work gates --plan-id ... --summary`
 - `scripts/jig work decide --plan-id ...`
 - `scripts/jig work receipts --plan-id ...`
 - `scripts/jig work receipts --plan-id ... --summary`

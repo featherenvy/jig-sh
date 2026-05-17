@@ -53,6 +53,12 @@ mod state;
 mod test_env;
 mod tool_defs;
 
+// Shared protocol between generated optional Cargo command defaults and
+// `work check --summary`: keep this prefix stable unless both sides change.
+// User commands that intentionally print this prefix are treated as those
+// generated harness skips in summary output.
+pub(crate) const CARGO_SKIP_OUTPUT_PREFIX: &str = "No Cargo.toml found; skipping cargo ";
+
 pub fn run() -> anyhow::Result<()> {
     cli::run()
 }

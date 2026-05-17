@@ -20,6 +20,27 @@ fn make_cli_dispatch_requires_manifest_tool_declaration() {
 }
 
 #[test]
+fn unavailable_schema_check_explains_disabled_config() {
+    let temp = tempdir().unwrap();
+    write_fixture_repo(temp.path());
+    let ctx = RepoContext::load_from(temp.path()).unwrap();
+
+    let error = dispatch(
+        &ctx,
+        CommandKind::Check(crate::cli::CheckCommand::Schema(crate::cli::ToolOpts {
+            plan_id: None,
+            no_receipt: false,
+        })),
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("jig.schema_check is not available"));
+    assert!(error.contains("sqlx_enabled = false"));
+    assert!(error.contains("jig update --recopy"));
+}
+
+#[test]
 fn work_goal_opens_durable_plan_and_prompt() {
     let temp = tempdir().unwrap();
     write_fixture_repo(temp.path());
@@ -280,6 +301,7 @@ fn work_check_runs_configured_tools() {
         CommandKind::Work(crate::cli::WorkCommand::Check(crate::cli::WorkCheckOpts {
             plan_id: "plan_1".into(),
             tools: Vec::new(),
+            summary: false,
         })),
     )
     .unwrap();
@@ -288,6 +310,60 @@ fn work_check_runs_configured_tools() {
     assert_eq!(output["checks"].as_array().unwrap().len(), 1);
     assert_eq!(output["checks"][0]["tool"], "jig.custom_check");
     assert!(output["checks"][0]["receipt_id"].as_str().is_some());
+}
+
+#[test]
+fn work_check_rejects_unknown_plan_before_running_tools() {
+    let temp = tempdir().unwrap();
+    write_fixture_repo(temp.path());
+    let ctx = RepoContext::load_from(temp.path()).unwrap();
+
+    let error = dispatch(
+        &ctx,
+        CommandKind::Work(crate::cli::WorkCommand::Check(crate::cli::WorkCheckOpts {
+            plan_id: "plan_missing".into(),
+            tools: Vec::new(),
+            summary: false,
+        })),
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("Plan not found: plan_missing"));
+    let receipts_path = temp.path().join(".agent/state/receipts.jsonl");
+    let receipts = fs::read_to_string(receipts_path).unwrap_or_default();
+    assert!(!receipts.contains("jig.custom_check"));
+}
+
+#[test]
+fn work_check_rejects_closed_plan_before_running_tools() {
+    let temp = tempdir().unwrap();
+    write_fixture_repo(temp.path());
+    let ctx = RepoContext::load_from(temp.path()).unwrap();
+    crate::state::plans_close(
+        &ctx,
+        crate::state::PlanCloseRequest {
+            plan_id: "plan_1".into(),
+            resolution: Some("done".into()),
+        },
+    )
+    .unwrap();
+
+    let error = dispatch(
+        &ctx,
+        CommandKind::Work(crate::cli::WorkCommand::Check(crate::cli::WorkCheckOpts {
+            plan_id: "plan_1".into(),
+            tools: Vec::new(),
+            summary: false,
+        })),
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("Plan is already closed: plan_1"));
+    let receipts_path = temp.path().join(".agent/state/receipts.jsonl");
+    let receipts = fs::read_to_string(receipts_path).unwrap_or_default();
+    assert!(!receipts.contains("jig.custom_check"));
 }
 
 #[test]
@@ -302,6 +378,7 @@ fn work_check_collects_worktree_fingerprint_only_on_batch_receipt() {
         CommandKind::Work(crate::cli::WorkCommand::Check(crate::cli::WorkCheckOpts {
             plan_id: "plan_1".into(),
             tools: Vec::new(),
+            summary: false,
         })),
     )
     .unwrap();
@@ -341,6 +418,7 @@ fn work_check_marks_batch_fingerprint_unknown_when_checks_mutate_worktree() {
         CommandKind::Work(crate::cli::WorkCommand::Check(crate::cli::WorkCheckOpts {
             plan_id: "plan_1".into(),
             tools: Vec::new(),
+            summary: false,
         })),
     )
     .unwrap();
@@ -349,6 +427,7 @@ fn work_check_marks_batch_fingerprint_unknown_when_checks_mutate_worktree() {
         &ctx,
         CommandKind::Work(crate::cli::WorkCommand::Gates(crate::cli::WorkGatesOpts {
             plan_id: "plan_1".into(),
+            summary: false,
         })),
     )
     .unwrap();
@@ -375,6 +454,7 @@ fn work_gates_reports_missing_and_passing_required_gates() {
         &ctx,
         CommandKind::Work(crate::cli::WorkCommand::Gates(crate::cli::WorkGatesOpts {
             plan_id: "plan_1".into(),
+            summary: false,
         })),
     )
     .unwrap();
@@ -388,6 +468,7 @@ fn work_gates_reports_missing_and_passing_required_gates() {
         CommandKind::Work(crate::cli::WorkCommand::Check(crate::cli::WorkCheckOpts {
             plan_id: "plan_1".into(),
             tools: Vec::new(),
+            summary: false,
         })),
     )
     .unwrap();
@@ -396,12 +477,32 @@ fn work_gates_reports_missing_and_passing_required_gates() {
         &ctx,
         CommandKind::Work(crate::cli::WorkCommand::Gates(crate::cli::WorkGatesOpts {
             plan_id: "plan_1".into(),
+            summary: false,
         })),
     )
     .unwrap();
     assert_eq!(passed["overall"], "passed");
     assert_eq!(passed["gates"][0]["status"], "passed");
     assert!(passed["gates"][0]["receipt_id"].as_str().is_some());
+}
+
+#[test]
+fn work_gates_rejects_unknown_plan() {
+    let temp = tempdir().unwrap();
+    write_fixture_repo(temp.path());
+    let ctx = RepoContext::load_from(temp.path()).unwrap();
+
+    let error = dispatch(
+        &ctx,
+        CommandKind::Work(crate::cli::WorkCommand::Gates(crate::cli::WorkGatesOpts {
+            plan_id: "plan_missing".into(),
+            summary: false,
+        })),
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("Plan not found: plan_missing"));
 }
 
 #[test]
@@ -464,6 +565,7 @@ fn work_finish_allows_passing_required_gates() {
         CommandKind::Work(crate::cli::WorkCommand::Check(crate::cli::WorkCheckOpts {
             plan_id: plan_id.clone(),
             tools: Vec::new(),
+            summary: false,
         })),
     )
     .unwrap();
@@ -497,6 +599,7 @@ fn work_gates_reject_stale_required_gate_receipts() {
         CommandKind::Work(crate::cli::WorkCommand::Check(crate::cli::WorkCheckOpts {
             plan_id: plan_id.clone(),
             tools: Vec::new(),
+            summary: false,
         })),
     )
     .unwrap();
@@ -510,6 +613,7 @@ fn work_gates_reject_stale_required_gate_receipts() {
         &ctx,
         CommandKind::Work(crate::cli::WorkCommand::Gates(crate::cli::WorkGatesOpts {
             plan_id: plan_id.clone(),
+            summary: false,
         })),
     )
     .unwrap();
@@ -547,6 +651,7 @@ fn work_gates_reject_unknown_required_gate_freshness() {
         CommandKind::Work(crate::cli::WorkCommand::Check(crate::cli::WorkCheckOpts {
             plan_id: plan_id.clone(),
             tools: Vec::new(),
+            summary: false,
         })),
     )
     .unwrap();
@@ -555,6 +660,7 @@ fn work_gates_reject_unknown_required_gate_freshness() {
         &ctx,
         CommandKind::Work(crate::cli::WorkCommand::Gates(crate::cli::WorkGatesOpts {
             plan_id: plan_id.clone(),
+            summary: false,
         })),
     )
     .unwrap();
@@ -617,6 +723,7 @@ fn work_gates_use_direct_receipt_when_prior_batch_ended_in_same_millisecond() {
         &ctx,
         CommandKind::Work(crate::cli::WorkCommand::Gates(crate::cli::WorkGatesOpts {
             plan_id: "plan_1".into(),
+            summary: false,
         })),
     )
     .unwrap();
@@ -664,6 +771,7 @@ fn work_gates_use_legacy_batch_receipt_without_receipt_ids() {
         &ctx,
         CommandKind::Work(crate::cli::WorkCommand::Gates(crate::cli::WorkGatesOpts {
             plan_id: "plan_1".into(),
+            summary: false,
         })),
     )
     .unwrap();
@@ -733,6 +841,7 @@ fn work_gates_use_exact_batch_receipt_id_when_batches_interleave() {
         &ctx,
         CommandKind::Work(crate::cli::WorkCommand::Gates(crate::cli::WorkGatesOpts {
             plan_id: "plan_1".into(),
+            summary: false,
         })),
     )
     .unwrap();
@@ -754,6 +863,7 @@ fn work_gates_keep_failed_checks_failed_when_freshness_is_unknown() {
         CommandKind::Work(crate::cli::WorkCommand::Check(crate::cli::WorkCheckOpts {
             plan_id: "plan_1".into(),
             tools: Vec::new(),
+            summary: false,
         })),
     )
     .unwrap_err()
@@ -764,6 +874,7 @@ fn work_gates_keep_failed_checks_failed_when_freshness_is_unknown() {
         &ctx,
         CommandKind::Work(crate::cli::WorkCommand::Gates(crate::cli::WorkGatesOpts {
             plan_id: "plan_1".into(),
+            summary: false,
         })),
     )
     .unwrap();

@@ -21,6 +21,9 @@ schema_dump_command = "<<[ schema_dump_command | replace("\\", "\\\\") | replace
 [% if sqlx_enabled %]
 sqlx_check_command = "<<[ sqlx_check_command | replace("\\", "\\\\") | replace("\"", "\\\"") ]>>"
 [% endif %]
+# Command values are project-owned. Generated Cargo defaults skip when no root
+# Cargo.toml exists so a harness-only init can be verified; replace them with
+# real repo setup and validation commands once application code lands.
 bootstrap_command = "<<[ bootstrap_command | replace("\\", "\\\\") | replace("\"", "\\\"") ]>>"
 [% if makefile_enabled %]
 # Legacy Makefile-adapter dev command; scripts/jig dev uses [dev] below.

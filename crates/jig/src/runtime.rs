@@ -220,7 +220,7 @@ fn execute_manifest_tool_with_options(
 ) -> Result<Value> {
     let tool = ctx
         .tool_spec(tool_name)
-        .ok_or_else(|| anyhow!("Tool is not declared in .agent/jig-contract.json: {tool_name}"))?;
+        .ok_or_else(|| anyhow!("{}", undeclared_tool_message(ctx, tool_name)))?;
     if tool_defs::is_make_tool(tool) {
         let target = match tool.target.as_deref() {
             Some(target) => Cow::Borrowed(target),
@@ -275,6 +275,23 @@ fn execute_manifest_tool_with_options(
     }
 
     bail!("Unsupported tool kind '{}' for {tool_name}", tool.kind)
+}
+
+fn undeclared_tool_message(ctx: &RepoContext, tool_name: &str) -> String {
+    match tool_name {
+        tool::SCHEMA_CHECK | tool::SCHEMA_DUMP if !ctx.sqlx_enabled() => format!(
+            "{tool_name} is not available because sqlx_enabled = false in .jig.toml. Enable SQLx and schema dumps, then run `jig update --recopy`, or remove this command/gate."
+        ),
+        // Valid configs only reach this arm when SQLx is enabled but schema
+        // dump tooling is intentionally disabled.
+        tool::SCHEMA_CHECK | tool::SCHEMA_DUMP if !ctx.schema_dump_enabled() => format!(
+            "{tool_name} is not available because schema_dump_enabled = false in .jig.toml. Enable schema dumps, then run `jig update --recopy`, or remove this command/gate."
+        ),
+        tool::SQLX_CHECK | tool::MIGRATION_ADD if !ctx.sqlx_enabled() => format!(
+            "{tool_name} is not available because sqlx_enabled = false in .jig.toml. Enable SQLx, then run `jig update --recopy`, or remove this command/gate."
+        ),
+        _ => format!("Tool is not declared in .agent/jig-contract.json: {tool_name}"),
+    }
 }
 
 fn execute_native_tool(

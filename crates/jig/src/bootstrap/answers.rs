@@ -51,7 +51,10 @@ impl RenderAnswers {
     }
 
     pub(super) fn from_answers_file(path: &Path) -> Result<Self> {
-        RawAnswers::from_file(path)?.resolve(None)
+        let mut raw = RawAnswers::from_file(path)?;
+        raw.normalize_legacy_sqlx_disabled_schema_dump();
+        raw.normalize_legacy_generated_cargo_command_defaults();
+        raw.resolve(None)
     }
 
     pub(super) fn default_branch(&self) -> &str {
@@ -198,6 +201,29 @@ impl RawAnswers {
         }
     }
 
+    fn normalize_legacy_sqlx_disabled_schema_dump(&mut self) {
+        if self.sqlx_enabled == Some(false) && self.schema_dump_enabled == Some(true) {
+            self.schema_dump_enabled = Some(false);
+        }
+    }
+
+    fn normalize_legacy_generated_cargo_command_defaults(&mut self) {
+        normalize_legacy_command_default(&mut self.bootstrap_command, "cargo fetch");
+        normalize_legacy_command_default(
+            &mut self.rust_fmt_check_command,
+            "cargo fmt --all -- --check",
+        );
+        normalize_legacy_command_default(
+            &mut self.rust_clippy_command,
+            "cargo clippy --workspace --all-targets --locked -- -D warnings",
+        );
+        normalize_legacy_command_default(&mut self.rust_test_command, "cargo test --workspace");
+        normalize_legacy_command_default(
+            &mut self.rust_test_locked_command,
+            "cargo test --workspace --locked",
+        );
+    }
+
     fn resolve(self, default_repo_name: Option<String>) -> Result<RenderAnswers> {
         let repo_name = self
             .repo_name
@@ -209,12 +235,21 @@ impl RawAnswers {
         if sqlx_enabled && rust_migration_dir.is_none() {
             bail!("Missing required answer when sqlx_enabled is true: rust_migration_dir");
         }
+        if !sqlx_enabled && self.schema_dump_enabled == Some(true) {
+            bail!(
+                "schema_dump_enabled cannot be true when sqlx_enabled is false; enable SQLx or set schema_dump_enabled = false"
+            );
+        }
 
         let web_package_manager = self.web_package_manager.unwrap_or_else(|| "bun".into());
         if web_package_manager != "bun" {
             bail!("Unsupported web_package_manager '{web_package_manager}'. Supported values: bun");
         }
-        let schema_dump_enabled = self.schema_dump_enabled.unwrap_or(true);
+        let schema_dump_enabled = if sqlx_enabled {
+            self.schema_dump_enabled.unwrap_or(true)
+        } else {
+            false
+        };
         let schema_dump_command = self
             .schema_dump_command
             .unwrap_or_else(|| "scripts/dump-schema.sh".into());
@@ -252,28 +287,45 @@ impl RawAnswers {
             migration_add_command,
             bootstrap_command: self
                 .bootstrap_command
-                .unwrap_or_else(|| "cargo fetch".into()),
+                .unwrap_or_else(|| optional_cargo_command("cargo fetch", "bootstrap")),
             contract_check_command: self.contract_check_command.unwrap_or_default(),
             dev_command: self.dev_command.unwrap_or_else(|| {
                 r#"echo "Define dev_command in .jig.toml" >&2 && exit 1"#.into()
             }),
             rust_fmt_check_command: self
                 .rust_fmt_check_command
-                .unwrap_or_else(|| "cargo fmt --all -- --check".into()),
+                .unwrap_or_else(|| optional_cargo_command("cargo fmt --all -- --check", "fmt")),
             rust_clippy_command: self.rust_clippy_command.unwrap_or_else(|| {
-                "cargo clippy --workspace --all-targets --locked -- -D warnings".into()
+                optional_cargo_command(
+                    "cargo clippy --workspace --all-targets --locked -- -D warnings",
+                    "clippy",
+                )
             }),
             rust_test_command: self
                 .rust_test_command
-                .unwrap_or_else(|| "cargo test --workspace".into()),
-            rust_test_locked_command: self
-                .rust_test_locked_command
-                .unwrap_or_else(|| "cargo test --workspace --locked".into()),
+                .unwrap_or_else(|| optional_cargo_command("cargo test --workspace", "test")),
+            rust_test_locked_command: self.rust_test_locked_command.unwrap_or_else(|| {
+                optional_cargo_command("cargo test --workspace --locked", "test-locked")
+            }),
             web_package_manager,
             frontend_apps: self.frontend_apps.unwrap_or_default(),
             agent_tooling: self.agent_tooling.unwrap_or_default(),
         })
     }
+}
+
+fn normalize_legacy_command_default(command: &mut Option<String>, legacy_default: &str) {
+    if command.as_deref() == Some(legacy_default) {
+        *command = None;
+    }
+}
+
+fn optional_cargo_command(command: &str, label: &str) -> String {
+    let skip_prefix = crate::CARGO_SKIP_OUTPUT_PREFIX;
+    let skip_message = shell_quote(&format!("{skip_prefix}{label}."));
+    // Runtime command dispatch sets CWD to the repo root, so this guard checks
+    // for a root Cargo workspace without blocking harness-only repos.
+    format!("if [ -f Cargo.toml ]; then {command}; else printf '%s\\n' {skip_message}; fi")
 }
 
 fn shell_quote(value: &str) -> String {

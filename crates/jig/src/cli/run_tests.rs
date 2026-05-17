@@ -284,6 +284,338 @@ fn work_status_summary_handles_empty_state() {
 }
 
 #[test]
+fn work_check_summary_is_actionable() {
+    let summary = format_work_check_summary(&json!({
+        "ok": true,
+        "plan_id": "plan_1",
+        "receipt_id": "receipt_batch",
+        "checks": [{
+            "tool": "jig.test",
+            "receipt_id": "receipt_test",
+            "result": {
+                "exit_status": 0,
+                "stdout": "",
+                "stderr": ""
+            }
+        }]
+    }));
+
+    assert!(summary.contains("Work check: passed"));
+    assert!(summary.contains("Plan: plan_1"));
+    assert!(summary.contains("Batch receipt: receipt_batch"));
+    assert!(summary.contains("jig.test: exit 0, receipt receipt_test"));
+    assert!(summary.contains("work gates --plan-id plan_1 --summary"));
+}
+
+#[test]
+fn work_check_summary_reports_failed_check_status() {
+    let summary = format_work_check_summary(&json!({
+        "ok": true,
+        "plan_id": "plan_1",
+        "receipt_id": "receipt_batch",
+        "checks": [{
+            "tool": "jig.test",
+            "receipt_id": "receipt_test",
+            "result": {
+                "exit_status": 101,
+                "stdout": "",
+                "stderr": ""
+            }
+        }]
+    }));
+
+    assert!(summary.contains("Work check: failed"));
+    assert!(summary.contains("jig.test: exit 101"));
+    assert!(summary.contains("inspect failing receipts"));
+    assert!(!summary.contains("work gates --plan-id plan_1 --summary"));
+}
+
+#[test]
+fn work_check_summary_reports_failed_check_output() {
+    let summary = format_work_check_summary(&json!({
+        "ok": true,
+        "plan_id": "plan_1",
+        "receipt_id": "receipt_batch",
+        "checks": [{
+            "tool": "jig.test",
+            "receipt_id": "receipt_test",
+            "result": {
+                "exit_status": 101,
+                "stdout": "",
+                "stderr": "test failure details\n"
+            }
+        }]
+    }));
+
+    assert!(summary.contains("jig.test: exit 101"));
+    assert!(summary.contains("output: test failure details"));
+}
+
+#[test]
+fn work_check_summary_surfaces_skipped_harness_defaults() {
+    let summary = format_work_check_summary(&json!({
+        "ok": true,
+        "plan_id": "plan_1",
+        "receipt_id": "receipt_batch",
+        "checks": [{
+            "tool": "jig.test",
+            "receipt_id": "receipt_test",
+            "result": {
+                "exit_status": 0,
+                "stdout": "No Cargo.toml found; skipping cargo test.\n",
+                "stderr": ""
+            }
+        }]
+    }));
+
+    assert!(summary.contains("Work check: passed (all skipped)"));
+    assert!(summary.contains("output: No Cargo.toml found; skipping cargo test."));
+    assert!(summary.contains("all configured Cargo checks skipped"));
+    assert!(summary.contains("set explicit commands"));
+}
+
+#[test]
+fn work_check_summary_reports_some_skipped_harness_defaults() {
+    let summary = format_work_check_summary(&json!({
+        "ok": true,
+        "plan_id": "plan_1",
+        "receipt_id": "receipt_batch",
+        "checks": [
+            {
+                "tool": "jig.fmt",
+                "receipt_id": "receipt_fmt",
+                "result": {
+                    "exit_status": 0,
+                    "stdout": "No Cargo.toml found; skipping cargo fmt.\n",
+                    "stderr": ""
+                }
+            },
+            {
+                "tool": "jig.contract_check",
+                "receipt_id": "receipt_contract",
+                "result": {
+                    "exit_status": 0,
+                    "stdout": "",
+                    "stderr": ""
+                }
+            }
+        ]
+    }));
+
+    assert!(summary.contains("Work check: passed (some skipped)"));
+    assert!(!summary.contains("all configured Cargo checks skipped"));
+}
+
+#[test]
+fn work_check_summary_ignores_unrelated_skipping_output() {
+    let summary = format_work_check_summary(&json!({
+        "ok": true,
+        "plan_id": "plan_1",
+        "receipt_id": "receipt_batch",
+        "checks": [{
+            "tool": "jig.test",
+            "receipt_id": "receipt_test",
+            "result": {
+                "exit_status": 0,
+                "stdout": "skipping optional project step\n",
+                "stderr": ""
+            }
+        }]
+    }));
+
+    assert!(summary.contains("jig.test: exit 0, receipt receipt_test"));
+    assert!(!summary.contains("output:"));
+}
+
+#[test]
+fn work_check_summary_does_not_treat_stderr_skip_text_as_harness_skip() {
+    let summary = format_work_check_summary(&json!({
+        "ok": true,
+        "plan_id": "plan_1",
+        "receipt_id": "receipt_batch",
+        "checks": [{
+            "tool": "jig.test",
+            "receipt_id": "receipt_test",
+            "result": {
+                "exit_status": 0,
+                "stdout": "",
+                "stderr": "No Cargo.toml found; skipping cargo test.\n"
+            }
+        }]
+    }));
+
+    assert!(summary.contains("Work check: passed"));
+    assert!(!summary.contains("passed (all skipped)"));
+    assert!(!summary.contains("all configured Cargo checks skipped"));
+}
+
+#[test]
+fn work_check_summary_does_not_count_failed_prefix_output_as_skipped() {
+    let summary = format_work_check_summary(&json!({
+        "ok": true,
+        "plan_id": "plan_1",
+        "receipt_id": "receipt_batch",
+        "checks": [{
+            "tool": "jig.test",
+            "receipt_id": "receipt_test",
+            "result": {
+                "exit_status": 101,
+                "stdout": "No Cargo.toml found; skipping cargo test.\n",
+                "stderr": ""
+            }
+        }]
+    }));
+
+    assert!(summary.contains("Work check: failed"));
+    assert!(!summary.contains("passed (all skipped)"));
+    assert!(!summary.contains("all configured Cargo checks skipped"));
+}
+
+#[test]
+fn work_check_summary_reports_empty_checks() {
+    let summary = format_work_check_summary(&json!({
+        "ok": true,
+        "plan_id": "plan_1",
+        "receipt_id": "receipt_batch",
+        "checks": []
+    }));
+
+    assert!(summary.contains("Work check: no checks configured"));
+    assert!(summary.contains("Checks: 0"));
+    assert!(summary.contains("configure work checks"));
+    assert!(summary.contains("--tool <tool>"));
+}
+
+#[test]
+fn work_check_summary_reports_unknown_check_status() {
+    let summary = format_work_check_summary(&json!({
+        "ok": true,
+        "plan_id": "plan_1",
+        "receipt_id": "receipt_batch",
+        "checks": [{
+            "tool": "jig.test",
+            "receipt_id": "receipt_test",
+            "result": {
+                "stdout": "",
+                "stderr": ""
+            }
+        }]
+    }));
+
+    assert!(summary.contains("Work check: unknown"));
+    assert!(summary.contains("jig.test: exit ?"));
+    assert!(summary.contains("unknown exit status"));
+    assert!(!summary.contains("inspect failing receipts"));
+}
+
+#[test]
+fn work_gates_summary_reports_blockers() {
+    let summary = format_work_gates_summary(&json!({
+        "ok": true,
+        "plan_id": "plan_1",
+        "overall": "blocked",
+        "gates": [{
+            "id": "tests",
+            "kind": "check",
+            "required": true,
+            "tool": "jig.test",
+            "status": "missing",
+            "freshness": "missing"
+        }],
+        "missing_required": ["tests"],
+        "failed_required": [],
+        "stale_required": [],
+        "unknown_required": [],
+        "unsupported_required": []
+    }));
+
+    assert!(summary.contains("Work gates: blocked"));
+    assert!(summary.contains("tests: missing, freshness missing, required (jig.test)"));
+    assert!(summary.contains("Blocked: missing (tests)"));
+    assert!(!summary.contains("failed ()"));
+    assert!(summary.contains("work check --plan-id plan_1 --summary"));
+}
+
+#[test]
+fn work_gates_summary_reports_unsupported_blockers() {
+    let summary = format_work_gates_summary(&json!({
+        "ok": true,
+        "plan_id": "plan_1",
+        "overall": "blocked",
+        "gates": [],
+        "missing_required": [],
+        "failed_required": [],
+        "stale_required": [],
+        "unknown_required": [],
+        "unsupported_required": ["schema"]
+    }));
+
+    assert!(summary.contains("Blocked: unsupported (schema)"));
+}
+
+#[test]
+fn work_gates_summary_reports_combined_blockers_in_stable_order() {
+    let summary = format_work_gates_summary(&json!({
+        "ok": true,
+        "plan_id": "plan_1",
+        "overall": "blocked",
+        "gates": [],
+        "missing_required": ["tests"],
+        "failed_required": ["lint"],
+        "stale_required": ["schema"],
+        "unknown_required": ["docs"],
+        "unsupported_required": ["deploy"]
+    }));
+
+    assert!(summary.contains(
+        "Blocked: missing (tests); failed (lint); stale (schema); unknown (docs); unsupported (deploy)"
+    ));
+}
+
+#[test]
+fn work_gates_summary_handles_uncategorized_blocked_status() {
+    let summary = format_work_gates_summary(&json!({
+        "ok": true,
+        "plan_id": "plan_1",
+        "overall": "unknown",
+        "gates": [],
+        "missing_required": [],
+        "failed_required": [],
+        "stale_required": [],
+        "unknown_required": [],
+        "unsupported_required": []
+    }));
+
+    assert!(summary.contains("Work gates: unknown"));
+    assert!(summary.contains("Status: unknown; no categorized blockers reported"));
+}
+
+#[test]
+fn work_gates_summary_reports_finish_command_when_passed() {
+    let summary = format_work_gates_summary(&json!({
+        "ok": true,
+        "plan_id": "plan_1",
+        "overall": "passed",
+        "gates": [{
+            "id": "tests",
+            "kind": "check",
+            "required": true,
+            "tool": "jig.test",
+            "status": "passed",
+            "freshness": "fresh"
+        }],
+        "missing_required": [],
+        "failed_required": [],
+        "stale_required": [],
+        "unknown_required": [],
+        "unsupported_required": []
+    }));
+
+    assert!(summary.contains("Work gates: passed"));
+    assert!(summary.contains("work finish --plan-id plan_1"));
+}
+
+#[test]
 fn work_receipts_summary_is_compact() {
     let summary = format_work_receipts_summary(&json!({
         "ok": true,

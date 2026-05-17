@@ -151,8 +151,8 @@ Use this path when you want the fastest successful loop on a new or adopted repo
    plan_id="$(scripts/jig work start --title "First change" --body "Validate the harness loop." --print-plan-id)"
 
    scripts/jig work status --summary
-   scripts/jig work check --plan-id "$plan_id"
-   scripts/jig work gates --plan-id "$plan_id"
+   scripts/jig work check --plan-id "$plan_id" --summary
+   scripts/jig work gates --plan-id "$plan_id" --summary
    scripts/jig work finish --plan-id "$plan_id" --resolution "Harness loop verified" --outcome success
    ```
 
@@ -169,6 +169,12 @@ Use `scripts/jig work status --summary` for a read-only scan of existing work
 state and `scripts/jig work receipts --summary --failed-only` for a compact
 receipt history. Pass `--no-receipt` to a one-off contract command when you do
 not want evidence recorded.
+
+The default generated Rust commands skip cleanly when a freshly initialized
+harness does not yet have a root `Cargo.toml`; once application code exists,
+replace the defaults in `.jig.toml` with the repo's real setup and validation
+commands as needed. Repos that keep Rust crates without a root Cargo workspace
+should set explicit commands that `cd` into the right project directory.
 
 ## What It Generates
 

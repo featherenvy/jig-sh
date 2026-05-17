@@ -169,6 +169,41 @@ pub(crate) fn ensure_plan_is_open(ctx: &RepoContext, plan_id: &str) -> Result<()
     }
 }
 
+pub(crate) fn ensure_plan_exists(ctx: &RepoContext, plan_id: &str) -> Result<()> {
+    ensure_state_layout(ctx)?;
+    let events = read_jsonl::<PlanEvent>(&ctx.state_file("plans.jsonl"))?;
+    if events.iter().any(
+        |event| matches!(event, PlanEvent::Open { plan_id: event_plan_id, .. } if event_plan_id == plan_id),
+    ) {
+        Ok(())
+    } else {
+        bail!("Plan not found: {plan_id}")
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn seed_open_plan_for_test(
+    ctx: &RepoContext,
+    plan_id: &str,
+    title: &str,
+    body: &str,
+) -> Result<()> {
+    ensure_state_layout(ctx)?;
+    let plan_path = ctx.plan_body_path(plan_id);
+    if let Some(parent) = plan_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&plan_path, body)?;
+    let event = PlanEvent::open(
+        new_id("plan-event"),
+        plan_id.to_string(),
+        now_ms(),
+        title.to_string(),
+        Some(rel_path(ctx.root(), &plan_path)?),
+    );
+    append_jsonl(&ctx.state_file("plans.jsonl"), &event)
+}
+
 pub(super) fn open_plans(events: &[PlanEvent]) -> Vec<Value> {
     let mut closed = HashSet::new();
     let mut opened = BTreeMap::<String, (&str, Option<&str>)>::new();

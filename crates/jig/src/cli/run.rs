@@ -13,6 +13,8 @@ const WORK_STATUS_RECENT_RECEIPT_SUMMARY_LIMIT: usize = 5;
 
 enum HumanOutput {
     AgentDoctorSummary,
+    WorkCheckSummary,
+    WorkGatesSummary,
     WorkStartPlanId,
     WorkReceiptsSummary,
     WorkStatusSummary,
@@ -219,6 +221,8 @@ fn agent_human_output_requested(command: &AgentCommand) -> Option<HumanOutput> {
 fn work_human_output_requested(command: &WorkCommand) -> Option<HumanOutput> {
     match command {
         WorkCommand::Start(opts) if opts.print_plan_id => Some(HumanOutput::WorkStartPlanId),
+        WorkCommand::Check(opts) if opts.summary => Some(HumanOutput::WorkCheckSummary),
+        WorkCommand::Gates(opts) if opts.summary => Some(HumanOutput::WorkGatesSummary),
         WorkCommand::Receipts(opts) if opts.summary => Some(HumanOutput::WorkReceiptsSummary),
         WorkCommand::Status(opts) if opts.summary => Some(HumanOutput::WorkStatusSummary),
         _ => None,
@@ -393,6 +397,8 @@ fn print_json(value: &serde_json::Value) -> Result<()> {
 fn print_output(human_output: Option<HumanOutput>, value: &serde_json::Value) -> Result<()> {
     match human_output {
         Some(HumanOutput::AgentDoctorSummary) => print_text(&format_agent_doctor_summary(value)),
+        Some(HumanOutput::WorkCheckSummary) => print_text(&format_work_check_summary(value)),
+        Some(HumanOutput::WorkGatesSummary) => print_text(&format_work_gates_summary(value)),
         Some(HumanOutput::WorkStartPlanId) => print_text(&format_work_start_plan_id(value)?),
         Some(HumanOutput::WorkReceiptsSummary) => print_text(&format_work_receipts_summary(value)),
         Some(HumanOutput::WorkStatusSummary) => print_text(&format_work_status_summary(value)),
@@ -561,6 +567,211 @@ fn format_work_status_summary(value: &serde_json::Value) -> String {
     lines.join("\n")
 }
 
+fn format_work_check_summary(value: &serde_json::Value) -> String {
+    let plan_id = value_str(value, "plan_id").unwrap_or("<unknown>");
+    let checks = value["checks"].as_array().map(Vec::as_slice).unwrap_or(&[]);
+    let status = work_check_summary_status(checks);
+    let skipped_checks = checks
+        .iter()
+        .filter(|check| {
+            check["result"]["exit_status"].as_i64() == Some(0)
+                && work_check_summary_harness_skip_output(check).is_some()
+        })
+        .count();
+    let status_label = if matches!(status, WorkCheckSummaryStatus::Passed) {
+        match (skipped_checks, checks.len()) {
+            (0, _) => status.label(),
+            (skipped, total) if skipped == total => "passed (all skipped)",
+            _ => "passed (some skipped)",
+        }
+    } else {
+        status.label()
+    };
+    let mut lines = vec![
+        format!("Work check: {status_label}"),
+        format!("  Plan: {plan_id}"),
+        format!(
+            "  Batch receipt: {}",
+            value_str(value, "receipt_id").unwrap_or("none")
+        ),
+        format!("  Checks: {}", checks.len()),
+    ];
+
+    for check in checks {
+        let tool = value_str(check, "tool").unwrap_or("<unknown>");
+        let exit_status = check["result"]["exit_status"].as_i64();
+        let exit_status_label = exit_status
+            .map(|status| status.to_string())
+            .unwrap_or_else(|| "?".into());
+        let receipt = value_str(check, "receipt_id").unwrap_or("none");
+        let output_note = work_check_summary_output_note(check, exit_status)
+            .map(|note| format!(", output: {note}"))
+            .unwrap_or_default();
+        lines.push(format!(
+            "  - {tool}: exit {exit_status_label}, receipt {receipt}{output_note}"
+        ));
+    }
+
+    if skipped_checks > 0 && skipped_checks == checks.len() {
+        lines.push(
+            "Note: all configured Cargo checks skipped because no root Cargo.toml exists; set explicit commands if this repo has Rust code outside a root workspace.".into(),
+        );
+    }
+
+    match status {
+        WorkCheckSummaryStatus::Passed => lines.push(format!(
+            "Next step: scripts/jig work gates --plan-id {plan_id} --summary"
+        )),
+        WorkCheckSummaryStatus::Failed => lines.push(format!(
+            "Next step: inspect failing receipts, fix issues, then rerun scripts/jig work check --plan-id {plan_id} --summary"
+        )),
+        WorkCheckSummaryStatus::Unknown => lines.push(format!(
+            "Next step: inspect receipts with unknown exit status, then rerun scripts/jig work check --plan-id {plan_id} --summary"
+        )),
+        WorkCheckSummaryStatus::NoChecksConfigured => lines.push(format!(
+            "Next step: configure work checks or rerun scripts/jig work check --plan-id {plan_id} --tool <tool> --summary"
+        )),
+    }
+    lines.join("\n")
+}
+
+fn work_check_summary_output_note(
+    check: &serde_json::Value,
+    exit_status: Option<i64>,
+) -> Option<String> {
+    let result = &check["result"];
+    if exit_status == Some(0)
+        && let Some(output) = work_check_summary_harness_skip_output(check)
+    {
+        return Some(concise_preview(output, 120));
+    }
+
+    let stdout = value_str(result, "stdout").filter(|output| !output.trim().is_empty());
+    let stderr = value_str(result, "stderr").filter(|output| !output.trim().is_empty());
+    match exit_status {
+        Some(0) => None,
+        Some(_) | None => stderr.or(stdout).map(|output| concise_preview(output, 120)),
+    }
+}
+
+fn work_check_summary_harness_skip_output(check: &serde_json::Value) -> Option<&str> {
+    let result = &check["result"];
+    value_str(result, "stdout")
+        .filter(|output| !output.trim().is_empty())
+        .filter(|output| work_check_summary_has_harness_skip(output))
+}
+
+fn work_check_summary_has_harness_skip(output: &str) -> bool {
+    output.lines().any(|line| {
+        line.trim_start()
+            .starts_with(crate::CARGO_SKIP_OUTPUT_PREFIX)
+    })
+}
+
+#[derive(Clone, Copy)]
+enum WorkCheckSummaryStatus {
+    Passed,
+    Failed,
+    Unknown,
+    NoChecksConfigured,
+}
+
+impl WorkCheckSummaryStatus {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Passed => "passed",
+            Self::Failed => "failed",
+            Self::Unknown => "unknown",
+            Self::NoChecksConfigured => "no checks configured",
+        }
+    }
+}
+
+fn work_check_summary_status(checks: &[serde_json::Value]) -> WorkCheckSummaryStatus {
+    if checks.is_empty() {
+        return WorkCheckSummaryStatus::NoChecksConfigured;
+    }
+
+    let mut saw_unknown = false;
+    for check in checks {
+        match check["result"]["exit_status"].as_i64() {
+            Some(0) => {}
+            Some(_) => return WorkCheckSummaryStatus::Failed,
+            None => saw_unknown = true,
+        }
+    }
+
+    if saw_unknown {
+        WorkCheckSummaryStatus::Unknown
+    } else {
+        WorkCheckSummaryStatus::Passed
+    }
+}
+
+fn format_work_gates_summary(value: &serde_json::Value) -> String {
+    let plan_id = value_str(value, "plan_id").unwrap_or("<unknown>");
+    let overall = value_str(value, "overall").unwrap_or("unknown");
+    let gates = value["gates"].as_array().map(Vec::as_slice).unwrap_or(&[]);
+    let mut lines = vec![
+        format!("Work gates: {overall}"),
+        format!("  Plan: {plan_id}"),
+        format!("  Gates: {}", gates.len()),
+    ];
+
+    for gate in gates {
+        let id = value_str(gate, "id").unwrap_or("<unknown>");
+        let status = value_str(gate, "status").unwrap_or("unknown");
+        let required = value_bool(gate, "required").unwrap_or(true);
+        let required_label = if required { "required" } else { "optional" };
+        let tool = value_str(gate, "tool")
+            .map(|tool| format!(" ({tool})"))
+            .unwrap_or_default();
+        let freshness = value_str(gate, "freshness")
+            .map(|freshness| format!(", freshness {freshness}"))
+            .unwrap_or_default();
+        lines.push(format!(
+            "  - {id}: {status}{freshness}, {required_label}{tool}"
+        ));
+    }
+
+    if overall == "passed" {
+        lines.push(format!(
+            "Next step: scripts/jig work finish --plan-id {plan_id} --resolution <summary> --outcome success"
+        ));
+    } else {
+        match gate_blocker_summary(value) {
+            Some(blockers) => lines.push(format!("Blocked: {blockers}")),
+            None => lines.push(format!(
+                "Status: {overall}; no categorized blockers reported"
+            )),
+        }
+        lines.push(format!(
+            "Next step: scripts/jig work check --plan-id {plan_id} --summary"
+        ));
+    }
+
+    lines.join("\n")
+}
+
+fn gate_blocker_summary(value: &serde_json::Value) -> Option<String> {
+    let categories = [
+        ("missing", "missing_required"),
+        ("failed", "failed_required"),
+        ("stale", "stale_required"),
+        ("unknown", "unknown_required"),
+        ("unsupported", "unsupported_required"),
+    ];
+    let blockers = categories
+        .into_iter()
+        .filter_map(|(label, key)| {
+            let items = value_string_list(value, key);
+            (!items.is_empty()).then(|| format!("{label} ({})", items.join(", ")))
+        })
+        .collect::<Vec<_>>();
+
+    (!blockers.is_empty()).then(|| blockers.join("; "))
+}
+
 fn format_work_receipts_summary(value: &serde_json::Value) -> String {
     let receipts = value["receipts"]
         .as_array()
@@ -636,6 +847,16 @@ fn value_i64(value: &serde_json::Value, key: &str) -> Option<i64> {
 
 fn value_u64(value: &serde_json::Value, key: &str) -> Option<u64> {
     value.get(key).and_then(serde_json::Value::as_u64)
+}
+
+fn value_string_list(value: &serde_json::Value, key: &str) -> Vec<String> {
+    value[key]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .map(str::to_string)
+        .collect()
 }
 
 #[cfg(test)]

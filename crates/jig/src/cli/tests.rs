@@ -751,6 +751,7 @@ fn parses_work_check_tools() {
         tool::CONTRACT_CHECK,
         "--tool",
         tool::TEST,
+        "--summary",
     ])
     .unwrap();
 
@@ -758,6 +759,7 @@ fn parses_work_check_tools() {
         CommandKind::Work(WorkCommand::Check(opts)) => {
             assert_eq!(opts.plan_id, "plan_1");
             assert_eq!(opts.tools, vec![tool::CONTRACT_CHECK, tool::TEST]);
+            assert!(opts.summary);
         }
         other => panic!("expected work check command, got {other:?}"),
     }
@@ -765,11 +767,13 @@ fn parses_work_check_tools() {
 
 #[test]
 fn parses_work_gates_command() {
-    let cli = Cli::try_parse_from(["jig", "work", "gates", "--plan-id", "plan_1"]).unwrap();
+    let cli =
+        Cli::try_parse_from(["jig", "work", "gates", "--plan-id", "plan_1", "--summary"]).unwrap();
 
     match cli.command {
         CommandKind::Work(WorkCommand::Gates(opts)) => {
             assert_eq!(opts.plan_id, "plan_1");
+            assert!(opts.summary);
         }
         other => panic!("expected work gates command, got {other:?}"),
     }
