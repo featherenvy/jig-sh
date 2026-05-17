@@ -1,5 +1,15 @@
 [workspace]
-members = ["crates/jig", "crates/jig-dev-proxy", "crates/jig-vault"]
+members = [
+    "crates/jig",
+    "crates/jig-contract",
+    "crates/jig-core",
+    "crates/jig-dev-proxy",
+    "crates/jig-features",
+    "crates/jig-rust",
+    "crates/jig-sqlx",
+    "crates/jig-typescript",
+    "crates/jig-vault",
+]
 resolver = "2"
 
 [workspace.package]
@@ -25,6 +35,12 @@ http-body-util = "0.1.3"
 hyper = { version = "1.7.0", features = ["full"] }
 hyper-util = { version = "0.1.17", features = ["full"] }
 jig-dev-proxy = { path = "crates/jig-dev-proxy", version = "=0.2.0-beta.1" }
+jig-contract = { path = "crates/jig-contract", version = "=0.2.0-beta.1" }
+jig-core = { path = "crates/jig-core", version = "=0.2.0-beta.1" }
+jig-features = { path = "crates/jig-features", version = "=0.2.0-beta.1" }
+jig-rust = { path = "crates/jig-rust", version = "=0.2.0-beta.1" }
+jig-sqlx = { path = "crates/jig-sqlx", version = "=0.2.0-beta.1" }
+jig-typescript = { path = "crates/jig-typescript", version = "=0.2.0-beta.1" }
 jig-vault = { path = "crates/jig-vault", version = "=0.2.0-beta.1" }
 libc = "0.2.177"
 rcgen = { version = "0.14", features = ["x509-parser"] }

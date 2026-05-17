@@ -9,7 +9,6 @@ use serde_json::{Value, json};
 
 use crate::context::RepoContext;
 use crate::process::require_success;
-use crate::tool_defs::{cli_command, legacy_make_target, tool};
 
 const EMPTY_TREE_HASH: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 // New or growing files above this fail unless an explicit exception is present.
@@ -24,13 +23,6 @@ const SOFT_LIMIT_END: usize = 600;
 const TARGET_HIGH: usize = 400;
 mod agent_map;
 mod sqlx;
-
-#[derive(Debug)]
-pub(crate) struct NativeToolOutput {
-    pub(crate) exit_status: i32,
-    pub(crate) stdout: String,
-    pub(crate) stderr: String,
-}
 
 pub(crate) struct AgentMapInput {
     pub(crate) map_path: PathBuf,
@@ -48,6 +40,13 @@ pub(crate) struct MigrationImmutabilityInput {
 
 pub(crate) struct SqlxTodoInput {
     pub(crate) output: Option<PathBuf>,
+}
+
+#[derive(Debug)]
+pub(crate) struct NativeToolOutput {
+    pub(crate) exit_status: i32,
+    pub(crate) stdout: String,
+    pub(crate) stderr: String,
 }
 
 pub(crate) enum PolicyDirectCommand {
@@ -129,7 +128,7 @@ pub(crate) fn contract_check(ctx: &RepoContext) -> Result<NativeToolOutput> {
         }
         2 | 3 => {
             for command_key in ctx.required_commands() {
-                if !crate::context::SUPPORTED_COMMAND_KEYS.contains(&command_key.as_str()) {
+                if !ctx.supports_command_key(command_key) {
                     errors.push(format!(
                         "Unsupported required command in jig contract: {command_key}."
                     ));
@@ -148,7 +147,7 @@ pub(crate) fn contract_check(ctx: &RepoContext) -> Result<NativeToolOutput> {
         .iter()
         .map(|tool| tool.name.as_str())
         .collect::<HashSet<_>>();
-    for required in required_contract_tools(ctx) {
+    for required in jig_features::required_contract_tools(ctx) {
         if !tool_names.contains(required) {
             errors.push(format!("Missing required jig tool definition: {required}."));
         }
@@ -156,11 +155,7 @@ pub(crate) fn contract_check(ctx: &RepoContext) -> Result<NativeToolOutput> {
     for tool in ctx.tool_specs() {
         match tool.kind.as_str() {
             "native" => {
-                // Keep this whitelist aligned with runtime::execute_native_tool.
-                if !matches!(
-                    tool.name.as_str(),
-                    tool::CONTRACT_CHECK | tool::MIGRATION_ADD | tool::SCHEMA_CHECK
-                ) {
+                if !jig_features::is_supported_native_tool(&tool.name) {
                     errors.push(format!("Unsupported native tool: {}.", tool.name));
                 }
             }
@@ -306,73 +301,6 @@ pub(crate) fn schema_check(ctx: &RepoContext) -> Result<NativeToolOutput> {
         stdout: "Schema dump is up to date.\n".into(),
         stderr: String::new(),
     })
-}
-
-fn required_contract_tools(ctx: &RepoContext) -> Vec<&'static str> {
-    let mut required = vec![
-        tool::FMT_CHECK,
-        tool::CLIPPY,
-        tool::TEST,
-        tool::CONTRACT_CHECK,
-    ];
-    // Command-backed contracts use the same manifest schema from v2 onward;
-    // v3 moved CLI checks under `jig check` without changing tool requirements.
-    if ctx.contract_version() >= 2
-        || has_required_key(ctx, cli_command::BOOTSTRAP, "bootstrap_command")
-    {
-        required.push(tool::BOOTSTRAP);
-    }
-    if has_required_command(ctx, "rust_test_locked_command")
-        || has_required_make_target(ctx, legacy_make_target::TEST_RUST_LOCKED)
-        || has_required_make_target(ctx, legacy_make_target::TEST_LOCKED)
-    {
-        required.push(tool::TEST_LOCKED);
-    }
-    if ctx.sqlx_enabled()
-        || has_required_key(ctx, legacy_make_target::SQLX_CHECK, "sqlx_check_command")
-    {
-        required.push(tool::SQLX_CHECK);
-    }
-    if ctx.sqlx_enabled()
-        || has_required_key(ctx, cli_command::MIGRATION_ADD, "migration_add_command")
-    {
-        required.push(tool::MIGRATION_ADD);
-    }
-    if (ctx.sqlx_enabled() && ctx.schema_dump_enabled())
-        || has_required_key(
-            ctx,
-            legacy_make_target::SCHEMA_CHECK,
-            "schema_check_command",
-        )
-    {
-        required.push(tool::SCHEMA_CHECK);
-    }
-    if (ctx.sqlx_enabled() && ctx.schema_dump_enabled())
-        || has_required_key(ctx, cli_command::SCHEMA_DUMP, "schema_dump_command")
-    {
-        required.push(tool::SCHEMA_DUMP);
-    }
-    required.sort_unstable();
-    required.dedup();
-    required
-}
-
-fn has_required_key(ctx: &RepoContext, legacy_make_target_key: &str, command_key: &str) -> bool {
-    // Contract v1 declares make targets; command-backed contracts declare command keys.
-    // Consult both so one helper can support migrated and legacy manifests.
-    has_required_make_target(ctx, legacy_make_target_key) || has_required_command(ctx, command_key)
-}
-
-fn has_required_make_target(ctx: &RepoContext, legacy_make_target_key: &str) -> bool {
-    ctx.required_make_targets()
-        .iter()
-        .any(|target| target == legacy_make_target_key)
-}
-
-fn has_required_command(ctx: &RepoContext, command_key: &str) -> bool {
-    ctx.required_commands()
-        .iter()
-        .any(|command| command == command_key)
 }
 
 fn makefile_targets(makefile: &str) -> HashSet<&str> {

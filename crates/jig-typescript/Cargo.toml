@@ -1,0 +1,13 @@
+[package]
+name = "jig-typescript"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "TypeScript feature-area checks and contract metadata for Jig."
+repository = "https://github.com/bpcakes/jig-sh"
+homepage = "https://github.com/bpcakes/jig-sh"
+documentation = "https://github.com/bpcakes/jig-sh/tree/master/docs"
+
+[dependencies]
+jig-contract.workspace = true

@@ -7,7 +7,11 @@
     "rust_fmt_check_command",
     "rust_clippy_command",
     "rust_test_command",
-    "rust_test_locked_command"[% if sqlx_enabled %],
+    "rust_test_locked_command"[% if frontend_apps | length > 0 and makefile_enabled %],
+    "typescript_lint_command",
+    "typescript_typecheck_command",
+    "typescript_build_command",
+    "typescript_coverage_command"[% endif %][% if sqlx_enabled %],
     "sqlx_check_command"[% endif %][% if sqlx_enabled and schema_dump_enabled %],
     "schema_dump_command"[% endif %]
   ],
@@ -42,6 +46,32 @@
       "description": "Run the configured locked test command.",
       "command": "rust_test_locked_command"
     },
+[% if frontend_apps | length > 0 and makefile_enabled %]
+    {
+      "name": "jig.typescript_lint",
+      "kind": "command",
+      "description": "Run the configured TypeScript lint command.",
+      "command": "typescript_lint_command"
+    },
+    {
+      "name": "jig.typescript_typecheck",
+      "kind": "command",
+      "description": "Run the configured TypeScript typecheck command.",
+      "command": "typescript_typecheck_command"
+    },
+    {
+      "name": "jig.typescript_build",
+      "kind": "command",
+      "description": "Run the configured TypeScript build command.",
+      "command": "typescript_build_command"
+    },
+    {
+      "name": "jig.typescript_coverage",
+      "kind": "command",
+      "description": "Run the configured TypeScript coverage command.",
+      "command": "typescript_coverage_command"
+    },
+[% endif %]
 [% if sqlx_enabled %]
 [% if schema_dump_enabled %]
     {

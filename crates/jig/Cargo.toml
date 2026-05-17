@@ -29,7 +29,9 @@ dev-proxy = ["dep:jig-dev-proxy"]
 anyhow.workspace = true
 clap.workspace = true
 fs4.workspace = true
+jig-contract.workspace = true
 jig-dev-proxy = { workspace = true, optional = true }
+jig-features.workspace = true
 jig-vault.workspace = true
 minijinja = { version = "2.19.0", features = ["custom_syntax"] }
 rpassword.workspace = true

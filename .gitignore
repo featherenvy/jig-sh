@@ -6,3 +6,7 @@ dist/
 tmp/
 rendered-fixtures/
 target/
+
+# Cloudflare Pages deploy staging
+site/
+.wrangler/

@@ -31,6 +31,35 @@ fn parses_check_namespace_commands() {
         other => panic!("expected check rust-file-loc command, got {other:?}"),
     }
 
+    let ts_typecheck = Cli::try_parse_from([
+        "jig",
+        "check",
+        "typescript-typecheck",
+        "--plan-id",
+        "plan_2",
+    ])
+    .unwrap();
+    match ts_typecheck.command {
+        CommandKind::Check(CheckCommand::TypeScriptTypecheck(opts)) => {
+            assert_eq!(opts.plan_id.as_deref(), Some("plan_2"));
+        }
+        other => panic!("expected check typescript-typecheck command, got {other:?}"),
+    }
+
+    for (command, expected) in [
+        ("typescript-lint", "lint"),
+        ("typescript-build", "build"),
+        ("typescript-coverage", "coverage"),
+    ] {
+        let parsed = Cli::try_parse_from(["jig", "check", command]).unwrap();
+        match (parsed.command, expected) {
+            (CommandKind::Check(CheckCommand::TypeScriptLint(_)), "lint") => {}
+            (CommandKind::Check(CheckCommand::TypeScriptBuild(_)), "build") => {}
+            (CommandKind::Check(CheckCommand::TypeScriptCoverage(_)), "coverage") => {}
+            (other, _) => panic!("expected check {command} command, got {other:?}"),
+        }
+    }
+
     for (legacy, replacement) in [
         ("fmt-check", "jig check fmt"),
         ("clippy", "jig check clippy"),

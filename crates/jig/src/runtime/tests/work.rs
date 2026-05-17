@@ -41,6 +41,57 @@ fn unavailable_schema_check_explains_disabled_config() {
 }
 
 #[test]
+fn unavailable_typescript_check_explains_project_owned_makefile_config() {
+    let temp = tempdir().unwrap();
+    fs::create_dir_all(temp.path().join(".agent")).unwrap();
+    fs::write(
+        temp.path().join(".jig.toml"),
+        r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.2.0-beta.1"
+makefile_enabled = false
+
+[[frontend_apps]]
+name = "web"
+dir = "apps/web"
+coverage_threshold = 80
+"#,
+    )
+    .unwrap();
+    fs::write(
+        temp.path().join(".agent/jig-contract.json"),
+        serde_json::to_string_pretty(&json!({
+            "contract_version": 3,
+            "tool_namespace": "jig",
+            "jig_version": "0.2.0-beta.1",
+            "required_commands": [],
+            "tools": [],
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let ctx = RepoContext::load_from(temp.path()).unwrap();
+
+    let error = dispatch(
+        &ctx,
+        CommandKind::Check(crate::cli::CheckCommand::TypeScriptLint(
+            crate::cli::ToolOpts {
+                plan_id: None,
+                no_receipt: false,
+            },
+        )),
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("jig.typescript_lint is not available"));
+    assert!(error.contains("makefile_enabled = false"));
+    assert!(error.contains("project-owned [commands]"));
+}
+
+#[test]
 fn work_goal_opens_durable_plan_and_prompt() {
     let temp = tempdir().unwrap();
     write_fixture_repo(temp.path());

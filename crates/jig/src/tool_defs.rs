@@ -1,7 +1,7 @@
 use anyhow::{Result, anyhow};
+use jig_contract::ManifestTool;
+pub(crate) use jig_contract::{kind, tool};
 use serde_json::{Map, Value, json};
-
-use crate::context::ManifestTool;
 
 pub(crate) const DEFAULT_RECEIPTS_LIMIT: usize = 20;
 
@@ -54,6 +54,10 @@ pub(crate) mod cli_command {
     pub(crate) const CHECK_SQLX_UNCHECKED_NON_TEST: &str = "sqlx-unchecked-non-test";
     pub(crate) const CHECK_TEST: &str = "test";
     pub(crate) const CHECK_TEST_LOCKED: &str = "test-locked";
+    pub(crate) const CHECK_TYPESCRIPT_BUILD: &str = "typescript-build";
+    pub(crate) const CHECK_TYPESCRIPT_COVERAGE: &str = "typescript-coverage";
+    pub(crate) const CHECK_TYPESCRIPT_LINT: &str = "typescript-lint";
+    pub(crate) const CHECK_TYPESCRIPT_TYPECHECK: &str = "typescript-typecheck";
     pub(crate) const DEV: &str = "dev";
     pub(crate) const GENERATE_SQLX_UNCHECKED_QUERIES_TODO: &str =
         "generate-sqlx-unchecked-queries-todo";
@@ -99,51 +103,6 @@ pub(crate) mod cli_command {
     pub(crate) const WORK_RECEIPTS: &str = "receipts";
     pub(crate) const WORK_START: &str = "start";
     pub(crate) const WORK_STATUS: &str = "status";
-}
-
-pub(crate) mod legacy_make_target {
-    pub(crate) const SCHEMA_CHECK: &str = "schema-check";
-    pub(crate) const SQLX_CHECK: &str = "sqlx-check";
-    // Historical generated repos used both names for the locked Rust test
-    // capability; keep both as manifest compatibility targets, not CLI labels.
-    pub(crate) const TEST_LOCKED: &str = "test-locked";
-    pub(crate) const TEST_RUST_LOCKED: &str = "test-rust-locked";
-}
-
-pub(crate) mod kind {
-    pub(crate) const COMMAND: &str = "command";
-    pub(crate) const MAKE: &str = "make";
-    pub(crate) const NATIVE: &str = "native";
-}
-
-pub(crate) mod tool {
-    pub(crate) const BOOTSTRAP: &str = "jig.bootstrap";
-    pub(crate) const AGENT_DOCTOR: &str = "jig.agent_doctor";
-    pub(crate) const CLIPPY: &str = "jig.clippy";
-    pub(crate) const CONTRACT_CHECK: &str = "jig.contract_check";
-    pub(crate) const DECISIONS_ADD: &str = "jig.decisions_add";
-    pub(crate) const FMT_CHECK: &str = "jig.fmt_check";
-    pub(crate) const MIGRATION_ADD: &str = "jig.migration_add";
-    pub(crate) const PLANS_APPEND: &str = "jig.plans_append";
-    pub(crate) const PLANS_CLOSE: &str = "jig.plans_close";
-    pub(crate) const PLANS_OPEN: &str = "jig.plans_open";
-    pub(crate) const RUN_TARGET: &str = "jig.run_target";
-    pub(crate) const SCHEMA_CHECK: &str = "jig.schema_check";
-    pub(crate) const SCHEMA_DUMP: &str = "jig.schema_dump";
-    pub(crate) const SESSION_END: &str = "jig.session_end";
-    pub(crate) const SESSION_START: &str = "jig.session_start";
-    pub(crate) const SQLX_CHECK: &str = "jig.sqlx_check";
-    pub(crate) const TEST: &str = "jig.test";
-    pub(crate) const TEST_LOCKED: &str = "jig.test_locked";
-    pub(crate) const WORK_APPEND: &str = "jig.work_append";
-    pub(crate) const WORK_CHECK: &str = "jig.work_check";
-    pub(crate) const WORK_DECIDE: &str = "jig.work_decide";
-    pub(crate) const WORK_FINISH: &str = "jig.work_finish";
-    pub(crate) const WORK_GATES: &str = "jig.work_gates";
-    pub(crate) const WORK_GOAL: &str = "jig.work_goal";
-    pub(crate) const WORK_RECEIPTS: &str = "jig.work_receipts";
-    pub(crate) const WORK_START: &str = "jig.work_start";
-    pub(crate) const WORK_STATUS: &str = "jig.work_status";
 }
 
 pub(crate) type JsonObject = Map<String, Value>;
@@ -377,7 +336,8 @@ pub(crate) fn execution_tool_args(tool: &ManifestTool, args_obj: &JsonObject) ->
 }
 
 pub(crate) fn execution_tool_requires_name(tool: &ManifestTool) -> bool {
-    tool.name == tool::MIGRATION_ADD || (is_make_tool(tool) && tool.target.is_none())
+    jig_features::native_tool_requires_name(&tool.name)
+        || (is_make_tool(tool) && tool.target.is_none())
 }
 
 fn execution_input_schema(tool: &ManifestTool) -> Value {
@@ -439,4 +399,20 @@ pub(crate) fn required_string_arg(map: &JsonObject, key: &str) -> Result<String>
 
 pub(crate) fn string_arg(map: &JsonObject, key: &str) -> Option<String> {
     map.get(key).and_then(Value::as_str).map(str::to_string)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::cli_command;
+    use jig_contract::legacy_make_target;
+
+    #[test]
+    fn legacy_make_target_aliases_match_cli_labels_when_shared() {
+        assert_eq!(legacy_make_target::BOOTSTRAP, cli_command::BOOTSTRAP);
+        assert_eq!(
+            legacy_make_target::MIGRATION_ADD,
+            cli_command::MIGRATION_ADD
+        );
+        assert_eq!(legacy_make_target::SCHEMA_DUMP, cli_command::SCHEMA_DUMP);
+    }
 }

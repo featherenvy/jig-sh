@@ -252,19 +252,39 @@ fn adopt_accepts_npm_frontend_app_and_renders_current_web_and_dev_config() {
     let answers = fs::read_to_string(repo.join(".jig.toml")).unwrap();
     assert!(answers.contains("web_package_manager = \"npm\""));
     assert!(answers.contains("[[frontend_apps]]"));
+    assert!(answers.contains("[commands]"));
+    assert!(answers.contains("typescript_lint_command = \"make typescript-lint\""));
+    assert!(answers.contains("tool = \"jig.typescript_lint\""));
+    assert!(answers.contains("tool = \"jig.typescript_typecheck\""));
+    assert!(answers.contains("tool = \"jig.typescript_build\""));
+    assert!(answers.contains("tool = \"jig.typescript_coverage\""));
     assert!(answers.contains("[[dev.apps]]"));
     assert!(answers.contains("argv = [\"npm\", \"run\", \"dev\"]"));
     assert!(!answers.contains("dev_command"));
 
     let makefile = fs::read_to_string(repo.join("Makefile")).unwrap();
     assert!(makefile.contains("WEB_INSTALL_COMMAND ?= npm ci"));
+    assert!(
+        makefile.contains("WEB_DEPS_STAMP ?= .agent/.cache/web-deps-$(WEB_PACKAGE_MANAGER).stamp")
+    );
+    assert!(!makefile.contains("Web deps up to date."));
     assert!(makefile.contains("if [ -f package.json ] && [ -f package-lock.json ]"));
     assert!(
         makefile.contains(
             "$(NODE) scripts/check-webapp-scripts.mjs apps/web lint typecheck build:bundle test:coverage"
         )
     );
+    assert!(makefile.contains("typescript-lint: web-deps"));
+    assert!(makefile.contains("typescript-typecheck: web-deps"));
+    assert!(makefile.contains("typescript-build: web-deps"));
+    assert!(makefile.contains("typescript-coverage: web-deps"));
     assert!(makefile.contains("scripts/jig dev"));
+    let contract = fs::read_to_string(repo.join(".agent/jig-contract.json")).unwrap();
+    assert!(contract.contains("\"typescript_lint_command\""));
+    assert!(contract.contains(r#""name": "jig.typescript_lint""#));
+    assert!(contract.contains(r#""name": "jig.typescript_typecheck""#));
+    assert!(contract.contains(r#""name": "jig.typescript_build""#));
+    assert!(contract.contains(r#""name": "jig.typescript_coverage""#));
     assert!(repo.join("scripts/check-webapp-scripts.mjs").is_file());
     let script_helper = fs::read_to_string(repo.join("scripts/check-webapp-scripts.mjs")).unwrap();
     assert!(script_helper.contains("typeof command !== \"string\""));
@@ -286,6 +306,75 @@ fn adopt_accepts_npm_frontend_app_and_renders_current_web_and_dev_config() {
         fs::read_to_string(repo.join(".github/workflows/agent-map-check.yml")).unwrap();
     assert!(agent_map_workflow.contains("scripts/jig check agent-map"));
     assert!(!agent_map_workflow.contains("scripts/jig agent-map check"));
+}
+
+#[test]
+fn adopt_with_project_owned_makefile_does_not_emit_make_backed_typescript_gates() {
+    let _guard = lock_env();
+    let temp = tempdir().unwrap();
+    let repo = temp.path().join("repo");
+    let template = materialize_template_git_worktree();
+    fs::create_dir_all(repo.join("apps/web")).unwrap();
+    fs::write(repo.join("Makefile"), "project-owned:\n\t@true\n").unwrap();
+    fs::write(repo.join("package.json"), r#"{"private":true}"#).unwrap();
+    fs::write(repo.join("package-lock.json"), "{}").unwrap();
+    fs::write(
+        repo.join("apps/web/package.json"),
+        r#"{
+  "name": "web",
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "build:bundle": "vite build",
+    "test:coverage": "vitest run --coverage",
+    "dev": "vite"
+  }
+}
+"#,
+    )
+    .unwrap();
+
+    run_adopt(AdoptOpts {
+        path: repo.clone(),
+        template: Some(template.path().display().to_string()),
+        template_mode: Some(TemplateMode::Committed),
+        vcs_ref: None,
+        force: false,
+        defaults: true,
+        no_input: true,
+        answers: AnswerOpts {
+            repo_name: Some("demo".into()),
+            sqlx_enabled: Some(false),
+            web_package_manager: Some("npm".into()),
+            frontend_apps: vec![FrontendApp {
+                name: "web".into(),
+                dir: "apps/web".into(),
+                coverage_threshold: 80,
+                kind: "vite".into(),
+            }],
+            ..AnswerOpts::default()
+        },
+    })
+    .unwrap();
+
+    assert_eq!(
+        fs::read_to_string(repo.join("Makefile")).unwrap(),
+        "project-owned:\n\t@true\n"
+    );
+
+    let answers = fs::read_to_string(repo.join(".jig.toml")).unwrap();
+    assert!(answers.contains("makefile_enabled = false"));
+    assert!(answers.contains("[[frontend_apps]]"));
+    assert!(!answers.contains("[commands]"));
+    assert!(!answers.contains("jig.typescript_lint"));
+
+    let contract = fs::read_to_string(repo.join(".agent/jig-contract.json")).unwrap();
+    assert!(!contract.contains("typescript_lint_command"));
+    assert!(!contract.contains("jig.typescript_lint"));
+
+    let agent_guide = fs::read_to_string(repo.join("AGENTS.md")).unwrap();
+    assert!(!agent_guide.contains("scripts/jig check typescript-lint"));
+    assert!(!agent_guide.contains("make ci-webapps"));
 }
 
 #[test]

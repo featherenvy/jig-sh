@@ -121,7 +121,10 @@ fn read_message(reader: &mut dyn BufRead) -> Result<Option<Value>> {
             return Ok(None);
         }
 
-        if line == "\r\n" {
+        // MCP stdio framing is CRLF-delimited, but some local clients send
+        // LF-only header separators. The body remains length-delimited by
+        // Content-Length; MCP headers are still line-oriented.
+        if line == "\r\n" || line == "\n" {
             break;
         }
 
@@ -144,4 +147,47 @@ fn write_message(writer: &mut dyn Write, value: &Value) -> Result<()> {
     writer.write_all(&body)?;
     writer.flush()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Cursor;
+
+    use serde_json::json;
+
+    use super::read_message;
+
+    #[test]
+    fn read_message_accepts_lf_only_header_separator() {
+        let body = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {}
+        })
+        .to_string();
+        let input = format!("Content-Length: {}\n\n{body}", body.len());
+        let mut reader = Cursor::new(input.into_bytes());
+
+        let message = read_message(&mut reader).unwrap().unwrap();
+
+        assert_eq!(message["method"], "initialize");
+    }
+
+    #[test]
+    fn read_message_accepts_crlf_header_separator() {
+        let body = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {}
+        })
+        .to_string();
+        let input = format!("Content-Length: {}\r\n\r\n{body}", body.len());
+        let mut reader = Cursor::new(input.into_bytes());
+
+        let message = read_message(&mut reader).unwrap().unwrap();
+
+        assert_eq!(message["method"], "initialize");
+    }
 }

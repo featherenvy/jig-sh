@@ -1,10 +1,11 @@
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context, Result, bail};
-use serde::{Deserialize, Serialize};
+use jig_contract::{FeatureContext, ManifestTool};
+use serde::Deserialize;
 
 const CURRENT_SESSION_FILE: &str = "jig-current-session.txt";
 pub(crate) const DEFAULT_CODEX_MARKETPLACE_ID: &str = "jig-skills";
@@ -18,21 +19,6 @@ pub(crate) const DEFAULT_CODEX_MARKETPLACE_PLUGINS: &[&str] = &[
     "jig-exec-plans@jig-skills",
 ];
 pub(crate) const SUPPORTED_WEB_PACKAGE_MANAGERS: &[&str] = &["bun", "npm", "pnpm", "yarn"];
-/// Command-backed contract keys accepted in `.agent/jig-contract.json`.
-/// Keep this aligned with `RepoConfig`, bootstrap answer parsing, and the
-/// rendered `.jig.toml` template.
-pub(crate) const SUPPORTED_COMMAND_KEYS: &[&str] = &[
-    "bootstrap_command",
-    "contract_check_command",
-    "migration_add_command",
-    "rust_clippy_command",
-    "rust_fmt_check_command",
-    "rust_test_command",
-    "rust_test_locked_command",
-    "schema_check_command",
-    "schema_dump_command",
-    "sqlx_check_command",
-];
 
 #[cfg_attr(not(feature = "dev-proxy"), allow(dead_code))]
 #[derive(Clone, Debug, Deserialize)]
@@ -108,6 +94,8 @@ struct RepoConfig {
     #[allow(dead_code)]
     #[serde(default)]
     rust_test_locked_command: String,
+    #[serde(default)]
+    commands: BTreeMap<String, String>,
     #[serde(default = "default_web_package_manager")]
     web_package_manager: String,
     #[serde(default)]
@@ -270,17 +258,6 @@ struct ContractManifest {
     #[serde(default)]
     required_commands: Vec<String>,
     tools: Vec<ManifestTool>,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub(crate) struct ManifestTool {
-    pub(crate) name: String,
-    pub(crate) kind: String,
-    pub(crate) description: String,
-    #[serde(default)]
-    pub(crate) target: Option<String>,
-    #[serde(default)]
-    pub(crate) command: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -446,8 +423,16 @@ impl RepoContext {
     }
 
     pub(crate) fn command_for_key(&self, key: &str) -> Result<&str> {
+        // Project-owned [commands] intentionally override legacy top-level fields so
+        // adopted repos can customize generated command keys without changing contracts.
+        if let Some(command) = self.config.commands.get(key) {
+            return non_empty_command(key, command);
+        }
+
         let command = match key {
             "bootstrap_command" => &self.config.bootstrap_command,
+            // Preserved for older contracts that still required the command
+            // key before contract checking became native.
             "contract_check_command" => &self.config.contract_check_command,
             "migration_add_command" => &self.config.migration_add_command,
             "rust_clippy_command" => &self.config.rust_clippy_command,
@@ -457,12 +442,19 @@ impl RepoContext {
             "schema_check_command" => &self.config.schema_check_command,
             "schema_dump_command" => &self.config.schema_dump_command,
             "sqlx_check_command" => &self.config.sqlx_check_command,
-            _ => bail!("Unsupported command key in jig contract: {key}"),
+            _ => {
+                if jig_features::is_supported_command_key(key) {
+                    bail!("Command key {key} is missing in [commands] in .jig.toml");
+                } else {
+                    bail!("Unsupported command key in jig contract: {key}");
+                }
+            }
         };
-        if command.trim().is_empty() {
-            bail!("Command key {key} is empty in .jig.toml");
-        }
-        Ok(command)
+        non_empty_command(key, command)
+    }
+
+    pub(crate) fn supports_command_key(&self, key: &str) -> bool {
+        jig_features::is_supported_command_key(key) || self.config.commands.contains_key(key)
     }
 
     #[cfg_attr(not(feature = "dev-proxy"), allow(dead_code))]
@@ -537,6 +529,43 @@ impl RepoContext {
     }
 }
 
+impl FeatureContext for RepoContext {
+    fn contract_version(&self) -> u32 {
+        self.contract_version()
+    }
+
+    fn required_commands(&self) -> &[String] {
+        self.required_commands()
+    }
+
+    fn required_make_targets(&self) -> &[String] {
+        self.required_make_targets()
+    }
+
+    fn makefile_enabled(&self) -> bool {
+        self.makefile_enabled()
+    }
+
+    fn sqlx_enabled(&self) -> bool {
+        self.sqlx_enabled()
+    }
+
+    fn schema_dump_enabled(&self) -> bool {
+        self.schema_dump_enabled()
+    }
+
+    fn frontend_app_count(&self) -> usize {
+        self.frontend_apps().len()
+    }
+}
+
+fn non_empty_command<'a>(key: &str, command: &'a str) -> Result<&'a str> {
+    if command.trim().is_empty() {
+        bail!("Command key {key} is empty in .jig.toml");
+    }
+    Ok(command)
+}
+
 fn default_required() -> bool {
     true
 }
@@ -581,9 +610,33 @@ pub(crate) fn default_codex_marketplace_plugins() -> Vec<String> {
 }
 
 fn validate_config(config: &RepoConfig) -> Result<()> {
+    validate_command_map(&config.commands)?;
     validate_web_package_manager(&config.web_package_manager)?;
     validate_dev_config(config)?;
     validate_work_config(config)
+}
+
+fn validate_command_map(commands: &BTreeMap<String, String>) -> Result<()> {
+    for key in commands.keys() {
+        if !is_safe_command_key(key) {
+            bail!(
+                "Invalid [commands] key '{key}'. Use lowercase ASCII letters, numbers, and underscores, start with a letter, and end command keys with '_command'."
+            );
+        }
+    }
+    Ok(())
+}
+
+fn is_safe_command_key(value: &str) -> bool {
+    !value.is_empty()
+        && value.ends_with("_command")
+        && value
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_lowercase())
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_')
 }
 
 pub(crate) fn validate_web_package_manager(value: &str) -> Result<()> {

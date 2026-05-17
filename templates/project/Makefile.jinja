@@ -7,6 +7,9 @@ NODE ?= node
 WEB_PACKAGE_MANAGER ?= <<[ web_package_manager ]>>
 WEB_INSTALL_COMMAND ?= <<[ web_install_command ]>>
 WEB_RUN_COMMAND ?= <<[ web_run_command ]>>
+# This stamp only skips installs after a successful lockfile-respecting install;
+# package/lockfile mtimes or missing node_modules force a fresh web-deps-install run.
+WEB_DEPS_STAMP ?= .agent/.cache/web-deps-$(WEB_PACKAGE_MANAGER).stamp
 
 DEFAULT_BRANCH ?= <<[ default_branch ]>>
 JIG_VERSION ?= <<[ jig_version ]>>
@@ -22,7 +25,7 @@ RUST_MIGRATION_DIR := <<[ rust_migration_dir ]>>
 .PHONY: contract-check
 [% endif %]
 .PHONY: check-agent-map check-agent-guides check-rust-file-loc check-no-mod-rs[% if sqlx_enabled %] check-sqlx-unchecked-non-test[% endif %]
-.PHONY: enforce-coverage ci ci-webapps
+.PHONY: enforce-coverage web-deps web-deps-install typescript-lint typescript-typecheck typescript-build typescript-coverage ci ci-webapps
 [% for app in frontend_apps %]
 .PHONY: ci-webapp-<<[ app.name | replace('-', '_') ]>>
 [% endfor %]
@@ -38,6 +41,70 @@ bootstrap: ## Initialize the local workspace
 
 deps: ## Install Rust and optional webapp dependencies
 	$(CARGO) fetch
+	$(MAKE) web-deps
+
+web-deps: ## Install configured webapp dependencies
+	@mkdir -p "$(dir $(WEB_DEPS_STAMP))"
+[% if frontend_apps | length > 0 %]
+	@if [ -f "$(WEB_DEPS_STAMP)" ]; then \
+	  stale=0; missing=0; \
+[% for app in frontend_apps -%]
+[% if web_package_manager == "bun" -%]
+	  for path in package.json bun.lock bun.lockb <<[ app.dir ]>>/package.json <<[ app.dir ]>>/bun.lock <<[ app.dir ]>>/bun.lockb; do \
+	    if [ -e "$$path" ] && [ "$$path" -nt "$(WEB_DEPS_STAMP)" ]; then stale=1; fi; \
+	  done; \
+	  if [ -f package.json ] && { [ -f bun.lock ] || [ -f bun.lockb ]; }; then \
+	    [ -d node_modules ] || missing=1; \
+	  else \
+	    { [ -f <<[ app.dir ]>>/bun.lock ] || [ -f <<[ app.dir ]>>/bun.lockb ]; } || missing=1; \
+	    [ -d <<[ app.dir ]>>/node_modules ] || missing=1; \
+	  fi; \
+[% elif web_package_manager == "npm" -%]
+	  for path in package.json package-lock.json <<[ app.dir ]>>/package.json <<[ app.dir ]>>/package-lock.json; do \
+	    if [ -e "$$path" ] && [ "$$path" -nt "$(WEB_DEPS_STAMP)" ]; then stale=1; fi; \
+	  done; \
+	  if [ -f package.json ] && [ -f package-lock.json ]; then \
+	    [ -d node_modules ] || missing=1; \
+	  else \
+	    [ -f <<[ app.dir ]>>/package-lock.json ] || missing=1; \
+	    [ -d <<[ app.dir ]>>/node_modules ] || missing=1; \
+	  fi; \
+[% elif web_package_manager == "pnpm" -%]
+	  for path in package.json pnpm-lock.yaml <<[ app.dir ]>>/package.json <<[ app.dir ]>>/pnpm-lock.yaml; do \
+	    if [ -e "$$path" ] && [ "$$path" -nt "$(WEB_DEPS_STAMP)" ]; then stale=1; fi; \
+	  done; \
+	  if [ -f package.json ] && [ -f pnpm-lock.yaml ]; then \
+	    [ -d node_modules ] || missing=1; \
+	  else \
+	    [ -f <<[ app.dir ]>>/pnpm-lock.yaml ] || missing=1; \
+	    [ -d <<[ app.dir ]>>/node_modules ] || missing=1; \
+	  fi; \
+[% elif web_package_manager == "yarn" -%]
+	  for path in package.json yarn.lock <<[ app.dir ]>>/package.json <<[ app.dir ]>>/yarn.lock; do \
+	    if [ -e "$$path" ] && [ "$$path" -nt "$(WEB_DEPS_STAMP)" ]; then stale=1; fi; \
+	  done; \
+	  if [ -f package.json ] && [ -f yarn.lock ]; then \
+	    [ -d node_modules ] || missing=1; \
+	  else \
+	    [ -f <<[ app.dir ]>>/yarn.lock ] || missing=1; \
+	    [ -d <<[ app.dir ]>>/node_modules ] || missing=1; \
+	  fi; \
+[% endif -%]
+	[% endfor -%]
+		  if [ "$$stale" -eq 0 ] && [ "$$missing" -eq 0 ]; then \
+		    :; \
+		  else \
+	    $(MAKE) web-deps-install; \
+	  fi; \
+	else \
+	  $(MAKE) web-deps-install; \
+	fi
+[% else %]
+	@echo "No web apps configured."
+[% endif %]
+
+web-deps-install: ## Install configured webapp dependencies without stamp checks
+	@mkdir -p "$(dir $(WEB_DEPS_STAMP))"
 [% if frontend_apps | length > 0 %]
 [% for app in frontend_apps %]
 [% if web_package_manager == "bun" %]
@@ -65,6 +132,48 @@ deps: ## Install Rust and optional webapp dependencies
 	  cd <<[ app.dir ]>> && $(WEB_INSTALL_COMMAND); \
 	fi
 [% endif %]
+[% endfor %]
+	@touch "$(WEB_DEPS_STAMP)"
+[% else %]
+	@echo "No web apps configured."
+[% endif %]
+
+typescript-lint: web-deps ## Run configured TypeScript lint checks
+[% if frontend_apps | length > 0 %]
+[% for app in frontend_apps %]
+	$(NODE) scripts/check-webapp-scripts.mjs <<[ app.dir ]>> lint
+	cd <<[ app.dir ]>> && $(WEB_RUN_COMMAND) lint
+[% endfor %]
+[% else %]
+	@echo "No web apps configured."
+[% endif %]
+
+typescript-typecheck: web-deps ## Run configured TypeScript type checks
+[% if frontend_apps | length > 0 %]
+[% for app in frontend_apps %]
+	$(NODE) scripts/check-webapp-scripts.mjs <<[ app.dir ]>> typecheck
+	cd <<[ app.dir ]>> && $(WEB_RUN_COMMAND) typecheck
+[% endfor %]
+[% else %]
+	@echo "No web apps configured."
+[% endif %]
+
+typescript-build: web-deps ## Run configured TypeScript bundle builds
+[% if frontend_apps | length > 0 %]
+[% for app in frontend_apps %]
+	$(NODE) scripts/check-webapp-scripts.mjs <<[ app.dir ]>> build:bundle
+	cd <<[ app.dir ]>> && $(WEB_RUN_COMMAND) build:bundle
+[% endfor %]
+[% else %]
+	@echo "No web apps configured."
+[% endif %]
+
+typescript-coverage: web-deps ## Run configured TypeScript coverage checks
+[% if frontend_apps | length > 0 %]
+[% for app in frontend_apps %]
+	$(NODE) scripts/check-webapp-scripts.mjs <<[ app.dir ]>> test:coverage
+	cd <<[ app.dir ]>> && $(WEB_RUN_COMMAND) test:coverage
+	$(MAKE) enforce-coverage COVERAGE_DIR=<<[ app.dir ]>>/coverage COVERAGE_THRESHOLD=<<[ app.coverage_threshold ]>>
 [% endfor %]
 [% else %]
 	@echo "No web apps configured."

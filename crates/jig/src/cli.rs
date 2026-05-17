@@ -216,6 +216,18 @@ pub(crate) enum CheckCommand {
     /// Run the configured locked test command.
     #[command(name = tool_defs::cli_command::CHECK_TEST_LOCKED)]
     TestLocked(ToolOpts),
+    /// Run the configured TypeScript lint command.
+    #[command(name = tool_defs::cli_command::CHECK_TYPESCRIPT_LINT)]
+    TypeScriptLint(ToolOpts),
+    /// Run the configured TypeScript typecheck command.
+    #[command(name = tool_defs::cli_command::CHECK_TYPESCRIPT_TYPECHECK)]
+    TypeScriptTypecheck(ToolOpts),
+    /// Run the configured TypeScript build command.
+    #[command(name = tool_defs::cli_command::CHECK_TYPESCRIPT_BUILD)]
+    TypeScriptBuild(ToolOpts),
+    /// Run the configured TypeScript coverage command.
+    #[command(name = tool_defs::cli_command::CHECK_TYPESCRIPT_COVERAGE)]
+    TypeScriptCoverage(ToolOpts),
     /// Verify committed SQLx metadata when SQLx is enabled.
     #[command(name = tool_defs::cli_command::CHECK_SQLX)]
     Sqlx(ToolOpts),

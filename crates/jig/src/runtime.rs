@@ -2,13 +2,14 @@ use std::borrow::Cow;
 use std::process::{Command, Output};
 
 use anyhow::{Context, Result, anyhow, bail};
+use jig_contract::{ManifestTool, NativeToolKind};
 use serde_json::{Value, json};
 
 use crate::command::{AgentMapCommand, CheckCommand, RuntimeCommand, ToolRequest};
-use crate::context::{ManifestTool, RepoContext};
+use crate::context::RepoContext;
 use crate::policy::{
-    AgentMapInput, MigrationImmutabilityInput, PolicyCheckCommand, PolicyDirectCommand,
-    RustFileLocInput, SqlxTodoInput,
+    AgentMapInput, MigrationImmutabilityInput, NativeToolOutput, PolicyCheckCommand,
+    PolicyDirectCommand, RustFileLocInput, SqlxTodoInput,
 };
 use crate::state::{ReceiptInput, now_ms, record_receipt};
 use crate::tool_defs::{self, JsonObject, MemoryTool, args, string_arg, tool};
@@ -102,6 +103,18 @@ fn dispatch_check(ctx: &RepoContext, command: CheckCommand) -> Result<Value> {
         CheckCommand::Test(opts) => execute_manifest_tool_request(ctx, tool::TEST, json!({}), opts),
         CheckCommand::TestLocked(opts) => {
             execute_manifest_tool_request(ctx, tool::TEST_LOCKED, json!({}), opts)
+        }
+        CheckCommand::TypeScriptLint(opts) => {
+            execute_manifest_tool_request(ctx, tool::TYPESCRIPT_LINT, json!({}), opts)
+        }
+        CheckCommand::TypeScriptTypecheck(opts) => {
+            execute_manifest_tool_request(ctx, tool::TYPESCRIPT_TYPECHECK, json!({}), opts)
+        }
+        CheckCommand::TypeScriptBuild(opts) => {
+            execute_manifest_tool_request(ctx, tool::TYPESCRIPT_BUILD, json!({}), opts)
+        }
+        CheckCommand::TypeScriptCoverage(opts) => {
+            execute_manifest_tool_request(ctx, tool::TYPESCRIPT_COVERAGE, json!({}), opts)
         }
         CheckCommand::Sqlx(opts) => {
             execute_manifest_tool_request(ctx, tool::SQLX_CHECK, json!({}), opts)
@@ -278,19 +291,31 @@ fn execute_manifest_tool_with_options(
 }
 
 fn undeclared_tool_message(ctx: &RepoContext, tool_name: &str) -> String {
-    match tool_name {
-        tool::SCHEMA_CHECK | tool::SCHEMA_DUMP if !ctx.sqlx_enabled() => format!(
-            "{tool_name} is not available because sqlx_enabled = false in .jig.toml. Enable SQLx and schema dumps, then run `jig update --recopy`, or remove this command/gate."
-        ),
-        // Valid configs only reach this arm when SQLx is enabled but schema
-        // dump tooling is intentionally disabled.
-        tool::SCHEMA_CHECK | tool::SCHEMA_DUMP if !ctx.schema_dump_enabled() => format!(
-            "{tool_name} is not available because schema_dump_enabled = false in .jig.toml. Enable schema dumps, then run `jig update --recopy`, or remove this command/gate."
-        ),
-        tool::SQLX_CHECK | tool::MIGRATION_ADD if !ctx.sqlx_enabled() => format!(
-            "{tool_name} is not available because sqlx_enabled = false in .jig.toml. Enable SQLx, then run `jig update --recopy`, or remove this command/gate."
-        ),
-        _ => format!("Tool is not declared in .agent/jig-contract.json: {tool_name}"),
+    if let Some(message) = jig_features::unavailable_tool_message(ctx, tool_name) {
+        message
+    } else {
+        format!("Tool is not declared in .agent/jig-contract.json: {tool_name}")
+    }
+}
+
+fn run_native_tool(
+    ctx: &RepoContext,
+    tool_name: &str,
+    args_value: &Value,
+) -> Result<NativeToolOutput> {
+    match jig_features::native_tool_kind(tool_name)
+        .ok_or_else(|| anyhow!("Unsupported native tool: {tool_name}"))?
+    {
+        NativeToolKind::ContractCheck => crate::policy::contract_check(ctx),
+        NativeToolKind::MigrationAdd => {
+            let name = args_value
+                .get(args::NAME)
+                .and_then(Value::as_str)
+                .ok_or_else(|| anyhow!("{} requires a name argument", tool::MIGRATION_ADD))?;
+            crate::policy::migration_add(ctx, name)
+        }
+        NativeToolKind::SchemaCheck => crate::policy::schema_check(ctx),
+        _ => bail!("Unsupported native tool kind for {tool_name}"),
     }
 }
 
@@ -303,18 +328,7 @@ fn execute_native_tool(
     collect_worktree_fingerprint: bool,
 ) -> Result<Value> {
     let started = now_ms();
-    let output = match tool_name {
-        tool::CONTRACT_CHECK => crate::policy::contract_check(ctx),
-        tool::MIGRATION_ADD => {
-            let name = args
-                .get(args::NAME)
-                .and_then(Value::as_str)
-                .ok_or_else(|| anyhow!("{} requires a name argument", tool::MIGRATION_ADD))?;
-            crate::policy::migration_add(ctx, name)
-        }
-        tool::SCHEMA_CHECK => crate::policy::schema_check(ctx),
-        _ => bail!("Unsupported native tool: {tool_name}"),
-    }?;
+    let output = run_native_tool(ctx, tool_name, &args)?;
     let ended = now_ms();
 
     let receipt_result = maybe_record_receipt(

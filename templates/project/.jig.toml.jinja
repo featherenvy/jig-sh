@@ -45,6 +45,17 @@ coverage_threshold = <<[ app.coverage_threshold ]>>
 [% endfor %]
 [% endif %]
 
+[% if frontend_apps | length > 0 and makefile_enabled %]
+# Extra command keys must use *_command names so contract required_commands
+# stay distinct from tool names and gate ids. Entries here override same-named
+# legacy top-level command fields.
+[commands]
+typescript_lint_command = "make typescript-lint"
+typescript_typecheck_command = "make typescript-typecheck"
+typescript_build_command = "make typescript-build"
+typescript_coverage_command = "make typescript-coverage"
+
+[% endif %]
 [dev]
 proxy_port = 1355
 https_port = 1443
@@ -78,6 +89,28 @@ id = "tests"
 kind = "check"
 tool = "jig.test"
 
+[% if frontend_apps | length > 0 and makefile_enabled %]
+[[work.gates]]
+id = "typescript-lint"
+kind = "check"
+tool = "jig.typescript_lint"
+
+[[work.gates]]
+id = "typescript-typecheck"
+kind = "check"
+tool = "jig.typescript_typecheck"
+
+[[work.gates]]
+id = "typescript-build"
+kind = "check"
+tool = "jig.typescript_build"
+
+[[work.gates]]
+id = "typescript-coverage"
+kind = "check"
+tool = "jig.typescript_coverage"
+
+[% endif %]
 [% if sqlx_enabled %]
 [[work.gates]]
 id = "sqlx"

@@ -1,0 +1,13 @@
+[package]
+name = "jig-contract"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Shared contract types and constants for the Jig runtime."
+repository = "https://github.com/bpcakes/jig-sh"
+homepage = "https://github.com/bpcakes/jig-sh"
+documentation = "https://github.com/bpcakes/jig-sh/tree/master/docs"
+
+[dependencies]
+serde.workspace = true

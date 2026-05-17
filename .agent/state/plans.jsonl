@@ -31,3 +31,7 @@
 {"id":"plan-event_01KRSC6ZAGCQN92AZ69W3TQXJ0","plan_id":"plan_01KRSC6ZACYWDREXFSR6ZETH5N","event":"open","timestamp_ms":1778968132944,"title":"Implement Jig Vault","body_path":".agent/plans/plan_01KRSC6ZACYWDREXFSR6ZETH5N.md","resolution":null}
 {"id":"plan-event_01KRV0NJHB0S2T16DZSENDDJZF","plan_id":"plan_01KRV0NJHBKNF5YPZ6M60KERAT","event":"open","timestamp_ms":1779023137323,"title":"Improve first-time Jig adoption UX","body_path":".agent/plans/plan_01KRV0NJHBKNF5YPZ6M60KERAT.md","resolution":null}
 {"id":"plan-event_01KRV49CCQWAAYY86X4WKXXQKH","plan_id":"plan_01KRV0NJHBKNF5YPZ6M60KERAT","event":"close","timestamp_ms":1779026932119,"title":null,"body_path":null,"resolution":null}
+{"id":"plan-event_01KRVGS2SPKNK9VBD6TNRABZN8","plan_id":"plan_01KRVGS2SPDB5C7KEG4RZXSH91","event":"open","timestamp_ms":1779040029494,"title":"Feature-area modularity registry","body_path":".agent/plans/plan_01KRVGS2SPDB5C7KEG4RZXSH91.md","resolution":null}
+{"id":"plan-event_01KRVN368RPZT0MYVPXSKSB5RY","plan_id":"plan_01KRVGS2SPDB5C7KEG4RZXSH91","event":"close","timestamp_ms":1779044555033,"title":null,"body_path":null,"resolution":null}
+{"id":"plan-event_01KRVNMYQY9HGT8R4C37AP8PX8","plan_id":"plan_01KRVNMYQXVYEWA3MJ7M90XPJP","event":"open","timestamp_ms":1779045137150,"title":"Split Jig feature crates","body_path":".agent/plans/plan_01KRVNMYQXVYEWA3MJ7M90XPJP.md","resolution":null}
+{"id":"plan-event_01KRVPW7YD500W8VBY6D9HKABH","plan_id":"plan_01KRVNMYQXVYEWA3MJ7M90XPJP","event":"close","timestamp_ms":1779046424525,"title":null,"body_path":null,"resolution":"completed"}

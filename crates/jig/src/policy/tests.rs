@@ -164,6 +164,436 @@ makefile_enabled = true
 }
 
 #[test]
+fn contract_check_accepts_dynamic_command_map_tools() {
+    let temp = tempdir().unwrap();
+    fs::create_dir_all(temp.path().join(".agent")).unwrap();
+    fs::create_dir_all(temp.path().join("scripts")).unwrap();
+    fs::write(temp.path().join(".mcp.json"), "{}").unwrap();
+    fs::write(temp.path().join("scripts/jig"), "#!/bin/sh\n").unwrap();
+    fs::write(temp.path().join("scripts/install-jig.sh"), "#!/bin/sh\n").unwrap();
+    fs::write(
+        temp.path().join(".jig.toml"),
+        r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.2.0-beta.1"
+makefile_enabled = false
+bootstrap_command = "true"
+rust_fmt_check_command = "true"
+rust_clippy_command = "true"
+rust_test_command = "true"
+
+[commands]
+typescript_lint_command = "make typescript-lint"
+"#,
+    )
+    .unwrap();
+    fs::write(
+        temp.path().join(".agent/jig-contract.json"),
+        serde_json::to_string_pretty(&json!({
+            "contract_version": 3,
+            "tool_namespace": "jig",
+            "jig_version": "0.2.0-beta.1",
+            "required_commands": [
+                "bootstrap_command",
+                "rust_fmt_check_command",
+                "rust_clippy_command",
+                "rust_test_command",
+                "typescript_lint_command"
+            ],
+            "tools": [
+                {
+                    "name": tool::BOOTSTRAP,
+                    "kind": kind::COMMAND,
+                    "description": "Bootstrap.",
+                    "command": "bootstrap_command"
+                },
+                {
+                    "name": tool::FMT_CHECK,
+                    "kind": kind::COMMAND,
+                    "description": "Format.",
+                    "command": "rust_fmt_check_command"
+                },
+                {
+                    "name": tool::CLIPPY,
+                    "kind": kind::COMMAND,
+                    "description": "Clippy.",
+                    "command": "rust_clippy_command"
+                },
+                {
+                    "name": tool::TEST,
+                    "kind": kind::COMMAND,
+                    "description": "Test.",
+                    "command": "rust_test_command"
+                },
+                {
+                    "name": tool::TYPESCRIPT_LINT,
+                    "kind": kind::COMMAND,
+                    "description": "Run TypeScript lint.",
+                    "command": "typescript_lint_command"
+                },
+                {
+                    "name": tool::CONTRACT_CHECK,
+                    "kind": kind::NATIVE,
+                    "description": "Contract check."
+                }
+            ],
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let ctx = RepoContext::load_from(temp.path()).unwrap();
+    let output = contract_check(&ctx).unwrap();
+
+    assert_eq!(output.exit_status, 0, "{}", output.stderr);
+}
+
+#[test]
+fn contract_check_does_not_require_undeclared_rust_gate_tools() {
+    let temp = tempdir().unwrap();
+    fs::create_dir_all(temp.path().join(".agent")).unwrap();
+    fs::create_dir_all(temp.path().join("scripts")).unwrap();
+    fs::write(temp.path().join(".mcp.json"), "{}").unwrap();
+    fs::write(temp.path().join("scripts/jig"), "#!/bin/sh\n").unwrap();
+    fs::write(temp.path().join("scripts/install-jig.sh"), "#!/bin/sh\n").unwrap();
+    fs::write(
+        temp.path().join(".jig.toml"),
+        r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.2.0-beta.1"
+makefile_enabled = false
+bootstrap_command = "true"
+
+[commands]
+typescript_lint_command = "npm run lint"
+"#,
+    )
+    .unwrap();
+    fs::write(
+        temp.path().join(".agent/jig-contract.json"),
+        serde_json::to_string_pretty(&json!({
+            "contract_version": 3,
+            "tool_namespace": "jig",
+            "jig_version": "0.2.0-beta.1",
+            "required_commands": [
+                "bootstrap_command",
+                "typescript_lint_command"
+            ],
+            "tools": [
+                {
+                    "name": tool::BOOTSTRAP,
+                    "kind": kind::COMMAND,
+                    "description": "Bootstrap.",
+                    "command": "bootstrap_command"
+                },
+                {
+                    "name": tool::TYPESCRIPT_LINT,
+                    "kind": kind::COMMAND,
+                    "description": "Run TypeScript lint.",
+                    "command": "typescript_lint_command"
+                },
+                {
+                    "name": tool::CONTRACT_CHECK,
+                    "kind": kind::NATIVE,
+                    "description": "Contract check."
+                }
+            ],
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let ctx = RepoContext::load_from(temp.path()).unwrap();
+    let output = contract_check(&ctx).unwrap();
+
+    assert_eq!(output.exit_status, 0, "{}", output.stderr);
+}
+
+#[test]
+fn contract_check_requires_declared_rust_gate_tools() {
+    let temp = tempdir().unwrap();
+    fs::create_dir_all(temp.path().join(".agent")).unwrap();
+    fs::create_dir_all(temp.path().join("scripts")).unwrap();
+    fs::write(temp.path().join(".mcp.json"), "{}").unwrap();
+    fs::write(temp.path().join("scripts/jig"), "#!/bin/sh\n").unwrap();
+    fs::write(temp.path().join("scripts/install-jig.sh"), "#!/bin/sh\n").unwrap();
+    fs::write(
+        temp.path().join(".jig.toml"),
+        r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.2.0-beta.1"
+makefile_enabled = false
+bootstrap_command = "true"
+rust_fmt_check_command = "true"
+rust_clippy_command = "true"
+rust_test_command = "true"
+"#,
+    )
+    .unwrap();
+    fs::write(
+        temp.path().join(".agent/jig-contract.json"),
+        serde_json::to_string_pretty(&json!({
+            "contract_version": 3,
+            "tool_namespace": "jig",
+            "jig_version": "0.2.0-beta.1",
+            "required_commands": [
+                "bootstrap_command",
+                "rust_fmt_check_command",
+                "rust_clippy_command",
+                "rust_test_command"
+            ],
+            "tools": [
+                {
+                    "name": tool::BOOTSTRAP,
+                    "kind": kind::COMMAND,
+                    "description": "Bootstrap.",
+                    "command": "bootstrap_command"
+                },
+                {
+                    "name": tool::CONTRACT_CHECK,
+                    "kind": kind::NATIVE,
+                    "description": "Contract check."
+                }
+            ],
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let ctx = RepoContext::load_from(temp.path()).unwrap();
+    let output = contract_check(&ctx).unwrap();
+
+    assert_eq!(output.exit_status, 1);
+    assert!(output.stderr.contains(tool::FMT_CHECK), "{}", output.stderr);
+    assert!(output.stderr.contains(tool::CLIPPY), "{}", output.stderr);
+    assert!(output.stderr.contains(tool::TEST), "{}", output.stderr);
+}
+
+#[test]
+fn contract_check_requires_generated_typescript_gate_tools() {
+    let temp = tempdir().unwrap();
+    fs::create_dir_all(temp.path().join(".agent")).unwrap();
+    fs::create_dir_all(temp.path().join("scripts")).unwrap();
+    fs::write(temp.path().join(".mcp.json"), "{}").unwrap();
+    fs::write(temp.path().join("scripts/jig"), "#!/bin/sh\n").unwrap();
+    fs::write(temp.path().join("scripts/install-jig.sh"), "#!/bin/sh\n").unwrap();
+    fs::write(
+        temp.path().join(".jig.toml"),
+        r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.2.0-beta.1"
+makefile_enabled = true
+bootstrap_command = "true"
+
+[[frontend_apps]]
+name = "web"
+dir = "apps/web"
+coverage_threshold = 80
+"#,
+    )
+    .unwrap();
+    fs::write(
+        temp.path().join(".agent/jig-contract.json"),
+        serde_json::to_string_pretty(&json!({
+            "contract_version": 3,
+            "tool_namespace": "jig",
+            "jig_version": "0.2.0-beta.1",
+            "required_commands": ["bootstrap_command"],
+            "tools": [
+                {
+                    "name": tool::BOOTSTRAP,
+                    "kind": kind::COMMAND,
+                    "description": "Bootstrap.",
+                    "command": "bootstrap_command"
+                },
+                {
+                    "name": tool::CONTRACT_CHECK,
+                    "kind": kind::NATIVE,
+                    "description": "Contract check."
+                }
+            ],
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let ctx = RepoContext::load_from(temp.path()).unwrap();
+    let output = contract_check(&ctx).unwrap();
+
+    assert_eq!(output.exit_status, 1);
+    assert!(
+        output.stderr.contains(tool::TYPESCRIPT_LINT),
+        "{}",
+        output.stderr
+    );
+    assert!(
+        output.stderr.contains(tool::TYPESCRIPT_TYPECHECK),
+        "{}",
+        output.stderr
+    );
+    assert!(
+        output.stderr.contains(tool::TYPESCRIPT_BUILD),
+        "{}",
+        output.stderr
+    );
+    assert!(
+        output.stderr.contains(tool::TYPESCRIPT_COVERAGE),
+        "{}",
+        output.stderr
+    );
+}
+
+#[test]
+fn contract_check_does_not_require_generated_typescript_gates_for_legacy_contracts() {
+    let temp = tempdir().unwrap();
+    fs::create_dir_all(temp.path().join(".agent")).unwrap();
+    fs::create_dir_all(temp.path().join("scripts")).unwrap();
+    fs::write(temp.path().join(".mcp.json"), "{}").unwrap();
+    fs::write(temp.path().join("Makefile"), "bootstrap:\n").unwrap();
+    fs::write(temp.path().join("scripts/jig"), "#!/bin/sh\n").unwrap();
+    fs::write(temp.path().join("scripts/install-jig.sh"), "#!/bin/sh\n").unwrap();
+    fs::write(
+        temp.path().join(".jig.toml"),
+        r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.2.0-beta.1"
+makefile_enabled = true
+bootstrap_command = "true"
+
+[[frontend_apps]]
+name = "web"
+dir = "apps/web"
+coverage_threshold = 80
+"#,
+    )
+    .unwrap();
+    fs::write(
+        temp.path().join(".agent/jig-contract.json"),
+        serde_json::to_string_pretty(&json!({
+            "contract_version": 2,
+            "tool_namespace": "jig",
+            "jig_version": "0.2.0-beta.1",
+            "required_commands": ["bootstrap_command"],
+            "tools": [
+                {
+                    "name": tool::BOOTSTRAP,
+                    "kind": kind::COMMAND,
+                    "description": "Bootstrap.",
+                    "command": "bootstrap_command"
+                },
+                {
+                    "name": tool::CONTRACT_CHECK,
+                    "kind": kind::NATIVE,
+                    "description": "Contract check."
+                }
+            ],
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let ctx = RepoContext::load_from(temp.path()).unwrap();
+    let output = contract_check(&ctx).unwrap();
+
+    assert_eq!(output.exit_status, 0, "{}", output.stderr);
+}
+
+#[test]
+fn contract_check_reports_missing_feature_declared_command_map_entry() {
+    let temp = tempdir().unwrap();
+    fs::create_dir_all(temp.path().join(".agent")).unwrap();
+    fs::create_dir_all(temp.path().join("scripts")).unwrap();
+    fs::write(temp.path().join(".mcp.json"), "{}").unwrap();
+    fs::write(temp.path().join("scripts/jig"), "#!/bin/sh\n").unwrap();
+    fs::write(temp.path().join("scripts/install-jig.sh"), "#!/bin/sh\n").unwrap();
+    fs::write(
+        temp.path().join(".jig.toml"),
+        r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.2.0-beta.1"
+makefile_enabled = false
+bootstrap_command = "true"
+rust_fmt_check_command = "true"
+rust_clippy_command = "true"
+rust_test_command = "true"
+"#,
+    )
+    .unwrap();
+    fs::write(
+        temp.path().join(".agent/jig-contract.json"),
+        serde_json::to_string_pretty(&json!({
+            "contract_version": 3,
+            "tool_namespace": "jig",
+            "jig_version": "0.2.0-beta.1",
+            "required_commands": [
+                "bootstrap_command",
+                "rust_fmt_check_command",
+                "rust_clippy_command",
+                "rust_test_command",
+                "typescript_lint_command"
+            ],
+            "tools": [
+                {
+                    "name": tool::BOOTSTRAP,
+                    "kind": kind::COMMAND,
+                    "description": "Bootstrap.",
+                    "command": "bootstrap_command"
+                },
+                {
+                    "name": tool::FMT_CHECK,
+                    "kind": kind::COMMAND,
+                    "description": "Format.",
+                    "command": "rust_fmt_check_command"
+                },
+                {
+                    "name": tool::CLIPPY,
+                    "kind": kind::COMMAND,
+                    "description": "Clippy.",
+                    "command": "rust_clippy_command"
+                },
+                {
+                    "name": tool::TEST,
+                    "kind": kind::COMMAND,
+                    "description": "Test.",
+                    "command": "rust_test_command"
+                },
+                {
+                    "name": tool::TYPESCRIPT_LINT,
+                    "kind": kind::COMMAND,
+                    "description": "Run TypeScript lint.",
+                    "command": "typescript_lint_command"
+                },
+                {
+                    "name": tool::CONTRACT_CHECK,
+                    "kind": kind::NATIVE,
+                    "description": "Contract check."
+                }
+            ],
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let ctx = RepoContext::load_from(temp.path()).unwrap();
+    let output = contract_check(&ctx).unwrap();
+
+    assert_eq!(output.exit_status, 1);
+    assert!(output.stderr.contains("missing in [commands]"));
+}
+
+#[test]
 fn migration_immutability_parses_nul_name_status_entries() {
     let bytes = b"A\0migrations/002_added.up.sql\0M\0migrations/001_changed.up.sql\0R100\0migrations/001_old.up.sql\0migrations/001_new.up.sql\0D\0migrations/001_deleted.down.sql\0T\0migrations/001_type.sql\0";
 
