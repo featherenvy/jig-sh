@@ -8,6 +8,7 @@ on:
       - "<<[ app.dir ]>>/**"
 [% endfor %]
       - "Makefile"
+      - "scripts/check-webapp-scripts.mjs"
       - ".github/workflows/webapp-checks.yml"
   push:
     branches:
@@ -17,6 +18,7 @@ on:
       - "<<[ app.dir ]>>/**"
 [% endfor %]
       - "Makefile"
+      - "scripts/check-webapp-scripts.mjs"
       - ".github/workflows/webapp-checks.yml"
   merge_group:
     types:
@@ -46,25 +48,107 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+[% if web_package_manager == "bun" %]
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
       - name: Cache Bun dependencies
         uses: actions/cache@v5
         with:
           path: |
             ~/.bun/install/cache
+            node_modules
             ${{ matrix.app.dir }}/node_modules
-          key: ${{ runner.os }}-bun-${{ matrix.app.dir }}-${{ hashFiles(format('{0}/bun.lock', matrix.app.dir)) }}
+          key: ${{ runner.os }}-bun-${{ matrix.app.dir }}-${{ hashFiles('bun.lock', 'bun.lockb', format('{0}/bun.lock', matrix.app.dir), format('{0}/bun.lockb', matrix.app.dir)) }}
+[% else %]
+[% if web_package_manager == "npm" %]
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: <<[ web_package_manager ]>>
+          cache-dependency-path: |
+            package-lock.json
+            ${{ matrix.app.dir }}/package-lock.json
+[% elif web_package_manager == "pnpm" %]
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Enable Corepack
+        run: corepack enable
+      # setup-node cache detection for pnpm needs Corepack shims first.
+      - name: Configure Node dependency cache
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: <<[ web_package_manager ]>>
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            ${{ matrix.app.dir }}/pnpm-lock.yaml
+[% elif web_package_manager == "yarn" %]
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Enable Corepack
+        run: corepack enable
+      # setup-node cache detection for yarn needs Corepack shims first.
+      - name: Configure Node dependency cache
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: <<[ web_package_manager ]>>
+          cache-dependency-path: |
+            yarn.lock
+            ${{ matrix.app.dir }}/yarn.lock
+[% endif %]
+[% endif %]
+      - name: Validate package scripts
+        run: node scripts/check-webapp-scripts.mjs "${{ matrix.app.dir }}" lint typecheck build:bundle test:coverage
       - name: Install dependencies
-        run: cd "${{ matrix.app.dir }}" && bun install --frozen-lockfile
+        shell: bash
+        run: |
+[% if web_package_manager == "bun" %]
+          if [ -f package.json ] && { [ -f bun.lock ] || [ -f bun.lockb ]; }; then
+            <<[ web_install_command ]>>
+          else
+            cd "${{ matrix.app.dir }}"
+            <<[ web_install_command ]>>
+          fi
+[% elif web_package_manager == "npm" %]
+          if [ -f package.json ] && [ -f package-lock.json ]; then
+            <<[ web_install_command ]>>
+          else
+            cd "${{ matrix.app.dir }}"
+            <<[ web_install_command ]>>
+          fi
+[% elif web_package_manager == "pnpm" %]
+          if [ -f package.json ] && [ -f pnpm-lock.yaml ]; then
+            <<[ web_install_command ]>>
+          else
+            cd "${{ matrix.app.dir }}"
+            <<[ web_install_command ]>>
+          fi
+[% elif web_package_manager == "yarn" %]
+          if [ -f package.json ] && [ -f yarn.lock ]; then
+            <<[ web_install_command ]>>
+          else
+            cd "${{ matrix.app.dir }}"
+            <<[ web_install_command ]>>
+          fi
+[% endif %]
       - name: Run lint
-        run: cd "${{ matrix.app.dir }}" && bun run lint
+        run: cd "${{ matrix.app.dir }}" && <<[ web_run_command ]>> lint
       - name: Run typecheck
-        run: cd "${{ matrix.app.dir }}" && bun run typecheck
+        run: cd "${{ matrix.app.dir }}" && <<[ web_run_command ]>> typecheck
       - name: Run build
-        run: cd "${{ matrix.app.dir }}" && bun run build:bundle
+        run: cd "${{ matrix.app.dir }}" && <<[ web_run_command ]>> build:bundle
       - name: Run tests with coverage
-        run: cd "${{ matrix.app.dir }}" && bun run test:coverage
+        run: cd "${{ matrix.app.dir }}" && <<[ web_run_command ]>> test:coverage
       - name: Enforce coverage threshold
         run: make enforce-coverage COVERAGE_DIR="${{ matrix.app.dir }}/coverage" COVERAGE_THRESHOLD="${{ matrix.app.coverage_threshold }}"
 [% else %]

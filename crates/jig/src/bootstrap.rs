@@ -109,7 +109,7 @@ pub struct AnswerOpts {
     pub bootstrap_command: Option<String>,
     #[arg(long, help = "Command used by legacy contract-check manifests")]
     pub contract_check_command: Option<String>,
-    #[arg(long, help = "Makefile adapter command used by make dev")]
+    #[arg(long, help = "Deprecated; configure [dev] and [[dev.apps]] instead")]
     pub dev_command: Option<String>,
     #[arg(long, help = "Command used by scripts/jig check fmt")]
     pub rust_fmt_check_command: Option<String>,
@@ -124,7 +124,7 @@ pub struct AnswerOpts {
     #[arg(
         long = "frontend-app",
         value_parser = parse_frontend_app,
-        help = "Legacy frontend app as name:dir:coverage_threshold; may be repeated"
+        help = "Frontend CI app as name:dir:coverage_threshold[:kind]; kind defaults to vite; package.json must expose lint, typecheck, build:bundle, and test:coverage; may be repeated"
     )]
     pub frontend_apps: Vec<FrontendApp>,
 }
@@ -249,6 +249,8 @@ pub struct FrontendApp {
     pub name: String,
     pub dir: String,
     pub coverage_threshold: u32,
+    #[serde(default = "default_frontend_app_kind")]
+    pub kind: String,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, ValueEnum)]
@@ -308,6 +310,8 @@ pub fn run_init(opts: InitOpts) -> Result<Value> {
         "destination": destination.display().to_string(),
         "answers_file": ANSWERS_FILE,
         "git_initialized": git_initialized,
+        "next_steps": initial_next_steps(InitialCommand::Init),
+        "notes": initial_notes(copy_result.notes),
     }))
 }
 
@@ -330,7 +334,7 @@ pub fn run_adopt(opts: AdoptOpts) -> Result<Value> {
         opts.template_mode,
     ))?;
 
-    render_and_copy_bootstrap_template(BootstrapCopyRequest {
+    let copy_result = render_and_copy_bootstrap_template(BootstrapCopyRequest {
         destination: &destination,
         template: &template,
         answers: &opts.answers,
@@ -348,6 +352,8 @@ pub fn run_adopt(opts: AdoptOpts) -> Result<Value> {
         "destination": destination.display().to_string(),
         "answers_file": ANSWERS_FILE,
         "git_initialized": false,
+        "next_steps": initial_next_steps(InitialCommand::Adopt),
+        "notes": initial_notes(copy_result.notes),
     }))
 }
 
@@ -556,6 +562,36 @@ fn template_progress_label(template: Option<&str>) -> String {
     template.unwrap_or(OFFICIAL_TEMPLATE_SOURCE).to_string()
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum InitialCommand {
+    Init,
+    Adopt,
+}
+
+fn initial_next_steps(command: InitialCommand) -> Vec<&'static str> {
+    let mut steps = vec![
+        "Review .jig.toml, AGENTS.md, agent-map.md, and any generated crate-level AGENTS.md starters.",
+        "Run scripts/jig agent doctor --summary to verify local agent tooling.",
+        "Run scripts/jig check contract.",
+        "Run scripts/jig check agent-guides.",
+        "Run scripts/jig check test.",
+    ];
+    if command == InitialCommand::Adopt {
+        steps.push("Commit the adoption diff after the generated checks pass.");
+    }
+    steps
+}
+
+fn initial_notes(extra_notes: Vec<String>) -> Vec<String> {
+    let mut notes = vec![
+        "The first scripts/jig command may install or compile the pinned Jig runtime into this repo's local cache.".into(),
+        "Adoption validates configured frontend app package scripts and lockfiles immediately.".into(),
+        "Init records configured frontend apps without reading package.json; add lint, typecheck, build:bundle, test:coverage, and a package-manager lockfile before web CI runs.".into(),
+    ];
+    notes.extend(extra_notes);
+    notes
+}
+
 #[cfg(test)]
 fn read_optional_answer_string(answers_path: &Path, key: &str) -> Result<Option<String>> {
     let answers = read_answers_toml(answers_path)?;
@@ -580,9 +616,9 @@ fn write_answers_toml(path: &Path, mapping: &Table) -> Result<()> {
 }
 
 fn parse_frontend_app(value: &str) -> Result<FrontendApp, String> {
-    let parts = value.splitn(3, ':').collect::<Vec<_>>();
-    if parts.len() != 3 {
-        return Err("expected <name>:<dir>:<coverage_threshold>".into());
+    let parts = value.split(':').collect::<Vec<_>>();
+    if !(parts.len() == 3 || parts.len() == 4) {
+        return Err("expected <name>:<dir>:<coverage_threshold>[:kind]".into());
     }
 
     let coverage_threshold = parts[2]
@@ -593,7 +629,12 @@ fn parse_frontend_app(value: &str) -> Result<FrontendApp, String> {
         name: parts[0].to_string(),
         dir: parts[1].to_string(),
         coverage_threshold,
+        kind: parts.get(3).copied().unwrap_or("vite").to_string(),
     })
+}
+
+fn default_frontend_app_kind() -> String {
+    "vite".into()
 }
 
 fn validate_init_destination(path: &Path, force: bool) -> Result<()> {

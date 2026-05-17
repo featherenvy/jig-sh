@@ -1,5 +1,6 @@
+use std::collections::HashSet;
 use std::fs;
-use std::path::Path;
+use std::path::{Component, Path};
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
@@ -7,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use super::{AnswerOpts, FrontendApp};
 use crate::context::{
     DEFAULT_CODEX_MARKETPLACE_ID, DEFAULT_CODEX_MARKETPLACE_SOURCE,
-    default_codex_marketplace_plugins,
+    default_codex_marketplace_plugins, validate_web_package_manager,
 };
 
 #[derive(Clone, Debug, Serialize)]
@@ -29,12 +30,14 @@ pub(super) struct RenderAnswers {
     migration_add_command: Option<String>,
     bootstrap_command: String,
     contract_check_command: String,
-    dev_command: String,
+    legacy_dev_command: Option<String>,
     rust_fmt_check_command: String,
     rust_clippy_command: String,
     rust_test_command: String,
     rust_test_locked_command: String,
     web_package_manager: String,
+    web_install_command: String,
+    web_run_command: String,
     frontend_apps: Vec<FrontendApp>,
     agent_tooling: AgentToolingAnswers,
 }
@@ -67,6 +70,22 @@ impl RenderAnswers {
 
     pub(super) fn makefile_enabled(&self) -> bool {
         self.makefile_enabled
+    }
+
+    pub(super) fn rust_crate_roots(&self) -> &[String] {
+        &self.rust_crate_roots
+    }
+
+    pub(super) fn frontend_apps(&self) -> &[FrontendApp] {
+        &self.frontend_apps
+    }
+
+    pub(super) fn web_package_manager(&self) -> &str {
+        &self.web_package_manager
+    }
+
+    pub(super) fn has_legacy_dev_command(&self) -> bool {
+        self.legacy_dev_command.is_some()
     }
 }
 
@@ -241,10 +260,14 @@ impl RawAnswers {
             );
         }
 
+        let frontend_apps = self.frontend_apps.unwrap_or_default();
+        validate_frontend_apps(&frontend_apps)?;
+        let legacy_dev_command = self.dev_command.filter(|value| !value.trim().is_empty());
+
         let web_package_manager = self.web_package_manager.unwrap_or_else(|| "bun".into());
-        if web_package_manager != "bun" {
-            bail!("Unsupported web_package_manager '{web_package_manager}'. Supported values: bun");
-        }
+        validate_web_package_manager(&web_package_manager)?;
+        let web_install_command = web_install_command(&web_package_manager).to_string();
+        let web_run_command = web_run_command(&web_package_manager).to_string();
         let schema_dump_enabled = if sqlx_enabled {
             self.schema_dump_enabled.unwrap_or(true)
         } else {
@@ -289,9 +312,7 @@ impl RawAnswers {
                 .bootstrap_command
                 .unwrap_or_else(|| optional_cargo_command("cargo fetch", "bootstrap")),
             contract_check_command: self.contract_check_command.unwrap_or_default(),
-            dev_command: self.dev_command.unwrap_or_else(|| {
-                r#"echo "Define dev_command in .jig.toml" >&2 && exit 1"#.into()
-            }),
+            legacy_dev_command,
             rust_fmt_check_command: self
                 .rust_fmt_check_command
                 .unwrap_or_else(|| optional_cargo_command("cargo fmt --all -- --check", "fmt")),
@@ -308,7 +329,9 @@ impl RawAnswers {
                 optional_cargo_command("cargo test --workspace --locked", "test-locked")
             }),
             web_package_manager,
-            frontend_apps: self.frontend_apps.unwrap_or_default(),
+            web_install_command,
+            web_run_command,
+            frontend_apps,
             agent_tooling: self.agent_tooling.unwrap_or_default(),
         })
     }
@@ -326,6 +349,115 @@ fn optional_cargo_command(command: &str, label: &str) -> String {
     // Runtime command dispatch sets CWD to the repo root, so this guard checks
     // for a root Cargo workspace without blocking harness-only repos.
     format!("if [ -f Cargo.toml ]; then {command}; else printf '%s\\n' {skip_message}; fi")
+}
+
+fn validate_frontend_apps(apps: &[FrontendApp]) -> Result<()> {
+    let mut names = HashSet::new();
+    for app in apps {
+        if !is_safe_frontend_app_name(&app.name) {
+            bail!(
+                "Invalid frontend app name '{}'. Use ASCII letters, numbers, '-' or '_'.",
+                app.name
+            );
+        }
+        if !names.insert(app.name.as_str()) {
+            bail!("Duplicate frontend app name '{}'", app.name);
+        }
+        if !is_supported_frontend_app_kind(&app.kind) {
+            bail!(
+                "Invalid frontend app kind '{}'. Expected 'vite' or 'env-port'.",
+                app.kind
+            );
+        }
+        validate_frontend_app_dir(&app.name, &app.dir)?;
+    }
+    Ok(())
+}
+
+fn is_safe_frontend_app_name(value: &str) -> bool {
+    !value.is_empty()
+        && value.trim() == value
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+}
+
+fn is_supported_frontend_app_kind(value: &str) -> bool {
+    matches!(value, "vite" | "env-port")
+}
+
+fn validate_frontend_app_dir(app_name: &str, value: &str) -> Result<()> {
+    if value.is_empty() || value.trim() != value {
+        bail!("frontend app '{app_name}' dir must be a non-empty relative path");
+    }
+    if !value
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '/' | '.' | '-' | '_'))
+    {
+        bail!(
+            "frontend app '{app_name}' dir '{}' contains unsupported characters. Use a repo-relative path with ASCII letters, numbers, '/', '.', '-' or '_'; use forward slashes on every platform.",
+            value
+        );
+    }
+
+    let path = Path::new(value);
+    if path.is_absolute() {
+        bail!("frontend app '{app_name}' dir '{}' must be relative", value);
+    }
+    if value.split('/').any(|segment| segment.is_empty()) {
+        bail!(
+            "frontend app '{app_name}' dir '{}' must not contain empty path components",
+            value
+        );
+    }
+    if value.split('/').any(|segment| segment == ".") {
+        bail!(
+            "frontend app '{app_name}' dir '{}' must not contain '.' path components",
+            value
+        );
+    }
+
+    for component in path.components() {
+        match component {
+            Component::Normal(_) => {}
+            Component::CurDir => {
+                bail!(
+                    "frontend app '{app_name}' dir '{}' must not contain '.' path components",
+                    value
+                );
+            }
+            Component::ParentDir => {
+                bail!(
+                    "frontend app '{app_name}' dir '{}' must not contain '..'",
+                    value
+                );
+            }
+            Component::RootDir | Component::Prefix(_) => {
+                bail!("frontend app '{app_name}' dir '{}' must be relative", value);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn web_install_command(package_manager: &str) -> &'static str {
+    match package_manager {
+        "bun" => "bun install --frozen-lockfile",
+        "pnpm" => "pnpm install --frozen-lockfile",
+        "npm" => "npm ci",
+        "yarn" => "yarn install --frozen-lockfile",
+        _ => unreachable!("web package manager was already validated"),
+    }
+}
+
+fn web_run_command(package_manager: &str) -> &'static str {
+    match package_manager {
+        "bun" => "bun run",
+        "pnpm" => "pnpm run",
+        "npm" => "npm run",
+        "yarn" => "yarn run",
+        _ => unreachable!("web package manager was already validated"),
+    }
 }
 
 fn shell_quote(value: &str) -> String {

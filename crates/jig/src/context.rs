@@ -17,6 +17,7 @@ pub(crate) const DEFAULT_CODEX_MARKETPLACE_PLUGINS: &[&str] = &[
     "jig-typescript@jig-skills",
     "jig-exec-plans@jig-skills",
 ];
+pub(crate) const SUPPORTED_WEB_PACKAGE_MANAGERS: &[&str] = &["bun", "npm", "pnpm", "yarn"];
 /// Command-backed contract keys accepted in `.agent/jig-contract.json`.
 /// Keep this aligned with `RepoConfig`, bootstrap answer parsing, and the
 /// rendered `.jig.toml` template.
@@ -585,25 +586,47 @@ fn validate_config(config: &RepoConfig) -> Result<()> {
     validate_work_config(config)
 }
 
-fn validate_web_package_manager(value: &str) -> Result<()> {
-    match value {
-        "bun" | "pnpm" | "npm" | "yarn" => Ok(()),
-        _ => bail!(
-            "Unsupported web_package_manager '{value}'. Expected one of: bun, pnpm, npm, yarn."
-        ),
+pub(crate) fn validate_web_package_manager(value: &str) -> Result<()> {
+    if SUPPORTED_WEB_PACKAGE_MANAGERS.contains(&value) {
+        return Ok(());
     }
+
+    bail!(
+        "Unsupported web_package_manager '{value}'. Expected one of: {}.",
+        SUPPORTED_WEB_PACKAGE_MANAGERS.join(", ")
+    )
 }
 
 fn validate_dev_config(config: &RepoConfig) -> Result<()> {
-    if !config.frontend_apps.is_empty() && !config.dev.apps.is_empty() {
-        bail!(
-            "[dev.apps] and legacy [[frontend_apps]] cannot both be configured. Move legacy entries into [[dev.apps]] or remove them."
-        );
-    }
     let mut app_names = HashSet::new();
     for app in &config.dev.apps {
         if !app_names.insert(app.name.as_str()) {
             bail!("Duplicate dev app name '{}' in [[dev.apps]]", app.name);
+        }
+    }
+    if !config.frontend_apps.is_empty() && !config.dev.apps.is_empty() {
+        for frontend_app in &config.frontend_apps {
+            let Some(dev_app) = config
+                .dev
+                .apps
+                .iter()
+                .find(|app| app.name == frontend_app.name)
+            else {
+                bail!(
+                    "[dev.apps] entries take precedence when [[frontend_apps]] are also configured. Add a matching [[dev.apps]] entry for frontend app '{}' or remove it from [[frontend_apps]].",
+                    frontend_app.name
+                );
+            };
+            if let Some(dev_dir) = dev_app.dir.as_deref()
+                && dev_dir != frontend_app.dir
+            {
+                bail!(
+                    "[dev.apps] entry '{}' uses dir '{}' but matching [[frontend_apps]] uses '{}'. Keep them aligned because [dev.apps] takes precedence for scripts/jig dev.",
+                    frontend_app.name,
+                    dev_dir,
+                    frontend_app.dir
+                );
+            }
         }
     }
     Ok(())

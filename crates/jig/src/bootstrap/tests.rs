@@ -181,4 +181,6 @@ impl NormalizedRemoteCommittedFixture {
 
 mod basic;
 mod committed;
+mod frontend_adoption;
 mod template_mode;
+mod template_source;

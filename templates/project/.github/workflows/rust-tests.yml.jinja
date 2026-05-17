@@ -55,7 +55,7 @@ concurrency:
 
 jobs:
   fmt:
-    name: scripts/jig fmt-check
+    name: scripts/jig check fmt
     runs-on: <<[ ci_github_runner ]>>
     steps:
       - name: Checkout
@@ -67,10 +67,10 @@ jobs:
           rustflags: ""
           components: rustfmt
       - name: Run rustfmt check
-        run: scripts/jig fmt-check
+        run: scripts/jig check fmt
 
   clippy:
-    name: scripts/jig clippy
+    name: scripts/jig check clippy
     runs-on: <<[ ci_github_runner ]>>
 [% if sqlx_enabled %]
     env:
@@ -88,10 +88,10 @@ jobs:
       - name: Cache Rust artifacts
         uses: Swatinem/rust-cache@v2
       - name: Run clippy
-        run: scripts/jig clippy
+        run: scripts/jig check clippy
 
   test:
-    name: scripts/jig test-locked
+    name: scripts/jig check test-locked
     runs-on: <<[ ci_github_runner ]>>
 [% if sqlx_enabled %]
     env:
@@ -108,4 +108,4 @@ jobs:
       - name: Cache Rust artifacts
         uses: Swatinem/rust-cache@v2
       - name: Run locked Rust tests
-        run: scripts/jig test-locked
+        run: scripts/jig check test-locked
