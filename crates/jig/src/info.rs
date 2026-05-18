@@ -101,7 +101,10 @@ fn repo_info_with_vault(ctx: &RepoContext, vault: VaultCapability) -> Value {
             "schema_dumps": ctx.sqlx_enabled() && ctx.schema_dump_enabled(),
             "frontend_apps": !frontend_apps.is_empty(),
             "dev_proxy": dev_proxy_enabled,
-            "vault": vault.ok,
+            "vault": vault.available,
+            "vault_available": vault.available,
+            "vault_initialized": vault.initialized,
+            "vault_home": vault.home,
             "vault_error": vault.error,
         },
         "check_tools": ctx.work_check_tools(),
@@ -132,7 +135,9 @@ fn repo_info_with_vault(ctx: &RepoContext, vault: VaultCapability) -> Value {
 }
 
 struct VaultCapability {
-    ok: bool,
+    available: bool,
+    initialized: bool,
+    home: Option<String>,
     error: Option<String>,
 }
 
@@ -141,12 +146,16 @@ fn vault_capability() -> VaultCapability {
         vault: VaultRuntimeOptions::default(),
     });
     match crate::runtime::dispatch_vault(command) {
-        Ok(_) => VaultCapability {
-            ok: true,
+        Ok(output) => VaultCapability {
+            available: true,
+            initialized: output["exists"].as_bool().unwrap_or(false),
+            home: output["vault_home"].as_str().map(str::to_string),
             error: None,
         },
         Err(error) => VaultCapability {
-            ok: false,
+            available: false,
+            initialized: false,
+            home: None,
             error: Some(format!("{error:#}")),
         },
     }
@@ -280,11 +289,15 @@ fn enabled_capabilities(value: &Value) -> Vec<&'static str> {
         ("schema_dumps", "schema dumps"),
         ("frontend_apps", "frontend apps"),
         ("dev_proxy", "dev proxy"),
-        ("vault", "vault"),
     ] {
         if capabilities[key].as_bool().unwrap_or(false) {
             enabled.push(label);
         }
+    }
+    if capabilities["vault_initialized"].as_bool().unwrap_or(false) {
+        enabled.push("vault initialized");
+    } else if capabilities["vault_available"].as_bool().unwrap_or(false) {
+        enabled.push("vault available (not initialized)");
     }
     if enabled.is_empty() {
         enabled.push("none");
@@ -317,7 +330,15 @@ mod tests {
         write_info_fixture(temp.path());
         let ctx = RepoContext::load_from_root(temp.path().to_path_buf()).unwrap();
 
-        let output = repo_info(&ctx);
+        let output = repo_info_with_vault(
+            &ctx,
+            VaultCapability {
+                available: true,
+                initialized: true,
+                home: Some("/tmp/vault".into()),
+                error: None,
+            },
+        );
 
         assert_eq!(output["command"], "info");
         assert_eq!(output["repo"]["name"], "demo");
@@ -328,6 +349,9 @@ mod tests {
         assert_eq!(output["capabilities"]["frontend_apps"], true);
         assert_eq!(output["capabilities"]["dev_proxy"], true);
         assert_eq!(output["capabilities"]["vault"], true);
+        assert_eq!(output["capabilities"]["vault_available"], true);
+        assert_eq!(output["capabilities"]["vault_initialized"], true);
+        assert_eq!(output["capabilities"]["vault_home"], "/tmp/vault");
         assert_eq!(output["check_tools"][0], "jig.test");
         assert_eq!(output["work_gates"][0]["id"], "tests");
         assert_eq!(output["dev_apps"][0]["name"], "web");
@@ -338,9 +362,33 @@ mod tests {
         let summary = format_summary(&output);
         assert!(summary.contains("Jig info: demo"));
         assert!(summary.contains("Template source: /tmp/template @ abc123"));
-        assert!(
-            summary.contains("Capabilities: SQLx, schema dumps, frontend apps, dev proxy, vault")
+        assert!(summary.contains(
+            "Capabilities: SQLx, schema dumps, frontend apps, dev proxy, vault initialized"
+        ));
+    }
+
+    #[test]
+    fn distinguishes_available_uninitialized_vault() {
+        let temp = tempdir().unwrap();
+        write_info_fixture(temp.path());
+        let ctx = RepoContext::load_from_root(temp.path().to_path_buf()).unwrap();
+
+        let output = repo_info_with_vault(
+            &ctx,
+            VaultCapability {
+                available: true,
+                initialized: false,
+                home: Some("/tmp/vault".into()),
+                error: None,
+            },
         );
+
+        assert_eq!(output["capabilities"]["vault"], true);
+        assert_eq!(output["capabilities"]["vault_available"], true);
+        assert_eq!(output["capabilities"]["vault_initialized"], false);
+        assert_eq!(output["capabilities"]["vault_home"], "/tmp/vault");
+        let summary = format_summary(&output);
+        assert!(summary.contains("vault available (not initialized)"));
     }
 
     #[test]
@@ -352,12 +400,16 @@ mod tests {
         let output = repo_info_with_vault(
             &ctx,
             VaultCapability {
-                ok: false,
+                available: false,
+                initialized: false,
+                home: None,
                 error: Some("vault status failed".into()),
             },
         );
 
         assert_eq!(output["capabilities"]["vault"], false);
+        assert_eq!(output["capabilities"]["vault_available"], false);
+        assert_eq!(output["capabilities"]["vault_initialized"], false);
         assert_eq!(output["capabilities"]["vault_error"], "vault status failed");
     }
 

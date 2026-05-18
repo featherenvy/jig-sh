@@ -152,6 +152,7 @@ validate_jig_runtime() {
   local expect_schema_dump="$2"
   local expect_sqlx="$3"
   local migration_name="${4:-}"
+  local expect_dev_proxy="${5:-0}"
 
   (
     cd "$repo_dir"
@@ -199,24 +200,51 @@ PY
       install_base=".agent/.cache/jig"
     fi
 
+    assert_default_binary_state() {
+      if [[ "$expect_dev_proxy" == "1" ]]; then
+        [[ -x "$install_base/$jig_version/bin/jig" ]]
+      else
+        [[ ! -e "$install_base/$jig_version/bin/jig" ]]
+      fi
+    }
+
     rm -rf .git/jig-tools .agent/.cache
     assert_jig_mcp_requires_prebuilt_binary "$repo_dir"
     # MCP startup must use a prebuilt binary; check contract populates the runtime cache.
     env -u JIG_DEV_BIN scripts/jig check contract >/dev/null
+    doctor_json="$(env -u JIG_DEV_BIN scripts/jig doctor || true)"
+    DOCTOR_JSON="$doctor_json" EXPECT_DEV_PROXY="$expect_dev_proxy" python3 <<'PY'
+import json
+import os
+
+payload = json.loads(os.environ["DOCTOR_JSON"])
+checks = {check["id"]: check for check in payload["checks"]}
+proxy = checks["proxy"]
+expect_dev_proxy = os.environ["EXPECT_DEV_PROXY"] == "1"
+
+if expect_dev_proxy:
+    assert proxy["data"]["configured"] is True, proxy
+    assert proxy["status"] in {"running", "not running"}, proxy
+    assert "built without" not in proxy["detail"], proxy
+else:
+    assert proxy["ok"] is True, proxy
+    assert proxy["status"] == "not configured", proxy
+    assert proxy["data"]["configured"] is False, proxy
+PY
     validate_jig_mcp_smoke "$repo_dir" "$expect_schema_dump" "$expect_sqlx"
     [[ -x "$install_base/$jig_version-runtime/bin/jig" ]]
-    [[ ! -e "$install_base/$jig_version/bin/jig" ]]
+    assert_default_binary_state
     if "$install_base/$jig_version-runtime/bin/jig" proxy list >/dev/null 2>&1; then
       echo "runtime profile unexpectedly supports proxy commands" >&2
       exit 1
     fi
-    [[ ! -e "$install_base/$jig_version/bin/jig" ]]
+    assert_default_binary_state
     env -u JIG_DEV_BIN JIG_INSTALL_PROFILE=default scripts/jig check contract >/dev/null
-    [[ ! -e "$install_base/$jig_version/bin/jig" ]]
+    assert_default_binary_state
     env -u JIG_DEV_BIN scripts/jig dev --help >/dev/null
     env -u JIG_DEV_BIN scripts/jig proxy --help >/dev/null
     env -u JIG_DEV_BIN scripts/jig proxy list --help >/dev/null
-    [[ ! -e "$install_base/$jig_version/bin/jig" ]]
+    assert_default_binary_state
     env -u JIG_DEV_BIN JIG_INSTALL_PROFILE=runtime scripts/jig proxy list >/dev/null
     [[ -x "$install_base/$jig_version/bin/jig" ]]
 
@@ -279,8 +307,8 @@ PY
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   set -euo pipefail
-  if [[ "$#" -lt 3 || "$#" -gt 4 ]]; then
-    echo "Usage: $0 REPO_DIR EXPECT_SCHEMA_DUMP EXPECT_SQLX [MIGRATION_NAME]" >&2
+  if [[ "$#" -lt 3 || "$#" -gt 5 ]]; then
+    echo "Usage: $0 REPO_DIR EXPECT_SCHEMA_DUMP EXPECT_SQLX [MIGRATION_NAME] [EXPECT_DEV_PROXY]" >&2
     exit 2
   fi
 

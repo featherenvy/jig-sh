@@ -77,7 +77,7 @@ validate_full_stack_fixture() {
     rg -q "frontend" .github/workflows/webapp-checks.yml
     rg -q "admin-panel" .github/workflows/webapp-checks.yml
     rg -q "40" .github/workflows/webapp-checks.yml
-    validate_jig_runtime "$repo_dir" 1 1 "fixture_full_stack_runtime"
+    validate_jig_runtime "$repo_dir" 1 1 "fixture_full_stack_runtime" 1
   )
 }
 

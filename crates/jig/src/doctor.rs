@@ -1,15 +1,18 @@
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+#[cfg(not(feature = "dev-proxy"))]
+use std::process::Command;
 
+#[cfg(not(feature = "dev-proxy"))]
+use anyhow::anyhow;
 use anyhow::{Context, Result};
 use serde::Serialize;
 use serde_json::{Value, json};
 
-use crate::command::{
-    ProxyCommand, ProxyListRequest, ProxyRuntimeOptions, VaultCommand, VaultRuntimeOptions,
-    VaultStatusRequest,
-};
+#[cfg(feature = "dev-proxy")]
+use crate::command::{ProxyCommand, ProxyListRequest, ProxyRuntimeOptions};
+use crate::command::{VaultCommand, VaultRuntimeOptions, VaultStatusRequest};
 use crate::context::{RepoContext, find_repo_root_from};
 use crate::tool_defs::tool;
 
@@ -508,40 +511,90 @@ fn proxy_check(ctx: &RepoContext) -> DoctorCheck {
     let configured = !ctx.frontend_apps().is_empty()
         || !ctx.dev_config().apps.is_empty()
         || ctx.dev_config().workspace_discovery;
-    let output = crate::dev_proxy::commands::proxy(
+    if !configured {
+        return check(
+            "proxy",
+            "Proxy",
+            false,
+            true,
+            "not configured",
+            "no dev apps configured",
+        )
+        .with_data(json!({ "configured": false }));
+    }
+
+    match proxy_list_output(ctx) {
+        Ok(output) => proxy_check_from_output(configured, output),
+        Err(error) => check("proxy", "Proxy", false, false, "error", error.to_string())
+            .with_fix("Run `scripts/jig proxy list` for proxy diagnostics.")
+            .with_data(json!({ "configured": configured })),
+    }
+}
+
+#[cfg(feature = "dev-proxy")]
+fn proxy_list_output(ctx: &RepoContext) -> Result<Value> {
+    crate::dev_proxy::commands::proxy(
         ctx,
         ProxyCommand::List(ProxyListRequest {
             raw: false,
             proxy: ProxyRuntimeOptions::default(),
         }),
-    );
-    match output {
-        Ok(output) => {
-            let running = output["running"].as_bool().unwrap_or(false);
-            let status = match (configured, running) {
-                (true, true) => "running",
-                (true, false) => "not running",
-                (false, true) => "running unconfigured",
-                (false, false) => "not configured",
-            };
-            check(
-                "proxy",
-                "Proxy",
-                false,
-                !configured || running,
-                status,
-                proxy_detail(configured, running, &output),
+    )
+}
+
+#[cfg(not(feature = "dev-proxy"))]
+fn proxy_list_output(ctx: &RepoContext) -> Result<Value> {
+    let launcher = ctx.root().join("scripts/jig");
+    let output = Command::new(&launcher)
+        .args(["proxy", "list"])
+        .current_dir(ctx.root())
+        .output()
+        .with_context(|| {
+            format!(
+                "Failed to run proxy diagnostics through {}",
+                launcher.display()
             )
-            .with_optional_fix((configured && !running).then_some("Run `scripts/jig proxy start`."))
-            .with_data(json!({
-                    "configured": configured,
-                    "status": output,
-            }))
-        }
-        Err(error) => check("proxy", "Proxy", false, false, "error", error.to_string())
-            .with_fix("Run `scripts/jig proxy list` for proxy diagnostics.")
-            .with_data(json!({ "configured": configured })),
+        })?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let detail = if stderr.is_empty() { stdout } else { stderr };
+        return Err(anyhow!(
+            "`scripts/jig proxy list` exited with status {}{}",
+            output.status,
+            if detail.is_empty() {
+                String::new()
+            } else {
+                format!(": {detail}")
+            }
+        ));
     }
+
+    serde_json::from_slice(&output.stdout).context("Failed to parse `scripts/jig proxy list` JSON")
+}
+
+fn proxy_check_from_output(configured: bool, output: Value) -> DoctorCheck {
+    let running = output["running"].as_bool().unwrap_or(false);
+    let status = match (configured, running) {
+        (true, true) => "running",
+        (true, false) => "not running",
+        (false, true) => "running unconfigured",
+        (false, false) => "not configured",
+    };
+    check(
+        "proxy",
+        "Proxy",
+        false,
+        running,
+        status,
+        proxy_detail(configured, running, &output),
+    )
+    .with_optional_fix((configured && !running).then_some("Run `scripts/jig proxy start`."))
+    .with_data(json!({
+            "configured": configured,
+            "status": output,
+    }))
 }
 
 fn proxy_detail(configured: bool, running: bool, output: &Value) -> String {
@@ -1108,6 +1161,8 @@ mod tests {
                 .as_bool()
                 .unwrap()
         );
+        assert_eq!(check_by_id(&output, "proxy")["status"], "not configured");
+        assert!(check_by_id(&output, "proxy")["ok"].as_bool().unwrap());
         assert_eq!(check_by_id(&output, "vault")["required"], false);
     }
 
