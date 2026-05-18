@@ -58,6 +58,9 @@
 - `jig-sh` now enables the `dev-proxy` feature by default, which pulls in the TLS/HTTP proxy stack for library consumers unless they opt into `default-features = false`.
 - MCP/contract-only consumers can build with `default-features = false`; in that profile, `dev` and `proxy` still parse but return clear unsupported-feature errors instead of linking the proxy stack.
 - Keep `web_package_manager = "bun"` as the default for legacy `[[frontend_apps]]`; configure `dev.apps` or set explicit commands when legacy apps should launch with another package manager.
+- `jig init` and `jig adopt --defaults` now default omitted SQLx answers to a tooling-only profile unless a migration directory is supplied, emit a note about that inference, and keep noninteractive adoption usable without extra SQLx flags.
+- `scripts/jig doctor --summary` now reports missing Codex Jig skills as optional setup instead of blocking overall repo readiness.
+- Behavior change: repo-local `scripts/jig` launchers now run the Jig binary from the owning repository root even when invoked by absolute path from another current directory. This makes check/dev/proxy/agent commands consistently operate on the owning repo; `jig init`, `jig adopt`, and `jig update` still resolve relative destination/template paths against the caller's original directory.
 - Require `--accept-trust-scope` before installing the Jig Dev Proxy local CA through the platform trust tooling.
 - Vite proxy host support relies on Vite's `__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS` compatibility hook; configure Vite `server.allowedHosts` explicitly if a Vite release changes that hook.
 - Windows builds parse and run non-certificate proxy flows, but automatic HTTPS certificate generation/trust remains unsupported until owner-only ACL hardening for private key files is implemented.

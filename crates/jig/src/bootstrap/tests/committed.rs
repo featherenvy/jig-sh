@@ -61,7 +61,7 @@ fn update_committed_mode_rewrites_normalized_remote_source_to_local_checkout() {
     assert!(root_guide.contains("Local Checkout Marker"));
 
     let answers = read_answers_toml(&fixture.answers_path).unwrap();
-    let expected_local_path = absolute_path(fixture.template.path())
+    let expected_local_path = fs::canonicalize(fixture.template.path())
         .unwrap()
         .display()
         .to_string();
@@ -107,7 +107,7 @@ fn update_committed_mode_uses_unpushed_local_checkout_for_normalized_remote_sour
     assert!(root_guide.contains("Unpushed Local Checkout Marker"));
 
     let answers = read_answers_toml(&fixture.answers_path).unwrap();
-    let expected_local_path = absolute_path(fixture.template.path())
+    let expected_local_path = fs::canonicalize(fixture.template.path())
         .unwrap()
         .display()
         .to_string();
@@ -269,7 +269,7 @@ fn update_committed_mode_accepts_explicit_normalized_remote_template_source() {
 
     let root_guide = fs::read_to_string(fixture.repo.join("AGENTS.md")).unwrap();
     assert!(root_guide.contains("Explicit Remote Marker"));
-    let expected_local_path = absolute_path(fixture.template.path())
+    let expected_local_path = fs::canonicalize(fixture.template.path())
         .unwrap()
         .display()
         .to_string();

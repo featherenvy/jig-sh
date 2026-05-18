@@ -9,10 +9,10 @@ use toml::{Table, Value as TomlValue};
 use crate::process::{require_success, run_checked_output};
 
 use super::git::{ensure_clean_git_work_tree, git_stdout, is_git_work_tree};
+use super::path::absolute_path_from;
 use super::{
     ANSWERS_FILE, GIT_BIN_ENV, REMOTE_TEMPLATE_MODE_ERROR, TEMPLATE_LOCAL_PATH_KEY,
-    TEMPLATE_MODE_KEY, TemplateMode, UpdateOpts, absolute_path, external_program,
-    read_answers_toml,
+    TEMPLATE_MODE_KEY, TemplateMode, UpdateOpts, external_program, read_answers_toml,
 };
 
 const COMMIT_KEY: &str = "_commit";
@@ -195,10 +195,11 @@ impl<'a> ResolvedUpdateTemplateSource<'a> {
     }
 }
 
-pub(super) fn prepare_template_source(
+pub(super) fn prepare_template_source_from_base(
     template: &str,
     template_mode: Option<TemplateMode>,
     vcs_ref: Option<&str>,
+    path_base: &Path,
 ) -> Result<PreparedTemplateSource> {
     if is_remote_template_source(template) {
         if template_mode.is_some() {
@@ -207,7 +208,7 @@ pub(super) fn prepare_template_source(
         return prepare_remote_template_source(template, vcs_ref);
     }
 
-    let local_template = absolute_path(Path::new(template))?;
+    let local_template = absolute_path_from(Path::new(template), path_base)?;
     if !local_template.is_dir() {
         bail!(
             "Template path is not a directory: {}",
@@ -353,19 +354,21 @@ pub(super) fn read_stored_template_state(answers_path: &Path) -> Result<StoredTe
 pub(super) fn prepare_update_template_source(
     opts: &UpdateOpts,
     stored: &StoredTemplateState,
+    path_base: &Path,
 ) -> Result<Option<PreparedTemplateSource>> {
     let source_override_requested = opts.template.is_some() || opts.template_mode.is_some();
     if !source_override_requested && opts.vcs_ref.is_none() {
-        return prepare_default_update_template_source(stored, opts.recopy);
+        return prepare_default_update_template_source(stored, opts.recopy, path_base);
     }
 
     let resolved_source = resolve_update_template_source(opts, stored)?;
-    let prepared = prepare_template_source(
+    let prepared = prepare_template_source_from_base(
         resolved_source.template,
         resolved_source.template_mode,
         opts.vcs_ref
             .as_deref()
             .or_else(|| recopy_vcs_ref(opts.recopy, stored)),
+        path_base,
     )?;
     ensure_update_template_identity(stored, &prepared)?;
     Ok(Some(final_update_template_state(stored, &prepared)))
@@ -441,6 +444,7 @@ pub(super) fn test_resolve_update_template_source(
 fn prepare_default_update_template_source(
     stored: &StoredTemplateState,
     recopy: bool,
+    path_base: &Path,
 ) -> Result<Option<PreparedTemplateSource>> {
     if stored.source_path().is_empty() {
         return Ok(None);
@@ -449,7 +453,7 @@ fn prepare_default_update_template_source(
     let source = stored_update_source(stored);
     let mode = inherited_update_template_mode(source, None, stored);
     let vcs_ref = if recopy { stored.commit() } else { None };
-    let prepared = prepare_template_source(source, mode, vcs_ref)?;
+    let prepared = prepare_template_source_from_base(source, mode, vcs_ref, path_base)?;
     Ok(Some(final_update_template_state(stored, &prepared)))
 }
 

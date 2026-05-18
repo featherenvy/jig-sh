@@ -1,4 +1,5 @@
 use super::*;
+use crate::test_env::CurrentDirGuard;
 
 #[test]
 fn parses_frontend_app_flag() {
@@ -54,7 +55,7 @@ fn initial_next_steps_are_tailored_to_rendered_config() {
     let result = initial_copy::BootstrapCopyResult {
         default_branch: Some("main".into()),
         bootstrap_command_configured: true,
-        dev_apps_configured: true,
+        frontend_apps_configured: true,
         codex_skills_configured: true,
         sqlx_enabled: true,
         schema_dump_enabled: true,
@@ -76,6 +77,26 @@ fn initial_next_steps_are_tailored_to_rendered_config() {
         steps
             .iter()
             .any(|step| step == "scripts/jig check contract")
+    );
+    assert!(
+        steps
+            .iter()
+            .any(|step| step == "scripts/jig check typescript-lint")
+    );
+    assert!(
+        steps
+            .iter()
+            .any(|step| step == "scripts/jig check typescript-typecheck")
+    );
+    assert!(
+        steps
+            .iter()
+            .any(|step| step == "scripts/jig check typescript-build")
+    );
+    assert!(
+        steps
+            .iter()
+            .any(|step| step == "scripts/jig check typescript-coverage")
     );
     assert!(steps.iter().any(|step| step == "scripts/jig dev"));
     assert!(
@@ -101,7 +122,7 @@ fn initial_next_steps_are_tailored_to_rendered_config() {
         &initial_copy::BootstrapCopyResult {
             default_branch: Some("main".into()),
             bootstrap_command_configured: true,
-            dev_apps_configured: false,
+            frontend_apps_configured: false,
             codex_skills_configured: false,
             sqlx_enabled: false,
             schema_dump_enabled: false,
@@ -117,7 +138,7 @@ fn initial_next_steps_are_tailored_to_rendered_config() {
         &initial_copy::BootstrapCopyResult {
             default_branch: Some("main".into()),
             bootstrap_command_configured: false,
-            dev_apps_configured: false,
+            frontend_apps_configured: false,
             codex_skills_configured: false,
             sqlx_enabled: false,
             schema_dump_enabled: false,
@@ -486,6 +507,191 @@ fn run_init_sqlx_disabled_defaults_to_harness_only_safe_commands() {
 }
 
 #[test]
+fn adopt_defaults_to_tooling_only_when_sqlx_answers_are_omitted() {
+    let _guard = lock_env();
+    let temp = tempdir().unwrap();
+    let template = materialize_template_worktree();
+    let repo = temp.path().join("repo");
+    fs::create_dir_all(&repo).unwrap();
+
+    let output = run_adopt(AdoptOpts {
+        path: repo.clone(),
+        template: Some(template.path().display().to_string()),
+        template_mode: None,
+        vcs_ref: None,
+        force: false,
+        defaults: true,
+        no_input: true,
+        answers: AnswerOpts::default(),
+    })
+    .unwrap();
+
+    assert!(
+        output["notes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|note| note.as_str().unwrap().contains("tooling-only profile"))
+    );
+    let answers = fs::read_to_string(repo.join(".jig.toml")).unwrap();
+    assert!(answers.contains("repo_name = \"repo\""));
+    assert!(answers.contains("sqlx_enabled = false"));
+    assert!(answers.contains("schema_dump_enabled = false"));
+}
+
+#[test]
+fn adopt_defaults_with_migration_dir_keeps_sqlx_enabled() {
+    let _guard = lock_env();
+    let temp = tempdir().unwrap();
+    let template = materialize_template_worktree();
+    let repo = temp.path().join("repo");
+    fs::create_dir_all(&repo).unwrap();
+
+    run_adopt(AdoptOpts {
+        path: repo.clone(),
+        template: Some(template.path().display().to_string()),
+        template_mode: None,
+        vcs_ref: None,
+        force: false,
+        defaults: true,
+        no_input: true,
+        answers: AnswerOpts {
+            rust_migration_dir: Some("migrations".into()),
+            ..AnswerOpts::default()
+        },
+    })
+    .unwrap();
+
+    let answers = fs::read_to_string(repo.join(".jig.toml")).unwrap();
+    assert!(answers.contains("sqlx_enabled = true"));
+    assert!(answers.contains("rust_migration_dir = \"migrations\""));
+}
+
+#[test]
+fn adopt_defaults_with_schema_dump_enabled_still_requires_sqlx_migration_answer() {
+    let _guard = lock_env();
+    let temp = tempdir().unwrap();
+    let template = materialize_template_worktree();
+    let repo = temp.path().join("repo");
+    fs::create_dir_all(&repo).unwrap();
+
+    let error = run_adopt(AdoptOpts {
+        path: repo,
+        template: Some(template.path().display().to_string()),
+        template_mode: None,
+        vcs_ref: None,
+        force: false,
+        defaults: true,
+        no_input: true,
+        answers: AnswerOpts {
+            schema_dump_enabled: Some(true),
+            ..AnswerOpts::default()
+        },
+    })
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("Missing required answer when sqlx_enabled is true"));
+    assert!(error.contains("--rust-migration-dir <dir>"));
+}
+
+#[test]
+fn adopt_no_input_without_defaults_still_requires_sqlx_migration_answer() {
+    let _guard = lock_env();
+    let temp = tempdir().unwrap();
+    let template = materialize_template_worktree();
+    let repo = temp.path().join("repo");
+    fs::create_dir_all(&repo).unwrap();
+
+    let error = run_adopt(AdoptOpts {
+        path: repo,
+        template: Some(template.path().display().to_string()),
+        template_mode: None,
+        vcs_ref: None,
+        force: false,
+        defaults: false,
+        no_input: true,
+        answers: AnswerOpts::default(),
+    })
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("Missing required answer when sqlx_enabled is true"));
+    assert!(error.contains("--sqlx-enabled false"));
+}
+
+#[test]
+fn bootstrap_invocation_cwd_rejects_invalid_env_values() {
+    let _guard = lock_env();
+    let _relative = EnvVarGuard::set(path::INVOCATION_CWD_ENV, "relative");
+    let error = path::bootstrap_invocation_cwd().unwrap_err().to_string();
+    assert!(error.contains("JIG_INVOKE_CWD must be an absolute path"));
+    drop(_relative);
+
+    let temp = tempdir().unwrap();
+    let missing = temp.path().join("missing");
+    let _missing = EnvVarGuard::set(path::INVOCATION_CWD_ENV, missing.as_os_str());
+    let error = path::bootstrap_invocation_cwd().unwrap_err().to_string();
+    assert!(error.contains("JIG_INVOKE_CWD is not a directory"));
+}
+
+#[test]
+fn init_and_adopt_resolve_relative_bootstrap_paths_from_invocation_cwd() {
+    let _guard = lock_env();
+    let temp = tempdir().unwrap();
+    let invocation = temp.path().join("caller");
+    let other = temp.path().join("other");
+    let template = invocation.join("template");
+    fs::create_dir_all(&invocation).unwrap();
+    fs::create_dir_all(&other).unwrap();
+    copy_dir_recursive(
+        &template_repo_root().join("templates"),
+        &template.join("templates"),
+    );
+    let _invocation_cwd = EnvVarGuard::set(path::INVOCATION_CWD_ENV, invocation.as_os_str());
+    let _cwd = CurrentDirGuard::set(&other);
+
+    run_init(InitOpts {
+        path: PathBuf::from("new-repo"),
+        template: Some("template".into()),
+        template_mode: None,
+        vcs_ref: None,
+        force: false,
+        defaults: true,
+        no_input: true,
+        answers: AnswerOpts::default(),
+    })
+    .unwrap();
+    assert!(invocation.join("new-repo/.jig.toml").exists());
+
+    fs::create_dir_all(invocation.join("existing-repo")).unwrap();
+    run_adopt(AdoptOpts {
+        path: PathBuf::from("existing-repo"),
+        template: Some("template".into()),
+        template_mode: None,
+        vcs_ref: None,
+        force: false,
+        defaults: true,
+        no_input: true,
+        answers: AnswerOpts::default(),
+    })
+    .unwrap();
+    assert!(invocation.join("existing-repo/.jig.toml").exists());
+
+    run_update(UpdateOpts {
+        path: PathBuf::from("existing-repo"),
+        template: Some("template".into()),
+        template_mode: None,
+        recopy: false,
+        force: false,
+        vcs_ref: None,
+        defaults: true,
+        no_input: true,
+    })
+    .unwrap();
+}
+
+#[test]
 fn run_init_rejects_schema_dumps_when_sqlx_is_disabled() {
     let _guard = lock_env();
     let temp = tempdir().unwrap();
@@ -729,6 +935,8 @@ fn adopt_with_real_template_runs_destination_tasks() {
             .join("scripts/check-migration-immutability.sh")
             .exists()
     );
+    let launcher = fs::read_to_string(repo.join("scripts/jig")).unwrap();
+    assert!(launcher.contains("cd \"$ROOT_DIR\""));
     let answers = fs::read_to_string(repo.join(".jig.toml")).unwrap();
     assert!(answers.contains("sqlx_enabled = false"));
 }

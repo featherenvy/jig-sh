@@ -29,7 +29,7 @@ fn adopt_local_git_template_defaults_to_committed_mode() {
     assert!(answers.contains("_template_local_path = "));
     assert!(
         answers.contains(
-            &absolute_path(template.path())
+            &fs::canonicalize(template.path())
                 .unwrap()
                 .display()
                 .to_string()

@@ -13,14 +13,14 @@ use serde_json::{Value, json};
 #[cfg(feature = "dev-proxy")]
 use crate::command::{ProxyCommand, ProxyListRequest, ProxyRuntimeOptions};
 use crate::command::{VaultCommand, VaultRuntimeOptions, VaultStatusRequest};
-use crate::context::{RepoContext, find_repo_root_from};
+use crate::context::{RepoContext, find_repo_root_from_or_env};
 use crate::tool_defs::tool;
 
 const COMMAND: &str = "doctor";
 
 pub(crate) fn run() -> Result<Value> {
     let cwd = env::current_dir().context("Failed to resolve current directory")?;
-    let root_result = find_repo_root_from(&cwd);
+    let root_result = find_repo_root_from_or_env(&cwd);
     let mut checks = Vec::new();
 
     let root = match root_result {
@@ -102,7 +102,7 @@ pub(crate) fn run() -> Result<Value> {
                 check(
                     "agent_skills",
                     "Agent skills",
-                    true,
+                    false,
                     false,
                     "blocked",
                     format!("Skipped until repo context loads successfully: {context_error}"),
@@ -150,10 +150,13 @@ pub(crate) fn format_summary(value: &Value) -> String {
         let status = check["status"].as_str().unwrap_or("unknown");
         let required = check["required"].as_bool().unwrap_or(false);
         let required_label = if required { "required" } else { "optional" };
-        let marker = if check["ok"].as_bool().unwrap_or(false) {
+        let ok = check["ok"].as_bool().unwrap_or(false);
+        let marker = if ok {
             "ok"
-        } else {
+        } else if required {
             "needs setup"
+        } else {
+            "optional setup"
         };
         lines.push(format!(
             "  - {label}: {marker} ({status}, {required_label})"
@@ -476,10 +479,12 @@ fn agent_check(ctx: &RepoContext) -> DoctorCheck {
                 .as_array()
                 .and_then(|steps| agent_next_step(steps))
                 .map(str::to_string);
+            // Agent skills improve the Codex/MCP experience, but a repository
+            // with valid config, runtime, contract, and tools is operational.
             check(
                 "agent_skills",
                 "Agent skills",
-                true,
+                false,
                 ok,
                 if ok { "installed" } else { "missing" },
                 detail,
@@ -490,7 +495,7 @@ fn agent_check(ctx: &RepoContext) -> DoctorCheck {
         Err(error) => check(
             "agent_skills",
             "Agent skills",
-            true,
+            false,
             false,
             "error",
             error.to_string(),
@@ -1031,7 +1036,7 @@ fn executable_exists(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_env::lock_env;
+    use crate::test_env::{CurrentDirGuard, EnvVarGuard, lock_env};
     use serde_json::json;
     use tempfile::tempdir;
 
@@ -1135,16 +1140,38 @@ mod tests {
     }
 
     #[test]
+    fn summary_surfaces_optional_missing_agent_skills() {
+        let output = json!({
+            "ok": true,
+            "repo": {
+                "root": "/tmp/demo",
+            },
+            "checks": [
+                {
+                    "label": "Agent skills",
+                    "status": "missing",
+                    "required": false,
+                    "ok": false,
+                },
+            ],
+            "next_step": "Run `scripts/jig agent bootstrap`.",
+        });
+
+        let summary = format_summary(&output);
+
+        assert!(summary.contains("Jig doctor: ready"));
+        assert!(summary.contains("Agent skills: optional setup (missing, optional)"));
+    }
+
+    #[test]
     fn doctor_reports_unified_readiness_checks() {
         let _env = lock_env();
         let temp = tempdir().unwrap();
         write_doctor_fixture(temp.path());
-        let original = env::current_dir().unwrap();
-        env::set_current_dir(temp.path()).unwrap();
+        let _cwd = CurrentDirGuard::set(temp.path());
 
         let output = run().unwrap();
 
-        env::set_current_dir(original).unwrap();
         assert_eq!(output["command"], "doctor");
         assert_eq!(output["repo"]["name"], "demo");
         assert_eq!(output["checks"].as_array().unwrap().len(), 8);
@@ -1161,6 +1188,7 @@ mod tests {
                 .as_bool()
                 .unwrap()
         );
+        assert_eq!(check_by_id(&output, "agent_skills")["required"], false);
         assert_eq!(check_by_id(&output, "proxy")["status"], "not configured");
         assert!(check_by_id(&output, "proxy")["ok"].as_bool().unwrap());
         assert_eq!(check_by_id(&output, "vault")["required"], false);
@@ -1177,12 +1205,10 @@ mod tests {
             "#!/usr/bin/env bash\nJIG_VERSION=\"0.2.0-beta.1\"\n",
         )
         .unwrap();
-        let original = env::current_dir().unwrap();
-        env::set_current_dir(temp.path()).unwrap();
+        let _cwd = CurrentDirGuard::set(temp.path());
 
         let output = run().unwrap();
 
-        env::set_current_dir(original).unwrap();
         assert_eq!(output["command"], "doctor");
         assert_eq!(output["checks"].as_array().unwrap().len(), 8);
         assert_eq!(check_by_id(&output, "config")["status"], "invalid");
@@ -1199,6 +1225,47 @@ mod tests {
             );
         }
         assert!(output["next_step"].as_str().unwrap().contains(".jig.toml"));
+    }
+
+    #[test]
+    fn doctor_uses_configured_repo_root_before_current_directory() {
+        let _env = lock_env();
+        let temp = tempdir().unwrap();
+        let repo = temp.path().join("repo");
+        let other = temp.path().join("other");
+        fs::create_dir_all(&repo).unwrap();
+        fs::create_dir_all(&other).unwrap();
+        write_doctor_fixture(&repo);
+        let _repo_root = EnvVarGuard::set("JIG_REPO_ROOT", &repo);
+        let _cwd = CurrentDirGuard::set(&other);
+
+        let output = run().unwrap();
+
+        assert_eq!(
+            output["repo"]["root"],
+            fs::canonicalize(&repo).unwrap().display().to_string()
+        );
+        assert_eq!(output["repo"]["name"], "demo");
+    }
+
+    #[test]
+    fn doctor_reports_invalid_configured_repo_root() {
+        let _env = lock_env();
+        let temp = tempdir().unwrap();
+        let missing_config = temp.path().join("missing-config");
+        fs::create_dir_all(&missing_config).unwrap();
+        let _repo_root = EnvVarGuard::set("JIG_REPO_ROOT", &missing_config);
+
+        let output = run().unwrap();
+
+        assert_eq!(output["ok"], false);
+        assert_eq!(check_by_id(&output, "repo")["status"], "missing");
+        assert!(
+            check_by_id(&output, "repo")["detail"]
+                .as_str()
+                .unwrap()
+                .contains("JIG_REPO_ROOT does not contain .jig.toml")
+        );
     }
 
     fn check_by_id<'a>(output: &'a Value, id: &str) -> &'a Value {

@@ -24,6 +24,7 @@ use git::{git, git_stdout};
 #[cfg(test)]
 use initial_copy::seed_answers_toml;
 use initial_copy::{BootstrapCopyRequest, render_and_copy_bootstrap_template};
+use path::{absolute_path_from, bootstrap_invocation_cwd};
 #[cfg(test)]
 use preview_seed::seed_preview_workspace;
 use renderer::{RenderStageRequest, stage_render};
@@ -32,15 +33,14 @@ use sync::rendered_conflicts;
 use sync::{ApplyRenderOptions, apply_staged_render};
 #[cfg(test)]
 use template_source::PrivateAnswerOverrides;
-use template_source::{
-    prepare_template_source, prepare_update_template_source, read_stored_template_state,
-};
+use template_source::{prepare_update_template_source, read_stored_template_state};
 
 mod answers;
 mod file_copy;
 mod git;
 mod initial_copy;
 mod managed_paths;
+mod path;
 mod preview_seed;
 mod renderer;
 mod staged_render;
@@ -263,7 +263,8 @@ impl TemplateMode {
 }
 
 pub fn run_init(opts: InitOpts) -> Result<Value> {
-    let destination = absolute_path(&opts.path)?;
+    let invocation_cwd = bootstrap_invocation_cwd()?;
+    let destination = absolute_path_from(&opts.path, &invocation_cwd)?;
     let progress = CliProgress::new("init");
     progress.header_for_path("render harness into new repo", &destination);
     progress.step("validate destination", "empty directory or --force");
@@ -279,12 +280,14 @@ pub fn run_init(opts: InitOpts) -> Result<Value> {
     let template = progress.log_blocked_on_err(prepare_initial_template_source(
         &template_request,
         opts.template_mode,
+        &invocation_cwd,
     ))?;
 
     let copy_result = render_and_copy_bootstrap_template(BootstrapCopyRequest {
         destination: &destination,
         template: &template,
         answers: &opts.answers,
+        use_defaults: opts.defaults,
         force: opts.force,
         seed_repo_path: None,
         progress,
@@ -313,7 +316,8 @@ pub fn run_init(opts: InitOpts) -> Result<Value> {
 }
 
 pub fn run_adopt(opts: AdoptOpts) -> Result<Value> {
-    let destination = absolute_path(&opts.path)?;
+    let invocation_cwd = bootstrap_invocation_cwd()?;
+    let destination = absolute_path_from(&opts.path, &invocation_cwd)?;
     let progress = CliProgress::new("adopt");
     progress.header_for_path("render harness into existing repo", &destination);
     progress.step("validate destination", "existing repository directory");
@@ -329,12 +333,14 @@ pub fn run_adopt(opts: AdoptOpts) -> Result<Value> {
     let template = progress.log_blocked_on_err(prepare_initial_template_source(
         &template_request,
         opts.template_mode,
+        &invocation_cwd,
     ))?;
 
     let copy_result = render_and_copy_bootstrap_template(BootstrapCopyRequest {
         destination: &destination,
         template: &template,
         answers: &opts.answers,
+        use_defaults: opts.defaults,
         force: opts.force,
         seed_repo_path: Some(&destination),
         progress,
@@ -474,6 +480,7 @@ fn official_template_ref_for_version(version: &str) -> String {
 fn prepare_initial_template_source(
     request: &InitialTemplateRequest<'_>,
     template_mode: Option<TemplateMode>,
+    path_base: &Path,
 ) -> Result<template_source::PreparedTemplateSource> {
     if request.used_default && template_mode.is_some() {
         // Keep local-only mode errors direct; wrapping them as default-source
@@ -481,8 +488,12 @@ fn prepare_initial_template_source(
         bail!(REMOTE_TEMPLATE_MODE_ERROR);
     }
 
-    let result =
-        prepare_template_source(request.template, template_mode, request.vcs_ref.as_deref());
+    let result = template_source::prepare_template_source_from_base(
+        request.template,
+        template_mode,
+        request.vcs_ref.as_deref(),
+        path_base,
+    );
     if request.used_default {
         result.with_context(|| default_template_failure_context(request))
     } else {
@@ -509,7 +520,8 @@ fn default_template_failure_context(request: &InitialTemplateRequest<'_>) -> Str
 }
 
 pub fn run_update(opts: UpdateOpts) -> Result<Value> {
-    let destination = absolute_path(&opts.path)?;
+    let invocation_cwd = bootstrap_invocation_cwd()?;
+    let destination = absolute_path_from(&opts.path, &invocation_cwd)?;
     let progress = CliProgress::new("update");
     let mode = if opts.recopy { "recopy" } else { "update" };
     progress.header_for_path(format!("refresh harness ({mode})"), &destination);
@@ -519,8 +531,11 @@ pub fn run_update(opts: UpdateOpts) -> Result<Value> {
     progress.step("read answers", answers_path.display());
     let stored = progress.log_blocked_on_err(read_stored_template_state(&answers_path))?;
     progress.step("resolve template", "stored source metadata");
-    let update_template =
-        progress.log_blocked_on_err(prepare_update_template_source(&opts, &stored))?;
+    let update_template = progress.log_blocked_on_err(prepare_update_template_source(
+        &opts,
+        &stored,
+        &invocation_cwd,
+    ))?;
     let Some(update_template) = update_template else {
         progress.blocked("stored template source metadata is missing");
         bail!(
@@ -588,7 +603,11 @@ fn initial_next_steps(
     }
     steps.push("scripts/jig doctor --summary".into());
     steps.push("scripts/jig check contract".into());
-    if result.dev_apps_configured {
+    if result.frontend_apps_configured {
+        steps.push("scripts/jig check typescript-lint".into());
+        steps.push("scripts/jig check typescript-typecheck".into());
+        steps.push("scripts/jig check typescript-build".into());
+        steps.push("scripts/jig check typescript-coverage".into());
         steps.push("scripts/jig dev".into());
     }
     if result.codex_skills_configured {
@@ -647,9 +666,11 @@ fn initial_command_report(result: &initial_copy::BootstrapCopyResult) -> Vec<Str
         commands.push("bootstrap_command not configured; skip scripts/jig bootstrap".into());
     }
     commands.push("contract check available through scripts/jig check contract".into());
-    if result.dev_apps_configured {
+    if result.frontend_apps_configured {
         commands
             .push("[[dev.apps]] rendered from frontend app answers; run scripts/jig dev".into());
+        commands
+            .push("frontend app checks available through scripts/jig check typescript-*".into());
     } else {
         commands.push("no [[dev.apps]] configured; scripts/jig dev has no app to launch".into());
     }
@@ -667,7 +688,7 @@ fn initial_todos(result: &initial_copy::BootstrapCopyResult) -> Vec<String> {
     if result.schema_dump_enabled {
         todos.push("Provide the project-owned scripts/dump-schema.sh implementation.".into());
     }
-    if result.dev_apps_configured {
+    if result.frontend_apps_configured {
         todos.push(
             "Confirm each frontend app has package scripts and starts on the injected PORT/HOST."
                 .into(),
@@ -680,7 +701,7 @@ fn initial_suggested_jig_toml_edits(result: &initial_copy::BootstrapCopyResult) 
     let mut edits = vec![
         "Replace generated fallback Cargo commands if this repo uses nested workspaces or non-Cargo checks.".into(),
     ];
-    if result.dev_apps_configured {
+    if result.frontend_apps_configured {
         edits.push("Tune [dev] ports, tld, HTTPS, LAN, and each [[dev.apps]] kind/argv if defaults do not match local development.".into());
     }
     if result.sqlx_enabled {
@@ -781,20 +802,6 @@ fn validate_update_destination(path: &Path) -> Result<()> {
 
 fn external_program(env_key: &str, fallback: &str) -> String {
     env::var(env_key).unwrap_or_else(|_| fallback.to_string())
-}
-
-fn absolute_path(path: &Path) -> Result<PathBuf> {
-    let resolved = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        env::current_dir()?.join(path)
-    };
-    if resolved.exists() {
-        fs::canonicalize(&resolved)
-            .with_context(|| format!("Failed to canonicalize {}", resolved.display()))
-    } else {
-        Ok(resolved)
-    }
 }
 
 #[cfg(test)]

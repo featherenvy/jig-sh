@@ -244,6 +244,21 @@ fn adopt_accepts_npm_frontend_app_and_renders_current_web_and_dev_config() {
             .unwrap()
             .contains("scripts/jig check agent-guides")
     }));
+    for command in [
+        "scripts/jig check typescript-lint",
+        "scripts/jig check typescript-typecheck",
+        "scripts/jig check typescript-build",
+        "scripts/jig check typescript-coverage",
+    ] {
+        assert!(
+            output["next_steps"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|step| step.as_str().unwrap() == command),
+            "missing next step {command}"
+        );
+    }
     assert!(
         output["adoption_report"]["files_created"]
             .as_array()

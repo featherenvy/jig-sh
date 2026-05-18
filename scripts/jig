@@ -165,4 +165,19 @@ if [[ "$version_checked" != true ]]; then
   fi
 fi
 
+# Repo-local commands run with the binary's working directory set to the owning
+# repository, even when this launcher is invoked by absolute path from another
+# cwd. Commands that accept caller-relative paths must explicitly opt into
+# JIG_INVOKE_CWD before the cd below. This switch assumes the subcommand is
+# the first positional argument; update it if global flags before subcommands
+# are added.
+case "${1:-}" in
+  init | adopt | update)
+    export JIG_INVOKE_CWD="$PWD"
+    ;;
+  *)
+    unset JIG_INVOKE_CWD
+    ;;
+esac
+cd "$ROOT_DIR"
 exec "$bin_path" "$@"

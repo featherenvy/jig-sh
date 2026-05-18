@@ -1,10 +1,7 @@
 use super::*;
-use crate::test_env::{EnvVarGuard, lock_env};
+use crate::test_env::{CurrentDirGuard, EnvVarGuard, lock_env};
 use serde_json::json;
-use std::sync::Mutex;
 use tempfile::tempdir;
-
-static CWD_LOCK: Mutex<()> = Mutex::new(());
 
 #[test]
 fn runtime_commands_still_require_adopted_repo_context() {
@@ -15,28 +12,47 @@ fn runtime_commands_still_require_adopted_repo_context() {
 
 #[test]
 fn load_optional_returns_none_outside_adopted_repo() {
-    let _guard = CWD_LOCK.lock().unwrap();
     let _env = lock_env();
     let temp = tempdir().unwrap();
-    let original = std::env::current_dir().unwrap();
-    std::env::set_current_dir(temp.path()).unwrap();
+    let _cwd = CurrentDirGuard::set(temp.path());
+
     let result = RepoContext::load_optional();
-    std::env::set_current_dir(original).unwrap();
     assert!(result.unwrap().is_none());
 }
 
 #[test]
 fn load_optional_ignores_stale_jig_repo_root() {
-    let _guard = CWD_LOCK.lock().unwrap();
     let _env = lock_env();
     let temp = tempdir().unwrap();
     let missing = temp.path().join("missing");
     let _repo_root = EnvVarGuard::set("JIG_REPO_ROOT", &missing);
-    let original = std::env::current_dir().unwrap();
-    std::env::set_current_dir(temp.path()).unwrap();
-    let result = RepoContext::load_optional();
-    std::env::set_current_dir(original).unwrap();
+    let _cwd = CurrentDirGuard::set(temp.path());
 
+    let result = RepoContext::load_optional();
+    assert!(result.unwrap().is_none());
+}
+
+#[test]
+fn load_optional_ignores_non_repo_jig_repo_root() {
+    let _env = lock_env();
+    let temp = tempdir().unwrap();
+    let non_repo = temp.path().join("non-repo");
+    fs::create_dir_all(&non_repo).unwrap();
+    let _repo_root = EnvVarGuard::set("JIG_REPO_ROOT", &non_repo);
+    let _cwd = CurrentDirGuard::set(temp.path());
+
+    let result = RepoContext::load_optional();
+    assert!(result.unwrap().is_none());
+}
+
+#[test]
+fn load_optional_ignores_empty_jig_repo_root() {
+    let _env = lock_env();
+    let temp = tempdir().unwrap();
+    let _repo_root = EnvVarGuard::set("JIG_REPO_ROOT", "");
+    let _cwd = CurrentDirGuard::set(temp.path());
+
+    let result = RepoContext::load_optional();
     assert!(result.unwrap().is_none());
 }
 

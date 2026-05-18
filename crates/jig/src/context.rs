@@ -8,6 +8,7 @@ use jig_contract::{FeatureContext, ManifestTool};
 use serde::Deserialize;
 
 const CURRENT_SESSION_FILE: &str = "jig-current-session.txt";
+const JIG_REPO_ROOT_ENV: &str = "JIG_REPO_ROOT";
 pub(crate) const DEFAULT_CODEX_MARKETPLACE_ID: &str = "jig-skills";
 // jig.sh generated repos default to the shared Jig skills marketplace; forks can
 // override or opt out through agent_tooling.codex.marketplaces in .jig.toml.
@@ -268,11 +269,7 @@ pub(crate) struct RepoContext {
 
 impl RepoContext {
     pub(crate) fn load() -> Result<Self> {
-        let root = if let Ok(root) = std::env::var("JIG_REPO_ROOT") {
-            PathBuf::from(root)
-        } else {
-            find_repo_root_from(&std::env::current_dir()?)?
-        };
+        let root = find_repo_root_from_or_env(&std::env::current_dir()?)?;
         Self::load_from_root(root)
     }
 
@@ -281,16 +278,23 @@ impl RepoContext {
         // Contextless cleanup/status commands should still work when a shell
         // inherited a stale JIG_REPO_ROOT. Required repo commands use load()
         // instead, where the env var remains an explicit override.
-        if let Ok(root) = std::env::var("JIG_REPO_ROOT") {
-            let root = PathBuf::from(root);
-            match Self::load_from_root(root.clone()) {
-                Ok(ctx) => return Ok(Some(ctx)),
-                Err(error) => {
-                    eprintln!(
-                        "jig ignored invalid JIG_REPO_ROOT={} for contextless command lookup: {error:#}",
-                        root.display()
-                    );
+        match repo_root_from_env() {
+            Ok(Some(root)) => {
+                let display_root = root.display().to_string();
+                match Self::load_from_root(root) {
+                    Ok(ctx) => return Ok(Some(ctx)),
+                    Err(error) => {
+                        eprintln!(
+                            "jig ignored invalid {JIG_REPO_ROOT_ENV}={display_root} for contextless command lookup: {error:#}"
+                        );
+                    }
                 }
+            }
+            Ok(None) => {}
+            Err(error) => {
+                eprintln!(
+                    "jig ignored invalid {JIG_REPO_ROOT_ENV} for contextless command lookup: {error:#}"
+                );
             }
         }
         let Some(root) = find_optional_repo_root()? else {
@@ -719,6 +723,38 @@ pub(crate) fn find_repo_root_from(start: &Path) -> Result<PathBuf> {
         bail!("Could not find repo root containing .jig.toml");
     };
     Ok(root)
+}
+
+pub(crate) fn find_repo_root_from_or_env(start: &Path) -> Result<PathBuf> {
+    if let Some(root) = repo_root_from_env()? {
+        Ok(root)
+    } else {
+        find_repo_root_from(start)
+    }
+}
+
+fn repo_root_from_env() -> Result<Option<PathBuf>> {
+    let Some(root) = std::env::var_os(JIG_REPO_ROOT_ENV) else {
+        return Ok(None);
+    };
+    let root = PathBuf::from(root);
+    if root.as_os_str().is_empty() {
+        return Ok(None);
+    }
+    if !root.join(".jig.toml").exists() {
+        bail!(
+            "{JIG_REPO_ROOT_ENV} does not contain .jig.toml: {}",
+            root.display()
+        );
+    }
+    fs::canonicalize(&root)
+        .with_context(|| {
+            format!(
+                "Failed to canonicalize {JIG_REPO_ROOT_ENV}: {}",
+                root.display()
+            )
+        })
+        .map(Some)
 }
 
 fn find_optional_repo_root_from(start: &Path) -> Result<Option<PathBuf>> {

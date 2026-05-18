@@ -7,7 +7,7 @@ use serde_json::Value as JsonValue;
 use toml::{Table, Value as TomlValue};
 
 use super::AnswerOpts;
-use super::answers::RenderAnswers;
+use super::answers::{AnswerResolution, RenderAnswers};
 use super::renderer::{RenderStageRequest, stage_render};
 use super::sync::ApplyRenderReport;
 use super::sync::{ApplyRenderOptions, apply_staged_render};
@@ -25,6 +25,7 @@ pub(super) struct BootstrapCopyRequest<'a> {
     pub(super) destination: &'a Path,
     pub(super) template: &'a PreparedTemplateSource,
     pub(super) answers: &'a AnswerOpts,
+    pub(super) use_defaults: bool,
     pub(super) force: bool,
     pub(super) seed_repo_path: Option<&'a Path>,
     pub(super) progress: CliProgress,
@@ -33,7 +34,7 @@ pub(super) struct BootstrapCopyRequest<'a> {
 pub(super) struct BootstrapCopyResult {
     pub(super) default_branch: Option<String>,
     pub(super) bootstrap_command_configured: bool,
-    pub(super) dev_apps_configured: bool,
+    pub(super) frontend_apps_configured: bool,
     pub(super) codex_skills_configured: bool,
     pub(super) sqlx_enabled: bool,
     pub(super) schema_dump_enabled: bool,
@@ -45,12 +46,14 @@ pub(super) fn render_and_copy_bootstrap_template(
     request: BootstrapCopyRequest<'_>,
 ) -> Result<BootstrapCopyResult> {
     request.progress.step("resolve answers", ANSWERS_DETAIL);
-    let answers = request
+    let answer_resolution = request
         .progress
-        .log_blocked_on_err(RenderAnswers::from_opts(
+        .log_blocked_on_err(AnswerResolution::from_opts(
             request.answers,
             request.destination,
+            request.use_defaults,
         ))?;
+    let (answers, mut notes) = answer_resolution.into_parts();
     if request.seed_repo_path.is_some() && !answers.frontend_apps().is_empty() {
         request
             .progress
@@ -77,22 +80,22 @@ pub(super) fn render_and_copy_bootstrap_template(
         },
     )?;
 
+    if answers.has_legacy_dev_command() {
+        notes.push(
+            "Preserved deprecated dev_command for migration; generated commands ignore it. Move that value into [dev] / [[dev.apps]] when ready."
+                .into(),
+        );
+    }
+
     Ok(BootstrapCopyResult {
         default_branch: Some(answers.default_branch().to_string()),
         bootstrap_command_configured: answers.bootstrap_command_configured(),
-        dev_apps_configured: !answers.frontend_apps().is_empty(),
+        frontend_apps_configured: !answers.frontend_apps().is_empty(),
         codex_skills_configured: answers.codex_skills_configured(),
         sqlx_enabled: answers.sqlx_enabled(),
         schema_dump_enabled: answers.schema_dump_enabled(),
         apply_report,
-        notes: if answers.has_legacy_dev_command() {
-            vec![
-                "Preserved deprecated dev_command for migration; generated commands ignore it. Move that value into [dev] / [[dev.apps]] when ready."
-                    .into(),
-            ]
-        } else {
-            Vec::new()
-        },
+        notes,
     })
 }
 

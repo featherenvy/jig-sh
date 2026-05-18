@@ -606,7 +606,6 @@ fn remove_route_best_effort_tolerates_cleanup_failure() {
 #[test]
 fn run_apps_launches_non_proxied_apps_without_routes() {
     let temp = tempfile::tempdir().unwrap();
-    let port = find_free_app_port_excluding("localhost", &HashSet::new()).unwrap();
     let settings = ProxySettings {
         state_dir: Some(temp.path().to_path_buf()),
         http_port: 0,
@@ -620,7 +619,10 @@ fn run_apps_launches_non_proxied_apps_without_routes() {
             kind: AppKind::EnvPort,
             hostname: "not a route hostname".into(),
             target_host: "localhost".into(),
-            explicit_port: Some(port),
+            // The chosen port is not part of this route-storage assertion.
+            // Let run_apps assign it so parallel listener tests cannot steal a
+            // preselected explicit port between probe and launch.
+            explicit_port: None,
             proxy: false,
         }],
         &settings,

@@ -45,17 +45,45 @@ pub(super) struct RenderAnswers {
     agent_tooling: AgentToolingAnswers,
 }
 
-impl RenderAnswers {
-    pub(super) fn from_opts(opts: &AnswerOpts, destination: &Path) -> Result<Self> {
+pub(super) struct AnswerResolution {
+    answers: RenderAnswers,
+    notes: Vec<String>,
+}
+
+impl AnswerResolution {
+    pub(super) fn from_opts(
+        opts: &AnswerOpts,
+        destination: &Path,
+        use_defaults: bool,
+    ) -> Result<Self> {
         let mut raw = if let Some(path) = opts.answers_file.as_deref() {
             RawAnswers::from_file(path)?
         } else {
             RawAnswers::default()
         };
         raw.merge_opts(opts);
-        raw.resolve(default_repo_name(destination))
+        let sqlx_defaulted_to_tooling_only = if use_defaults {
+            raw.apply_sqlx_default_for_cli_defaults()
+        } else {
+            false
+        };
+        let answers = raw.resolve(default_repo_name(destination))?;
+        let mut notes = Vec::new();
+        if sqlx_defaulted_to_tooling_only {
+            notes.push(
+                "SQLx answers were omitted under --defaults, so Jig rendered a tooling-only profile. Pass --sqlx-enabled true --rust-migration-dir <dir> for SQLx repos, or pass --sqlx-enabled false for tooling-only repos."
+                    .into(),
+            );
+        }
+        Ok(Self { answers, notes })
     }
 
+    pub(super) fn into_parts(self) -> (RenderAnswers, Vec<String>) {
+        (self.answers, self.notes)
+    }
+}
+
+impl RenderAnswers {
     pub(super) fn from_answers_file(path: &Path) -> Result<Self> {
         let mut raw = RawAnswers::from_file(path)?;
         raw.normalize_legacy_sqlx_disabled_schema_dump();
@@ -260,6 +288,20 @@ impl RawAnswers {
         );
     }
 
+    fn apply_sqlx_default_for_cli_defaults(&mut self) -> bool {
+        // CLI `--defaults` should not block on optional feature setup. Without
+        // a migration dir, resolve to the tooling-only profile instead of
+        // making noninteractive adoption stop for SQLx configuration.
+        if self.sqlx_enabled.is_none()
+            && self.rust_migration_dir.as_deref().is_none_or(str::is_empty)
+            && self.schema_dump_enabled != Some(true)
+        {
+            self.sqlx_enabled = Some(false);
+            return true;
+        }
+        false
+    }
+
     fn resolve(self, default_repo_name: Option<String>) -> Result<RenderAnswers> {
         let repo_name = self
             .repo_name
@@ -269,7 +311,9 @@ impl RawAnswers {
         let sqlx_enabled = self.sqlx_enabled.unwrap_or(true);
         let rust_migration_dir = self.rust_migration_dir.filter(|value| !value.is_empty());
         if sqlx_enabled && rust_migration_dir.is_none() {
-            bail!("Missing required answer when sqlx_enabled is true: rust_migration_dir");
+            bail!(
+                "Missing required answer when sqlx_enabled is true: rust_migration_dir. Pass --rust-migration-dir <dir> for SQLx repos, or pass --sqlx-enabled false for tooling-only repos."
+            );
         }
         if !sqlx_enabled && self.schema_dump_enabled == Some(true) {
             bail!(

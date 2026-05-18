@@ -2,6 +2,7 @@ use tempfile::{TempDir, tempdir};
 
 use crate::test_env::{EnvVarGuard, lock_env};
 
+use super::path;
 use super::*;
 
 fn template_repo_root() -> PathBuf {
