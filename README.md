@@ -28,12 +28,13 @@ scripts/jig vault init
 scripts/jig vault secret set api_token --value-prompt
 scripts/jig vault secret list
 scripts/jig vault run --env TOKEN=api_token -- sh -c 'printf "%s\n" "$TOKEN"'
+scripts/jig vault run --file TOKEN_FILE=api_token -- sh -c 'cat "$TOKEN_FILE"'
 scripts/jig vault audit verify
 ```
 
 Terminal use prompts for the vault passphrase. For scripts and other non-interactive callers, export `JIG_VAULT_PASSPHRASE` before each command that unlocks the vault, including `secret list`, `run`, and `audit verify`; only `vault status` works without it.
 
-Use `--value-prompt` for hidden terminal entry, or pipe/redirect bytes with `--value-stdin` for automation. Stdin values are exact, so use `printf` instead of `echo` when the trailing newline is not part of the secret. Vault output is JSON so scripts can inspect it directly; `vault run` mirrors the child process exit status while still printing the redacted result payload.
+Use `--value-prompt` for hidden terminal entry; interactive `secret set NAME` uses the same hidden prompt by default. Use `--value-stdin` for automation. Stdin values are exact, so use `printf` instead of `echo` when the trailing newline is not part of the secret. `vault run --env VAR=SECRET` injects UTF-8 secrets as environment values; on Unix, `vault run --file VAR=SECRET` writes the secret to a private `0600` temporary file and injects its path. Non-Unix platforms reject `--file`; use `--env` or a platform-specific wrapper there. Vault output is JSON so scripts can inspect it directly; `vault run` mirrors the child process exit status while still printing the redacted result payload.
 
 ## Quick Start
 
@@ -46,6 +47,17 @@ cargo install jig-sh
 Generated repos install and pin their own `jig` version automatically via `scripts/install-jig.sh`. You only need a global install to run `jig init` or `jig adopt` on a repo for the first time. Help requests reuse an existing matching repo-local binary when one is available; on a cold checkout the launcher prints an explicit first-run install message before preparing the runtime.
 
 By default, release builds of `jig init` and `jig adopt` clone the official template from GitHub at the matching `vVERSION` tag. For offline use or local head dogfooding, pass `--template /path/to/jig-sh --template-mode committed`.
+
+## Contract Vs Runtime
+
+`.agent/jig-contract.json` records the stable command tools that MCP clients and CI can execute across machines. Runtime-owned commands can still be configured in `.jig.toml`, but they manage local workflow state, local processes, or local secrets and are intentionally outside the generated contract.
+
+| Surface | Stable contract? | Records receipts? | Machine-local? |
+| --- | --- | --- | --- |
+| `check` | yes | yes | no |
+| `work` | runtime-owned | yes | no |
+| `dev` / `proxy` | runtime-owned | no | yes |
+| `vault` | runtime-owned | no | yes |
 
 **Bootstrap a new repo:**
 
@@ -127,21 +139,21 @@ Use this path when you want the fastest successful loop on a new or adopted repo
    jig adopt . --repo-name existing-repo --sqlx-enabled false
    ```
 
-2. Enter the repo and verify the pinned launcher works.
+2. Enter the repo and run the unified readiness check.
 
    ```sh
    cd /path/to/new-repo
-   scripts/jig bootstrap
-   scripts/jig check contract
+   scripts/jig doctor --summary || true
    ```
 
-3. Check local agent readiness. The JSON form is the stable automation output; `--summary` is the human scan path. `agent doctor` exits nonzero until required setup is complete.
+3. Follow the next step reported by doctor. The JSON form is the stable automation output; `--summary` is the human scan path. `doctor` exits nonzero until required setup is complete.
 
    ```sh
-   scripts/jig agent doctor --summary || true
-   # If the summary reports missing marketplace registration:
+   scripts/jig bootstrap
+   scripts/jig check contract
+   # If doctor reports missing marketplace registration:
    scripts/jig agent bootstrap
-   scripts/jig agent doctor --summary
+   scripts/jig doctor --summary
    ```
 
 4. Start structured work, run required gates, and close it only after fresh evidence exists.
@@ -151,7 +163,7 @@ Use this path when you want the fastest successful loop on a new or adopted repo
 
    scripts/jig work status --summary
    scripts/jig work check --plan-id "$plan_id" --summary
-   scripts/jig work gates --plan-id "$plan_id" --summary
+   scripts/jig work evidence --plan-id "$plan_id" --summary
    scripts/jig work finish --plan-id "$plan_id" --resolution "Harness loop verified" --outcome success
    ```
 
@@ -165,9 +177,10 @@ Use this path when you want the fastest successful loop on a new or adopted repo
 
 Contract and gate commands intentionally append receipts under `.agent/state/`.
 Use `scripts/jig work status --summary` for a read-only scan of existing work
-state and `scripts/jig work receipts --summary --failed-only` for a compact
-receipt history. Pass `--no-receipt` to a one-off contract command when you do
-not want evidence recorded.
+state, `scripts/jig work evidence --summary` for latest gate freshness, and
+`scripts/jig work receipts --summary --failed-only` for a compact receipt
+history. Pass `--no-receipt` to a one-off contract command when you do not want
+evidence recorded.
 
 The default generated Rust commands skip cleanly when a freshly initialized
 harness does not yet have a root `Cargo.toml`; once application code exists,
@@ -191,10 +204,10 @@ The template renders these repo-owned assets into a consumer repository:
 
 Generated repos use `scripts/jig` as the execution backend.
 
-On fresh machines, generated repos can check and bootstrap expected agent skills through the launcher:
+On fresh machines, generated repos can check harness readiness through the launcher and then bootstrap expected agent skills if doctor reports them missing:
 
 ```sh
-scripts/jig agent doctor --summary
+scripts/jig doctor --summary
 scripts/jig agent bootstrap
 ```
 
@@ -287,7 +300,7 @@ The default workflow assumes Bun for package installation and script execution.
 - `crates/jig-dev-proxy/` — local HTTP/HTTPS proxy with TLS certificate management
 - `crates/jig-vault/` — local encrypted vault, redaction, audit, and brokered-run primitives
 - `templates/project/` — files rendered into downstream repos
-- `docs/` — [configuration reference](docs/configuration.md), [adoption guide](docs/adoption.md), and [public contract documentation](docs/public-contract.md)
+- `docs/` — [developer UX](docs/developer-ux.md), [configuration reference](docs/configuration.md), [adoption guide](docs/adoption.md), and [public contract documentation](docs/public-contract.md)
 - `examples/` — visible `.jig.toml` answer-file examples and a short index
 - `scripts/validate-fixtures.sh` — renders sample repos and validates the generated harness
 

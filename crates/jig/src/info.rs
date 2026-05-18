@@ -1,0 +1,555 @@
+use std::fs;
+use std::io::ErrorKind;
+use std::path::Path;
+
+use anyhow::Result;
+use serde_json::{Value, json};
+
+use crate::command::{VaultCommand, VaultRuntimeOptions, VaultStatusRequest};
+use crate::context::{DevAppConfig, RepoContext, WorkGateConfig};
+
+const COMMAND: &str = "info";
+const DEFAULT_MCP_COMMAND: &str = "scripts/jig mcp";
+
+pub(crate) fn run() -> Result<Value> {
+    let ctx = RepoContext::load()?;
+    Ok(repo_info(&ctx))
+}
+
+pub(crate) fn format_summary(value: &Value) -> String {
+    let repo = &value["repo"];
+    let mut lines = vec![
+        format!("Jig info: {}", repo["name"].as_str().unwrap_or("<unknown>")),
+        format!(
+            "Template source: {} @ {}",
+            repo["template_source"].as_str().unwrap_or("<unknown>"),
+            repo["template_commit"].as_str().unwrap_or("<unknown>")
+        ),
+        format!(
+            "Pinned Jig: {}",
+            repo["jig_version"].as_str().unwrap_or("<unknown>")
+        ),
+    ];
+
+    lines.push(format!(
+        "Capabilities: {}",
+        enabled_capabilities(value).join(", ")
+    ));
+    lines.push(format!(
+        "Check tools: {}",
+        string_list(value["check_tools"].as_array()).join(", ")
+    ));
+    lines.push(format!(
+        "Work gates: {}",
+        value["work_gates"].as_array().map(Vec::len).unwrap_or(0)
+    ));
+    lines.push(format!(
+        "Dev apps: {}",
+        value["dev_apps"].as_array().map(Vec::len).unwrap_or(0)
+    ));
+    let mcp_source = value["mcp_command_source"].as_str().unwrap_or("default");
+    lines.push(format!(
+        "MCP command ({}): {}",
+        mcp_source,
+        value["mcp_command"].as_str().unwrap_or(DEFAULT_MCP_COMMAND)
+    ));
+    if let Some(error) = value["mcp_command_error"].as_str() {
+        lines.push(format!("MCP command fallback: {error}"));
+    }
+    lines.join("\n")
+}
+
+fn repo_info(ctx: &RepoContext) -> Value {
+    repo_info_with_vault(ctx, vault_capability())
+}
+
+fn repo_info_with_vault(ctx: &RepoContext, vault: VaultCapability) -> Value {
+    let mcp_command = mcp_command(ctx.root());
+    let dev_apps = ctx
+        .dev_config()
+        .apps
+        .iter()
+        .map(dev_app_value)
+        .collect::<Vec<_>>();
+    let frontend_apps = ctx
+        .frontend_apps()
+        .iter()
+        .map(|app| {
+            json!({
+                "name": &app.name,
+                "dir": &app.dir,
+                "coverage_threshold": app.coverage_threshold,
+            })
+        })
+        .collect::<Vec<_>>();
+    let dev_proxy_enabled =
+        !dev_apps.is_empty() || !frontend_apps.is_empty() || ctx.dev_config().workspace_discovery;
+
+    json!({
+        "ok": true,
+        "command": COMMAND,
+        "repo": {
+            "name": ctx.repo_name(),
+            "root": ctx.root().display().to_string(),
+            "template_source": ctx.source_path(),
+            "template_commit": ctx.source_commit(),
+            "jig_version": ctx.jig_version(),
+            "contract_version": ctx.contract_version(),
+        },
+        "capabilities": {
+            "sqlx": ctx.sqlx_enabled(),
+            "schema_dumps": ctx.sqlx_enabled() && ctx.schema_dump_enabled(),
+            "frontend_apps": !frontend_apps.is_empty(),
+            "dev_proxy": dev_proxy_enabled,
+            "vault": vault.ok,
+            "vault_error": vault.error,
+        },
+        "check_tools": ctx.work_check_tools(),
+        "contract_tools": ctx.tool_specs().iter().map(|tool| {
+            json!({
+                "name": &tool.name,
+                "kind": &tool.kind,
+                "command": &tool.command,
+                "description": &tool.description,
+            })
+        }).collect::<Vec<_>>(),
+        "work_gates": ctx.work_gates().iter().map(work_gate_value).collect::<Vec<_>>(),
+        "frontend_apps": frontend_apps,
+        "dev": {
+            "proxy_port": ctx.dev_config().proxy_port,
+            "https_port": ctx.dev_config().https_port,
+            "https": ctx.dev_config().https,
+            "http2": ctx.dev_config().http2,
+            "lan": ctx.dev_config().lan,
+            "tld": &ctx.dev_config().tld,
+            "workspace_discovery": ctx.dev_config().workspace_discovery,
+        },
+        "dev_apps": dev_apps,
+        "mcp_command": mcp_command.command,
+        "mcp_command_source": mcp_command.source,
+        "mcp_command_error": mcp_command.error,
+    })
+}
+
+struct VaultCapability {
+    ok: bool,
+    error: Option<String>,
+}
+
+fn vault_capability() -> VaultCapability {
+    let command = VaultCommand::Status(VaultStatusRequest {
+        vault: VaultRuntimeOptions::default(),
+    });
+    match crate::runtime::dispatch_vault(command) {
+        Ok(_) => VaultCapability {
+            ok: true,
+            error: None,
+        },
+        Err(error) => VaultCapability {
+            ok: false,
+            error: Some(format!("{error:#}")),
+        },
+    }
+}
+
+struct McpCommandInfo {
+    command: String,
+    source: &'static str,
+    error: Option<String>,
+}
+
+fn mcp_command(root: &Path) -> McpCommandInfo {
+    let path = root.join(".mcp.json");
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == ErrorKind::NotFound => return default_mcp_command(None),
+        Err(error) => {
+            return default_mcp_command(Some(format!(
+                "Failed to read {}: {error}",
+                path.display()
+            )));
+        }
+    };
+    let value = match serde_json::from_str::<Value>(&text) {
+        Ok(value) => value,
+        Err(error) => {
+            return default_mcp_command(Some(format!(
+                "Failed to parse {}: {error}",
+                path.display()
+            )));
+        }
+    };
+    let command = match mcp_command_parts(&value, &path) {
+        Ok(command) => command,
+        Err(error) => return default_mcp_command(Some(error)),
+    };
+
+    // MCP `command` is a single program path and `args` are already structured.
+    // Render a shell-friendly display line for humans; Jig does not parse this
+    // string back into an MCP command.
+    McpCommandInfo {
+        command: shell_display_command(&command),
+        source: ".mcp.json",
+        error: None,
+    }
+}
+
+fn mcp_command_parts(value: &Value, path: &Path) -> Result<Vec<String>, String> {
+    let server = &value["mcpServers"]["jig"];
+    let command = server["command"].as_str().ok_or_else(|| {
+        format!(
+            "{} does not define a non-empty mcpServers.jig.command",
+            path.display()
+        )
+    })?;
+    if command.is_empty() {
+        return Err(format!(
+            "{} does not define a non-empty mcpServers.jig.command",
+            path.display()
+        ));
+    }
+    let mut parts = vec![normalize_repo_relative_command(command)];
+    if let Some(args_value) = server.get("args") {
+        let Some(args) = args_value.as_array() else {
+            return Err(format!(
+                "{} mcpServers.jig.args must be an array of strings",
+                path.display()
+            ));
+        };
+        for (index, arg) in args.iter().enumerate() {
+            let arg = arg.as_str().ok_or_else(|| {
+                format!(
+                    "{} mcpServers.jig.args[{index}] must be a string",
+                    path.display()
+                )
+            })?;
+            parts.push(arg.to_string());
+        }
+    }
+    Ok(parts)
+}
+
+fn shell_display_command(command: &[String]) -> String {
+    command
+        .iter()
+        .map(|part| crate::shell::quote(part))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn default_mcp_command(error: Option<String>) -> McpCommandInfo {
+    McpCommandInfo {
+        command: DEFAULT_MCP_COMMAND.into(),
+        source: "default",
+        error,
+    }
+}
+
+fn normalize_repo_relative_command(command: &str) -> String {
+    command.strip_prefix("./").unwrap_or(command).to_string()
+}
+
+fn dev_app_value(app: &DevAppConfig) -> Value {
+    json!({
+        "name": &app.name,
+        "dir": &app.dir,
+        "kind": &app.kind,
+        "command": &app.command,
+        "argv": &app.argv,
+        "port": app.port,
+        "host": &app.host,
+        "proxy": app.proxy,
+    })
+}
+
+fn work_gate_value(gate: &WorkGateConfig) -> Value {
+    json!({
+        "id": &gate.id,
+        "kind": &gate.kind,
+        "tool": &gate.tool,
+        "skill": &gate.skill,
+        "required": gate.required,
+    })
+}
+
+fn enabled_capabilities(value: &Value) -> Vec<&'static str> {
+    let capabilities = &value["capabilities"];
+    let mut enabled = Vec::new();
+    for (key, label) in [
+        ("sqlx", "SQLx"),
+        ("schema_dumps", "schema dumps"),
+        ("frontend_apps", "frontend apps"),
+        ("dev_proxy", "dev proxy"),
+        ("vault", "vault"),
+    ] {
+        if capabilities[key].as_bool().unwrap_or(false) {
+            enabled.push(label);
+        }
+    }
+    if enabled.is_empty() {
+        enabled.push("none");
+    }
+    enabled
+}
+
+fn string_list(values: Option<&Vec<Value>>) -> Vec<String> {
+    match values {
+        Some(values) => values
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::to_string)
+            .collect(),
+        None => Vec::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::fs;
+    use std::path::Path;
+    use tempfile::tempdir;
+
+    #[test]
+    fn reports_repo_contract_capabilities_and_dev_apps() {
+        let temp = tempdir().unwrap();
+        write_info_fixture(temp.path());
+        let ctx = RepoContext::load_from_root(temp.path().to_path_buf()).unwrap();
+
+        let output = repo_info(&ctx);
+
+        assert_eq!(output["command"], "info");
+        assert_eq!(output["repo"]["name"], "demo");
+        assert_eq!(output["repo"]["template_source"], "/tmp/template");
+        assert_eq!(output["repo"]["template_commit"], "abc123");
+        assert_eq!(output["capabilities"]["sqlx"], true);
+        assert_eq!(output["capabilities"]["schema_dumps"], true);
+        assert_eq!(output["capabilities"]["frontend_apps"], true);
+        assert_eq!(output["capabilities"]["dev_proxy"], true);
+        assert_eq!(output["capabilities"]["vault"], true);
+        assert_eq!(output["check_tools"][0], "jig.test");
+        assert_eq!(output["work_gates"][0]["id"], "tests");
+        assert_eq!(output["dev_apps"][0]["name"], "web");
+        assert_eq!(output["mcp_command"], "scripts/jig mcp");
+        assert_eq!(output["mcp_command_source"], "default");
+        assert_eq!(output["mcp_command_error"], Value::Null);
+
+        let summary = format_summary(&output);
+        assert!(summary.contains("Jig info: demo"));
+        assert!(summary.contains("Template source: /tmp/template @ abc123"));
+        assert!(
+            summary.contains("Capabilities: SQLx, schema dumps, frontend apps, dev proxy, vault")
+        );
+    }
+
+    #[test]
+    fn reports_vault_error_when_status_fails() {
+        let temp = tempdir().unwrap();
+        write_info_fixture(temp.path());
+        let ctx = RepoContext::load_from_root(temp.path().to_path_buf()).unwrap();
+
+        let output = repo_info_with_vault(
+            &ctx,
+            VaultCapability {
+                ok: false,
+                error: Some("vault status failed".into()),
+            },
+        );
+
+        assert_eq!(output["capabilities"]["vault"], false);
+        assert_eq!(output["capabilities"]["vault_error"], "vault status failed");
+    }
+
+    #[test]
+    fn reports_mcp_command_from_mcp_json() {
+        let temp = tempdir().unwrap();
+        write_info_fixture(temp.path());
+        fs::write(
+            temp.path().join(".mcp.json"),
+            serde_json::to_string_pretty(&json!({
+                "mcpServers": {
+                    "jig": {
+                        "command": "./tools/local jig",
+                        "args": ["mcp", "--mode", "agent one"]
+                    }
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let ctx = RepoContext::load_from_root(temp.path().to_path_buf()).unwrap();
+
+        let output = repo_info(&ctx);
+
+        assert_eq!(
+            output["mcp_command"],
+            "'tools/local jig' mcp --mode 'agent one'"
+        );
+        assert_eq!(output["mcp_command_source"], ".mcp.json");
+        assert_eq!(output["mcp_command_error"], Value::Null);
+    }
+
+    #[test]
+    fn reports_default_mcp_command_for_malformed_mcp_json() {
+        let temp = tempdir().unwrap();
+        write_info_fixture(temp.path());
+        fs::write(temp.path().join(".mcp.json"), "{not json").unwrap();
+        let ctx = RepoContext::load_from_root(temp.path().to_path_buf()).unwrap();
+
+        let output = repo_info(&ctx);
+
+        assert_eq!(output["mcp_command"], DEFAULT_MCP_COMMAND);
+        assert_eq!(output["mcp_command_source"], "default");
+        assert!(
+            output["mcp_command_error"]
+                .as_str()
+                .unwrap()
+                .contains("Failed to parse")
+        );
+
+        let summary = format_summary(&output);
+        assert!(summary.contains("MCP command fallback: Failed to parse"));
+    }
+
+    #[test]
+    fn reports_default_mcp_command_for_unreadable_mcp_json() {
+        let temp = tempdir().unwrap();
+        write_info_fixture(temp.path());
+        fs::create_dir(temp.path().join(".mcp.json")).unwrap();
+        let ctx = RepoContext::load_from_root(temp.path().to_path_buf()).unwrap();
+
+        let output = repo_info(&ctx);
+
+        assert_eq!(output["mcp_command"], DEFAULT_MCP_COMMAND);
+        assert_eq!(output["mcp_command_source"], "default");
+        assert!(
+            output["mcp_command_error"]
+                .as_str()
+                .unwrap()
+                .contains("Failed to read")
+        );
+    }
+
+    #[test]
+    fn reports_default_mcp_command_for_empty_mcp_command() {
+        let temp = tempdir().unwrap();
+        write_info_fixture(temp.path());
+        fs::write(
+            temp.path().join(".mcp.json"),
+            serde_json::to_string_pretty(&json!({
+                "mcpServers": {
+                    "jig": {
+                        "command": "",
+                        "args": ["mcp"]
+                    }
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let ctx = RepoContext::load_from_root(temp.path().to_path_buf()).unwrap();
+
+        let output = repo_info(&ctx);
+
+        assert_eq!(output["mcp_command"], DEFAULT_MCP_COMMAND);
+        assert_eq!(output["mcp_command_source"], "default");
+        assert!(
+            output["mcp_command_error"]
+                .as_str()
+                .unwrap()
+                .contains("non-empty mcpServers.jig.command")
+        );
+    }
+
+    #[test]
+    fn reports_default_mcp_command_for_non_string_mcp_arg() {
+        let temp = tempdir().unwrap();
+        write_info_fixture(temp.path());
+        fs::write(
+            temp.path().join(".mcp.json"),
+            serde_json::to_string_pretty(&json!({
+                "mcpServers": {
+                    "jig": {
+                        "command": "scripts/jig",
+                        "args": [123, "mcp"]
+                    }
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let ctx = RepoContext::load_from_root(temp.path().to_path_buf()).unwrap();
+
+        let output = repo_info(&ctx);
+
+        assert_eq!(output["mcp_command"], DEFAULT_MCP_COMMAND);
+        assert!(
+            output["mcp_command_error"]
+                .as_str()
+                .unwrap()
+                .contains("args[0] must be a string")
+        );
+    }
+
+    fn write_info_fixture(root: &Path) {
+        fs::create_dir_all(root.join(".agent")).unwrap();
+        fs::write(
+            root.join(".jig.toml"),
+            r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.2.0-beta.1"
+sqlx_enabled = true
+rust_migration_dir = "migrations"
+rust_sqlx_metadata_dir = ".sqlx"
+schema_dump_enabled = true
+bootstrap_command = "printf bootstrap"
+rust_test_command = "cargo test"
+
+[[frontend_apps]]
+name = "web"
+dir = "apps/web"
+coverage_threshold = 80
+
+[dev]
+workspace_discovery = false
+
+[[dev.apps]]
+name = "web"
+dir = "apps/web"
+kind = "vite"
+argv = ["npm", "run", "dev"]
+
+[[work.gates]]
+id = "tests"
+kind = "check"
+tool = "jig.test"
+
+[agent_tooling.codex]
+marketplaces = []
+"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join(".agent/jig-contract.json"),
+            serde_json::to_string_pretty(&json!({
+                "contract_version": 3,
+                "tool_namespace": "jig",
+                "jig_version": "0.2.0-beta.1",
+                "required_commands": ["bootstrap_command", "rust_test_command"],
+                "tools": [
+                    {
+                        "name": "jig.test",
+                        "kind": "command",
+                        "description": "Run tests.",
+                        "command": "rust_test_command"
+                    }
+                ],
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    }
+}

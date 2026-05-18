@@ -291,10 +291,11 @@ pub fn run_init(opts: InitOpts) -> Result<Value> {
     })?;
     let default_branch = copy_result
         .default_branch
+        .as_ref()
         .ok_or_else(|| anyhow::anyhow!("Missing default_branch in staged {}", ANSWERS_FILE))?;
     progress.step("initialize git", format!("default branch {default_branch}"));
     let git_initialized =
-        progress.log_blocked_on_err(init_git_repo(&destination, &default_branch))?;
+        progress.log_blocked_on_err(init_git_repo(&destination, default_branch))?;
     progress.done("init complete");
 
     Ok(json!({
@@ -305,7 +306,8 @@ pub fn run_init(opts: InitOpts) -> Result<Value> {
         "destination": destination.display().to_string(),
         "answers_file": ANSWERS_FILE,
         "git_initialized": git_initialized,
-        "next_steps": initial_next_steps(InitialCommand::Init),
+        "adoption_report": adoption_report(&copy_result),
+        "next_steps": initial_next_steps(InitialCommand::Init, &destination, &copy_result),
         "notes": initial_notes(copy_result.notes),
     }))
 }
@@ -347,7 +349,8 @@ pub fn run_adopt(opts: AdoptOpts) -> Result<Value> {
         "destination": destination.display().to_string(),
         "answers_file": ANSWERS_FILE,
         "git_initialized": false,
-        "next_steps": initial_next_steps(InitialCommand::Adopt),
+        "adoption_report": adoption_report(&copy_result),
+        "next_steps": initial_next_steps(InitialCommand::Adopt, &destination, &copy_result),
         "notes": initial_notes(copy_result.notes),
     }))
 }
@@ -531,7 +534,7 @@ pub fn run_update(opts: UpdateOpts) -> Result<Value> {
         seed_repo_path: Some(&destination),
         progress,
     })?;
-    apply_staged_render(
+    let render_report = apply_staged_render(
         &staged,
         &destination,
         ApplyRenderOptions {
@@ -550,6 +553,7 @@ pub fn run_update(opts: UpdateOpts) -> Result<Value> {
         "destination": destination.display().to_string(),
         "answers_file": ANSWERS_FILE,
         "git_initialized": false,
+        "render_report": render_report,
     }))
 }
 
@@ -563,16 +567,49 @@ enum InitialCommand {
     Adopt,
 }
 
-fn initial_next_steps(command: InitialCommand) -> Vec<&'static str> {
+fn initial_next_steps(
+    command: InitialCommand,
+    destination: &Path,
+    result: &initial_copy::BootstrapCopyResult,
+) -> Vec<String> {
+    let destination_for_cd = destination
+        .canonicalize()
+        .unwrap_or_else(|_| destination.to_path_buf());
     let mut steps = vec![
-        "Review .jig.toml, AGENTS.md, agent-map.md, and any generated crate-level AGENTS.md starters.",
-        "Run scripts/jig agent doctor --summary to verify local agent tooling.",
-        "Run scripts/jig check contract.",
-        "Run scripts/jig check agent-guides.",
-        "Run scripts/jig check test.",
+        format!(
+            "cd {}",
+            crate::shell::quote(&destination_for_cd.display().to_string())
+        ),
+        "Review .jig.toml, AGENTS.md, agent-map.md, and any generated crate-level AGENTS.md starters."
+            .into(),
     ];
+    if result.bootstrap_command_configured {
+        steps.push("scripts/jig bootstrap".into());
+    }
+    steps.push("scripts/jig doctor --summary".into());
+    steps.push("scripts/jig check contract".into());
+    if result.dev_apps_configured {
+        steps.push("scripts/jig dev".into());
+    }
+    if result.codex_skills_configured {
+        steps.push("scripts/jig agent bootstrap".into());
+    }
+    if result.sqlx_enabled {
+        steps.push(
+            "Install cargo-sqlx and configure database access, then run scripts/jig check sqlx."
+                .into(),
+        );
+    }
+    if result.schema_dump_enabled {
+        steps.push(
+            "Implement scripts/dump-schema.sh for this repo, then run scripts/jig schema-dump."
+                .into(),
+        );
+    }
+    steps.push("scripts/jig check agent-guides".into());
+    steps.push("scripts/jig check test".into());
     if command == InitialCommand::Adopt {
-        steps.push("Commit the adoption diff after the generated checks pass.");
+        steps.push("Commit the adoption diff after the generated checks pass.".into());
     }
     steps
 }
@@ -585,6 +622,71 @@ fn initial_notes(extra_notes: Vec<String>) -> Vec<String> {
     ];
     notes.extend(extra_notes);
     notes
+}
+
+fn adoption_report(result: &initial_copy::BootstrapCopyResult) -> Value {
+    json!({
+        "files_created": &result.apply_report.files_created,
+        "files_modified": &result.apply_report.files_modified,
+        "files_removed": &result.apply_report.files_removed,
+        "files_unchanged": &result.apply_report.files_unchanged,
+        "managed_blocks_inserted": &result.apply_report.managed_blocks_inserted,
+        "managed_blocks_rendered": &result.apply_report.managed_blocks_rendered,
+        "commands_detected_or_skipped": initial_command_report(result),
+        "todos": initial_todos(result),
+        "suggested_jig_toml_edits": initial_suggested_jig_toml_edits(result),
+    })
+}
+
+fn initial_command_report(result: &initial_copy::BootstrapCopyResult) -> Vec<String> {
+    let mut commands = Vec::new();
+    if result.bootstrap_command_configured {
+        commands
+            .push("bootstrap_command configured; run scripts/jig bootstrap before checks".into());
+    } else {
+        commands.push("bootstrap_command not configured; skip scripts/jig bootstrap".into());
+    }
+    commands.push("contract check available through scripts/jig check contract".into());
+    if result.dev_apps_configured {
+        commands
+            .push("[[dev.apps]] rendered from frontend app answers; run scripts/jig dev".into());
+    } else {
+        commands.push("no [[dev.apps]] configured; scripts/jig dev has no app to launch".into());
+    }
+    commands
+}
+
+fn initial_todos(result: &initial_copy::BootstrapCopyResult) -> Vec<String> {
+    let mut todos = vec![
+        "Review generated command strings in .jig.toml against this repo's actual setup.".into(),
+        "Add or update crate-level AGENTS.md files for repo-owned business rules.".into(),
+    ];
+    if result.sqlx_enabled {
+        todos.push("Confirm SQLx database access and committed metadata workflow.".into());
+    }
+    if result.schema_dump_enabled {
+        todos.push("Provide the project-owned scripts/dump-schema.sh implementation.".into());
+    }
+    if result.dev_apps_configured {
+        todos.push(
+            "Confirm each frontend app has package scripts and starts on the injected PORT/HOST."
+                .into(),
+        );
+    }
+    todos
+}
+
+fn initial_suggested_jig_toml_edits(result: &initial_copy::BootstrapCopyResult) -> Vec<String> {
+    let mut edits = vec![
+        "Replace generated fallback Cargo commands if this repo uses nested workspaces or non-Cargo checks.".into(),
+    ];
+    if result.dev_apps_configured {
+        edits.push("Tune [dev] ports, tld, HTTPS, LAN, and each [[dev.apps]] kind/argv if defaults do not match local development.".into());
+    }
+    if result.sqlx_enabled {
+        edits.push("Set rust_migration_dir, rust_sqlx_metadata_dir, and sqlx_check_command to the repo-owned SQLx layout.".into());
+    }
+    edits
 }
 
 #[cfg(test)]
@@ -618,7 +720,7 @@ fn parse_frontend_app(value: &str) -> Result<FrontendApp, String> {
 
     let coverage_threshold = parts[2]
         .parse::<u32>()
-        .map_err(|_| "coverage_threshold must be a non-negative integer".to_string())?;
+        .map_err(|error| format!("coverage_threshold must be a non-negative integer: {error}"))?;
 
     Ok(FrontendApp {
         name: parts[0].to_string(),

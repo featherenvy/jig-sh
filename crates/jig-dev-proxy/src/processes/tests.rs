@@ -475,6 +475,48 @@ fn vite_allowed_hosts_revalidates_env_tokens() {
 }
 
 #[test]
+fn dev_table_has_header_and_app_rows() {
+    let lines = format_dev_table(&[
+        AppDisplay {
+            name: "web".into(),
+            url: "http://web.demo.localhost:1355".into(),
+            pid: 12345,
+            lan_note: None,
+        },
+        AppDisplay {
+            name: "api".into(),
+            url: "http://api.demo.localhost:1355".into(),
+            pid: 12346,
+            lan_note: None,
+        },
+    ]);
+
+    assert!(lines[0].contains("APP"));
+    assert!(lines[0].contains("URL"));
+    assert!(lines[0].contains("STATUS"));
+    assert!(lines[0].contains("PID"));
+    assert!(lines[1].contains("web"));
+    assert!(lines[1].contains("http://web.demo.localhost:1355"));
+    assert!(lines[1].contains("running"));
+    assert!(lines[1].ends_with("12345"));
+    assert!(!lines[1].contains("pid 12345"));
+}
+
+#[test]
+fn dev_table_keeps_header_for_single_app() {
+    let lines = format_dev_table(&[AppDisplay {
+        name: "web".into(),
+        url: "http://web.demo.localhost:1355".into(),
+        pid: 12345,
+        lan_note: None,
+    }]);
+
+    assert_eq!(lines.len(), 2);
+    assert!(lines[0].contains("APP"));
+    assert!(lines[1].contains("web"));
+}
+
+#[test]
 fn open_proxy_log_rotates_existing_large_log() {
     let temp = tempfile::tempdir().unwrap();
     let store = StateStore::resolve(Some(temp.path().to_path_buf())).unwrap();
@@ -523,6 +565,41 @@ fn open_proxy_log_rejects_hardlinked_log_file() {
     let error = open_proxy_log(&store).unwrap_err().to_string();
 
     assert!(error.contains("hardlinks"));
+}
+
+#[test]
+fn spawn_child_errors_preserve_io_source() {
+    let temp = tempfile::tempdir().unwrap();
+    let settings = ProxySettings::default();
+    let spec = AppRunSpec {
+        name: "missing".into(),
+        dir: temp.path().to_path_buf(),
+        command: CommandSpec::Argv(Vec::new()),
+        kind: AppKind::EnvPort,
+        hostname: "missing.example.localhost".into(),
+        target_host: "127.0.0.1".into(),
+        explicit_port: None,
+        proxy: false,
+    };
+    let argv = ["jig-dev-proxy-definitely-missing-test-command".to_string()];
+
+    let error = spawn_child(&spec, &argv, 4321, &settings).unwrap_err();
+
+    assert!(error.to_string().contains("executable was not found"));
+    assert!(
+        error
+            .chain()
+            .any(|cause| cause.downcast_ref::<std::io::Error>().is_some())
+    );
+}
+
+#[test]
+fn remove_route_best_effort_tolerates_cleanup_failure() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = StateStore::resolve(Some(temp.path().to_path_buf())).unwrap();
+    fs::write(store.root().join("routes.json"), b"{not json").unwrap();
+
+    remove_route_best_effort(&store, "app.example.localhost", "app");
 }
 
 #[cfg(not(windows))]
@@ -745,6 +822,7 @@ fn choose_app_port_rejects_zero_explicit_port() {
         .unwrap_err()
         .to_string();
     assert!(error.contains("must be greater than 0"));
+    assert!(error.contains("Likely fix"));
 }
 
 #[test]
@@ -762,6 +840,7 @@ fn ensure_requested_https_rejects_http_only_proxy() {
         .to_string();
 
     assert!(error.contains("without the requested HTTPS listener"));
+    assert!(error.contains("Likely fix"));
     assert!(error.contains(temp.path().to_string_lossy().as_ref()));
 }
 

@@ -59,6 +59,8 @@ pub(crate) struct ToolReceiptStatus {
     pub(crate) receipt_id: String,
     pub(crate) exit_status: i32,
     pub(crate) ended_at_ms: u64,
+    pub(crate) changed_paths: Vec<String>,
+    pub(crate) diff_summary: String,
     pub(crate) worktree_fingerprint: Option<String>,
     pub(crate) worktree_fingerprint_error: Option<String>,
 }
@@ -279,10 +281,13 @@ fn receipt_list_value(receipt: ReceiptRecord) -> Result<Value> {
 }
 
 fn tool_receipt_status(receipt: ReceiptRecord) -> ToolReceiptStatus {
+    let diff_summary = receipt_diff_summary(&receipt);
     ToolReceiptStatus {
         receipt_id: receipt.id,
         exit_status: receipt.exit_status,
         ended_at_ms: receipt.ended_at_ms,
+        changed_paths: receipt.changed_paths,
+        diff_summary,
         worktree_fingerprint: receipt.worktree_fingerprint,
         worktree_fingerprint_error: receipt.worktree_fingerprint_error,
     }

@@ -7,6 +7,30 @@ use tempfile::tempdir;
 use super::*;
 
 #[test]
+fn proxy_runtime_status_reports_missing_runtime_state() {
+    let temp = tempdir().unwrap();
+    let store = StateStore::resolve(Some(temp.path().to_path_buf())).unwrap();
+
+    let status = proxy_runtime_status(&store).unwrap();
+
+    assert_eq!(status.pid, None);
+    assert!(!status.pid_alive);
+    assert_eq!(status.http_port, None);
+    assert_eq!(status.health_pid, None);
+    assert!(!status.handshake_ok);
+    assert!(!status.pid_matches_proxy);
+}
+
+#[cfg(unix)]
+#[test]
+fn signal_esrch_is_treated_as_already_stopped() {
+    assert_eq!(
+        classify_signal_error(Some(libc::ESRCH)),
+        SignalResult::NotFound
+    );
+}
+
+#[test]
 fn proxy_stop_keeps_runtime_files_for_live_unverified_pid() {
     let temp = tempdir().unwrap();
     let settings = ProxySettings {

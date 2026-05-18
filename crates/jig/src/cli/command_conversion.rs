@@ -10,8 +10,8 @@ use super::{
     ProxyStopOpts, ToolOpts, VaultAuditCommand, VaultAuditVerifyOpts, VaultCommand, VaultInitOpts,
     VaultRunOpts, VaultRuntimeOpts, VaultSecretCommand, VaultSecretListOpts, VaultSecretRemoveOpts,
     VaultSecretSetOpts, VaultStatusOpts, WorkAppendOpts, WorkCheckOpts, WorkCommand,
-    WorkDecisionAddOpts, WorkFinishOpts, WorkGatesOpts, WorkGoalOpts, WorkReceiptsOpts,
-    WorkStartOpts,
+    WorkDecisionAddOpts, WorkEvidenceOpts, WorkFinishOpts, WorkGatesOpts, WorkGoalOpts,
+    WorkReceiptsOpts, WorkStartOpts,
 };
 
 impl From<ToolOpts> for command::ToolRequest {
@@ -167,8 +167,10 @@ impl From<VaultSecretSetOpts> for command::VaultSecretSetRequest {
     fn from(opts: VaultSecretSetOpts) -> Self {
         let value_source = if opts.value_prompt {
             command::VaultSecretValueSource::Prompt
-        } else {
+        } else if opts.value_stdin {
             command::VaultSecretValueSource::Stdin
+        } else {
+            command::VaultSecretValueSource::Auto
         };
         Self {
             name: opts.name,
@@ -191,6 +193,7 @@ impl From<VaultRunOpts> for command::VaultRunRequest {
     fn from(opts: VaultRunOpts) -> Self {
         Self {
             env: opts.env,
+            files: opts.files,
             command: opts.command,
             vault: opts.vault.into(),
         }
@@ -224,6 +227,7 @@ impl From<WorkCommand> for command::WorkCommand {
             WorkCommand::Append(opts) => Self::Append(opts.into()),
             WorkCommand::Check(opts) => Self::Check(opts.into()),
             WorkCommand::Gates(opts) => Self::Gates(opts.into()),
+            WorkCommand::Evidence(opts) => Self::Evidence(opts.into()),
             WorkCommand::Decide(opts) => Self::Decide(opts.into()),
             WorkCommand::Receipts(opts) => Self::Receipts(opts.into()),
             // `--summary` is a CLI output-mode flag handled in `run` before
@@ -281,6 +285,14 @@ impl From<WorkCheckOpts> for command::WorkCheckRequest {
 
 impl From<WorkGatesOpts> for command::WorkGatesRequest {
     fn from(opts: WorkGatesOpts) -> Self {
+        Self {
+            plan_id: opts.plan_id,
+        }
+    }
+}
+
+impl From<WorkEvidenceOpts> for command::WorkEvidenceRequest {
+    fn from(opts: WorkEvidenceOpts) -> Self {
         Self {
             plan_id: opts.plan_id,
         }
@@ -551,5 +563,29 @@ mod tests {
         );
         assert!(request.failed_only);
         assert_eq!(request.limit, 7);
+    }
+
+    #[test]
+    fn work_evidence_conversion_drops_cli_summary_flag() {
+        let request: command::WorkEvidenceRequest = WorkEvidenceOpts {
+            plan_id: Some("plan_1".to_string()),
+            summary: true,
+        }
+        .into();
+
+        assert_eq!(request.plan_id.as_deref(), Some("plan_1"));
+    }
+
+    #[test]
+    fn vault_secret_set_defaults_to_auto_value_source() {
+        let request: command::VaultSecretSetRequest = VaultSecretSetOpts {
+            name: "api_token".into(),
+            value_stdin: false,
+            value_prompt: false,
+            vault: VaultRuntimeOpts::default(),
+        }
+        .into();
+
+        assert_eq!(request.value_source, command::VaultSecretValueSource::Auto);
     }
 }

@@ -19,6 +19,7 @@ BACKEND_DIR="$TMP_DIR/backend-only"
 FULL_STACK_DIR="$TMP_DIR/full-stack"
 TOOLING_ONLY_DIR="$TMP_DIR/tooling-only"
 TEMPLATE_SNAPSHOT="$TMP_DIR/template-snapshot"
+EXAMPLE_SMOKE_DIR="$TMP_DIR/example-smoke"
 
 for answer_name in backend-only.toml full-stack.toml tooling-only.toml; do
   if ! cmp -s "$ROOT_DIR/examples/$answer_name" "$ROOT_DIR/tests/fixtures/$answer_name"; then
@@ -28,6 +29,14 @@ for answer_name in backend-only.toml full-stack.toml tooling-only.toml; do
 done
 
 create_template_snapshot_repo "$TEMPLATE_SNAPSHOT"
+mkdir -p "$EXAMPLE_SMOKE_DIR"
+for answers_file in "$ROOT_DIR"/examples/*.toml; do
+  answer_name="$(basename "$answers_file" .toml)"
+  render_fixture_from_template "$TEMPLATE_SNAPSHOT" "$answers_file" "$EXAMPLE_SMOKE_DIR/$answer_name"
+  test -f "$EXAMPLE_SMOKE_DIR/$answer_name/.jig.toml"
+  test -f "$EXAMPLE_SMOKE_DIR/$answer_name/scripts/jig"
+done
+
 render_fixture_from_template "$TEMPLATE_SNAPSHOT" "$ROOT_DIR/tests/fixtures/backend-only.toml" "$BACKEND_DIR"
 render_fixture_from_template "$TEMPLATE_SNAPSHOT" "$ROOT_DIR/tests/fixtures/full-stack.toml" "$FULL_STACK_DIR"
 render_fixture_from_template "$TEMPLATE_SNAPSHOT" "$ROOT_DIR/tests/fixtures/tooling-only.toml" "$TOOLING_ONLY_DIR"

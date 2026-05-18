@@ -1,6 +1,7 @@
 mod audit;
 mod broker;
 mod crypto;
+mod env_policy;
 mod error;
 mod format;
 mod redact;
@@ -11,7 +12,7 @@ mod types;
 mod vault;
 
 pub use audit::AuditVerification;
-pub use broker::{BrokeredEnv, BrokeredRun};
+pub use broker::{BrokeredEnv, BrokeredFile, BrokeredRun};
 pub use error::{Result, VaultError, VaultErrorKind};
 pub use redact::Redactor;
 pub use run::RunOutput;

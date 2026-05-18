@@ -3,6 +3,51 @@ use serde_json::json;
 use super::*;
 
 #[test]
+fn vault_run_summary_reports_status_and_redacted_output() {
+    let summary = format_vault_run_summary(&json!({
+        "result": {
+            "exit_status": 2,
+            "exit_signal": null,
+            "stdout": "redacted stdout",
+            "stderr": "redacted stderr"
+        }
+    }));
+
+    assert!(summary.contains("Vault run: exit 2"));
+    assert!(summary.contains("stdout: redacted stdout"));
+    assert!(summary.contains("stderr: redacted stderr"));
+}
+
+#[test]
+fn vault_run_summary_calls_out_truncated_output() {
+    let summary = format_vault_run_summary(&json!({
+        "result": {
+            "exit_status": 1,
+            "exit_signal": null,
+            "stdout": "x ".repeat(260),
+            "stderr": ""
+        }
+    }));
+
+    assert!(summary.contains("stdout: "));
+    assert!(summary.contains("Output truncated; rerun without --summary for full JSON."));
+}
+
+#[test]
+fn vault_run_summary_preserves_short_multiline_output() {
+    let summary = format_vault_run_summary(&json!({
+        "result": {
+            "exit_status": 1,
+            "exit_signal": null,
+            "stdout": "",
+            "stderr": "first line\nsecond line"
+        }
+    }));
+
+    assert!(summary.contains("stderr: first line\nsecond line"));
+}
+
+#[test]
 fn agent_doctor_summary_calls_out_source_mismatch() {
     let summary = format_agent_doctor_summary(&json!({
         "ok": false,
@@ -595,6 +640,7 @@ fn work_gates_summary_reports_finish_command_when_passed() {
     let summary = format_work_gates_summary(&json!({
         "ok": true,
         "plan_id": "plan_1",
+        "plan_state": "open",
         "overall": "passed",
         "gates": [{
             "id": "tests",
@@ -613,6 +659,151 @@ fn work_gates_summary_reports_finish_command_when_passed() {
 
     assert!(summary.contains("Work gates: passed"));
     assert!(summary.contains("work finish --plan-id plan_1"));
+}
+
+#[test]
+fn work_gates_summary_does_not_offer_finish_for_closed_plan() {
+    let summary = format_work_gates_summary(&json!({
+        "ok": true,
+        "plan_id": "plan_1",
+        "plan_state": "closed",
+        "overall": "passed",
+        "gates": [{
+            "id": "tests",
+            "kind": "check",
+            "required": true,
+            "tool": "jig.test",
+            "status": "passed",
+            "freshness": "fresh"
+        }],
+        "missing_required": [],
+        "failed_required": [],
+        "stale_required": [],
+        "unknown_required": [],
+        "unsupported_required": []
+    }));
+
+    assert!(summary.contains("Plan: plan_1 (closed)"));
+    assert!(summary.contains("Next step: none; plan is closed"));
+    assert!(!summary.contains("work finish --plan-id plan_1"));
+}
+
+#[test]
+fn work_gates_summary_does_not_offer_check_for_closed_blocked_plan() {
+    let summary = format_work_gates_summary(&json!({
+        "ok": false,
+        "plan_id": "plan_1",
+        "plan_state": "closed",
+        "overall": "blocked",
+        "gates": [{
+            "id": "tests",
+            "kind": "check",
+            "required": true,
+            "tool": "jig.test",
+            "status": "missing",
+            "freshness": "missing"
+        }],
+        "missing_required": ["tests"],
+        "failed_required": [],
+        "stale_required": [],
+        "unknown_required": [],
+        "unsupported_required": []
+    }));
+
+    assert!(summary.contains("Plan: plan_1 (closed)"));
+    assert!(summary.contains("Next step: start a new work plan for follow-up changes"));
+    assert!(!summary.contains("work check --plan-id plan_1"));
+}
+
+#[test]
+fn work_evidence_summary_reports_latest_gate_freshness_and_paths() {
+    let summary = format_work_evidence_summary(&json!({
+        "ok": true,
+        "plan_id": "plan_1",
+        "plan_state": "open",
+        "overall": "blocked",
+        "latest_passing_gates": [{
+            "tool": "jig.test",
+            "gate_id": "tests",
+            "receipt_id": "receipt_tool",
+            "freshness_receipt_id": "receipt_batch",
+            "matches_current_worktree": false,
+            "freshness": "stale",
+            "freshness_reason": "receipt was recorded for a different worktree fingerprint",
+            "diff_summary": "2 files, +4 -1",
+            "changed_paths": ["src/lib.rs", "Cargo.toml"]
+        }],
+        "gates": [{
+            "id": "tests",
+            "status": "stale",
+            "freshness_reason": "receipt was recorded for a different worktree fingerprint"
+        }],
+        "missing_required": [],
+        "failed_required": [],
+        "stale_required": ["tests"],
+        "unknown_required": [],
+        "unsupported_required": []
+    }));
+
+    assert!(summary.contains("Work evidence: blocked"));
+    assert!(summary.contains("Latest gate evidence per tool:"));
+    assert!(
+        summary.contains(
+            "jig.test: tests, receipt receipt_batch, matches current worktree no (stale)"
+        )
+    );
+    assert!(summary.contains("receipt was recorded for a different worktree fingerprint"));
+    assert!(summary.contains("changed paths covered: src/lib.rs, Cargo.toml"));
+    assert!(summary.contains("Next step: scripts/jig work check --plan-id plan_1 --summary"));
+}
+
+#[test]
+fn work_evidence_summary_reports_closed_plan_as_done() {
+    let summary = format_work_evidence_summary(&json!({
+        "ok": true,
+        "plan_id": "plan_1",
+        "plan_state": "closed",
+        "overall": "passed",
+        "latest_passing_gates": [],
+        "gates": [{
+            "id": "tests",
+            "status": "passed"
+        }],
+        "missing_required": [],
+        "failed_required": [],
+        "stale_required": [],
+        "unknown_required": [],
+        "unsupported_required": []
+    }));
+
+    assert!(summary.contains("Plan: plan_1 (closed)"));
+    assert!(summary.contains("Unresolved gates: none"));
+    assert!(summary.contains("Next step: none; plan is closed"));
+    assert!(!summary.contains("work finish --plan-id plan_1"));
+}
+
+#[test]
+fn work_evidence_summary_does_not_offer_check_for_closed_blocked_plan() {
+    let summary = format_work_evidence_summary(&json!({
+        "ok": false,
+        "plan_id": "plan_1",
+        "plan_state": "closed",
+        "overall": "blocked",
+        "latest_passing_gates": [],
+        "gates": [{
+            "id": "tests",
+            "status": "missing"
+        }],
+        "missing_required": ["tests"],
+        "failed_required": [],
+        "stale_required": [],
+        "unknown_required": [],
+        "unsupported_required": []
+    }));
+
+    assert!(summary.contains("Plan: plan_1 (closed)"));
+    assert!(summary.contains("Next step: start a new work plan for follow-up changes"));
+    assert!(!summary.contains("work check --plan-id plan_1"));
 }
 
 #[test]
@@ -635,7 +826,7 @@ fn work_receipts_summary_is_compact() {
     assert!(summary.contains("Showing: 1"));
     assert!(summary.contains("jig.fmt_check (receipt_1): exit 1, 2 files, +4 -1"));
     assert!(summary.contains("plan: plan_1; session: none"));
-    assert!(summary.contains("output: Diff in src/lib.rs: - old + new"));
+    assert!(summary.contains("output: Diff in src/lib.rs:\n- old\n+ new"));
 }
 
 #[test]

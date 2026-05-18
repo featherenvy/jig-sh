@@ -3,6 +3,8 @@ use std::ffi::OsString;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use std::fs;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
+use std::io::ErrorKind;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use std::path::{Path, PathBuf};
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use std::process::{Command, ExitStatus, Output, Stdio};
@@ -40,7 +42,9 @@ pub(crate) fn trust(settings: &ProxySettings, accept_trust_scope: bool) -> Resul
 
 fn trust_locked(store: &StateStore, accept_trust_scope: bool) -> Result<Value> {
     if !store.ca_path().exists() {
-        bail!("CA certificate does not exist. Run `scripts/jig proxy cert generate` first.");
+        bail!(
+            "CA certificate does not exist. Likely fix: run `scripts/jig proxy cert generate` first."
+        );
     }
     ensure_jig_ca_certificate(store)?;
     ensure_jig_ca_private_key(store)?;
@@ -196,15 +200,40 @@ fn command_output_with_timeout(command: &mut Command, action: &str) -> Result<Ou
         .spawn()
         .with_context(|| format!("Failed to run {action}"))?;
     let status = wait_child_with_timeout(&mut child, action);
-    let stdout = fs::read(&stdout_path).unwrap_or_default();
-    let stderr = fs::read(&stderr_path).unwrap_or_default();
-    let _ = fs::remove_file(&stdout_path);
-    let _ = fs::remove_file(&stderr_path);
+    let child_completed = status.is_ok();
+    let stdout = fs::read(&stdout_path)
+        .with_context(|| capture_read_context(action, "stdout", child_completed));
+    let stderr = fs::read(&stderr_path)
+        .with_context(|| capture_read_context(action, "stderr", child_completed));
+    remove_temp_file_best_effort(&stdout_path);
+    remove_temp_file_best_effort(&stderr_path);
+    if status.is_err() {
+        log_capture_read_error("stdout", &stdout);
+        log_capture_read_error("stderr", &stderr);
+    }
     Ok(Output {
         status: status?,
-        stdout,
-        stderr,
+        stdout: stdout?,
+        stderr: stderr?,
     })
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn capture_read_context(action: &str, stream: &str, child_completed: bool) -> String {
+    if child_completed {
+        format!("Trust helper {action} completed, but captured {stream} could not be read")
+    } else {
+        format!("Failed to read captured {stream} for {action}")
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn log_capture_read_error(stream: &str, result: &Result<Vec<u8>>) {
+    if let Err(error) = result {
+        eprintln!(
+            "jig proxy could not read captured {stream} after trust helper failure: {error:#}"
+        );
+    }
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -218,6 +247,8 @@ fn wait_child_with_timeout(child: &mut std::process::Child, action: &str) -> Res
             return Ok(status);
         }
         if Instant::now() >= deadline {
+            // Preserve the timeout as the primary error. Kill/wait only try to
+            // prevent a platform trust helper from continuing after timeout.
             let _ = child.kill();
             let _ = child.wait();
             bail!("{action} timed out after {:?}", TRUST_COMMAND_TIMEOUT);
@@ -682,7 +713,7 @@ fn linux_trust_anchors_contain_der(store: &StateStore, expected_der: &[u8]) -> R
     let mut command = match linux_system_command("trust") {
         Ok(command) => command,
         Err(error) => {
-            let _ = fs::remove_dir(&tmp_dir);
+            remove_temp_dir_best_effort(&tmp_dir);
             return Err(error);
         }
     };
@@ -697,20 +728,48 @@ fn linux_trust_anchors_contain_der(store: &StateStore, expected_der: &[u8]) -> R
     let status = match command_status_with_timeout(&mut command, "trust extract") {
         Ok(status) => status,
         Err(error) => {
-            let _ = fs::remove_file(&tmp);
-            let _ = fs::remove_dir(&tmp_dir);
+            remove_temp_file_best_effort(&tmp);
+            remove_temp_dir_best_effort(&tmp_dir);
             return Err(error);
         }
     };
     if !status.success() {
-        let _ = fs::remove_file(&tmp);
-        let _ = fs::remove_dir(&tmp_dir);
+        remove_temp_file_best_effort(&tmp);
+        remove_temp_dir_best_effort(&tmp_dir);
         bail!("trust extract failed with status {status}; refusing to assume no Jig CA is trusted");
     }
     let result = pem_bundle_contains_der(&tmp, expected_der);
-    let _ = fs::remove_file(&tmp);
-    let _ = fs::remove_dir(&tmp_dir);
+    remove_temp_file_best_effort(&tmp);
+    remove_temp_dir_best_effort(&tmp_dir);
     result
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn remove_temp_file_best_effort(path: &Path) {
+    match fs::remove_file(path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == ErrorKind::NotFound => {}
+        Err(error) => {
+            eprintln!(
+                "jig proxy could not remove temporary file {}: {error}",
+                path.display()
+            );
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn remove_temp_dir_best_effort(path: &Path) {
+    match fs::remove_dir(path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == ErrorKind::NotFound => {}
+        Err(error) => {
+            eprintln!(
+                "jig proxy could not remove temporary directory {}: {error}",
+                path.display()
+            );
+        }
+    }
 }
 
 #[cfg(target_os = "linux")]

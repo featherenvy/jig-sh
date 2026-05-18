@@ -9,6 +9,7 @@ use toml::{Table, Value as TomlValue};
 use super::AnswerOpts;
 use super::answers::RenderAnswers;
 use super::renderer::{RenderStageRequest, stage_render};
+use super::sync::ApplyRenderReport;
 use super::sync::{ApplyRenderOptions, apply_staged_render};
 use super::template_source::PreparedTemplateSource;
 #[cfg(test)]
@@ -31,6 +32,12 @@ pub(super) struct BootstrapCopyRequest<'a> {
 
 pub(super) struct BootstrapCopyResult {
     pub(super) default_branch: Option<String>,
+    pub(super) bootstrap_command_configured: bool,
+    pub(super) dev_apps_configured: bool,
+    pub(super) codex_skills_configured: bool,
+    pub(super) sqlx_enabled: bool,
+    pub(super) schema_dump_enabled: bool,
+    pub(super) apply_report: ApplyRenderReport,
     pub(super) notes: Vec<String>,
 }
 
@@ -59,7 +66,7 @@ pub(super) fn render_and_copy_bootstrap_template(
         progress: request.progress,
     })?;
 
-    apply_staged_render(
+    let apply_report = apply_staged_render(
         &staged,
         request.destination,
         ApplyRenderOptions {
@@ -72,6 +79,12 @@ pub(super) fn render_and_copy_bootstrap_template(
 
     Ok(BootstrapCopyResult {
         default_branch: Some(answers.default_branch().to_string()),
+        bootstrap_command_configured: answers.bootstrap_command_configured(),
+        dev_apps_configured: !answers.frontend_apps().is_empty(),
+        codex_skills_configured: answers.codex_skills_configured(),
+        sqlx_enabled: answers.sqlx_enabled(),
+        schema_dump_enabled: answers.schema_dump_enabled(),
+        apply_report,
         notes: if answers.has_legacy_dev_command() {
             vec![
                 "Preserved deprecated dev_command for migration; generated commands ignore it. Move that value into [dev] / [[dev.apps]] when ready."

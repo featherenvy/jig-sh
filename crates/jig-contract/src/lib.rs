@@ -32,6 +32,7 @@ pub mod tool {
     pub const WORK_DECIDE: &str = "jig.work_decide";
     pub const WORK_FINISH: &str = "jig.work_finish";
     pub const WORK_GATES: &str = "jig.work_gates";
+    pub const WORK_EVIDENCE: &str = "jig.work_evidence";
     pub const WORK_GOAL: &str = "jig.work_goal";
     pub const WORK_RECEIPTS: &str = "jig.work_receipts";
     pub const WORK_START: &str = "jig.work_start";

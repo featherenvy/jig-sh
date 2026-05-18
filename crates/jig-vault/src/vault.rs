@@ -21,7 +21,9 @@ use crate::format::{
     VaultState, decode_b64_array, payload_aad, validate_header,
 };
 use crate::redact::MIN_REDACTABLE_LEN;
-use crate::run::{ResolvedBrokeredEnv, ResolvedBrokeredRun, RunOutput, run_brokered};
+use crate::run::{
+    ResolvedBrokeredEnv, ResolvedBrokeredFile, ResolvedBrokeredRun, RunOutput, run_brokered,
+};
 use crate::store::VaultStore;
 use crate::types::SecretName;
 use crate::{Result, SecretBytes, VaultError, VaultErrorKind};
@@ -711,6 +713,10 @@ fn brokered_run_start_details(request: &BrokeredRun, run_id: &str) -> serde_json
             "var": mapping.var().as_str(),
             "secret_name": mapping.secret_name().as_str(),
         })).collect::<Vec<_>>(),
+        "files": request.files().iter().map(|mapping| serde_json::json!({
+            "var": mapping.var().as_str(),
+            "secret_name": mapping.secret_name().as_str(),
+        })).collect::<Vec<_>>(),
     })
 }
 
@@ -749,7 +755,7 @@ fn brokered_failure_error_unlocked(
 }
 
 fn resolve_brokered_run(vault: &OpenVault, request: BrokeredRun) -> AnyResult<ResolvedBrokeredRun> {
-    let (command, env_mappings) = request.into_parts();
+    let (command, env_mappings, file_mappings) = request.into_parts();
     let mut env = Vec::with_capacity(env_mappings.len());
     for mapping in env_mappings {
         let (var, secret_name) = mapping.into_parts();
@@ -760,7 +766,21 @@ fn resolve_brokered_run(vault: &OpenVault, request: BrokeredRun) -> AnyResult<Re
             value,
         });
     }
-    Ok(ResolvedBrokeredRun { command, env })
+    let mut files = Vec::with_capacity(file_mappings.len());
+    for mapping in file_mappings {
+        let (var, secret_name) = mapping.into_parts();
+        let value = vault.secret_value(&secret_name)?;
+        files.push(ResolvedBrokeredFile {
+            var,
+            secret_name,
+            value,
+        });
+    }
+    Ok(ResolvedBrokeredRun {
+        command,
+        env,
+        files,
+    })
 }
 
 fn now_ms() -> i128 {

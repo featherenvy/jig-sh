@@ -12,8 +12,8 @@ use events::{PlanEvent, ReceiptRecord, read_jsonl, truncate};
 #[cfg(test)]
 pub(crate) use plans::seed_open_plan_for_test;
 pub(crate) use plans::{
-    PlanAppendRequest, PlanCloseRequest, PlanOpenRequest, ensure_plan_exists, ensure_plan_is_open,
-    plans_append, plans_close, plans_open,
+    PlanAppendRequest, PlanCloseRequest, PlanOpenRequest, PlanStatus, ensure_plan_exists,
+    ensure_plan_is_open, open_plan_summaries, plan_status, plans_append, plans_close, plans_open,
 };
 pub(crate) use receipts::{
     CurrentWorktreeFingerprint, ToolReceiptStatus, current_worktree_fingerprint,

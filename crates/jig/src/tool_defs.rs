@@ -59,8 +59,10 @@ pub(crate) mod cli_command {
     pub(crate) const CHECK_TYPESCRIPT_LINT: &str = "typescript-lint";
     pub(crate) const CHECK_TYPESCRIPT_TYPECHECK: &str = "typescript-typecheck";
     pub(crate) const DEV: &str = "dev";
+    pub(crate) const DOCTOR: &str = "doctor";
     pub(crate) const GENERATE_SQLX_UNCHECKED_QUERIES_TODO: &str =
         "generate-sqlx-unchecked-queries-todo";
+    pub(crate) const INFO: &str = "info";
     pub(crate) const INIT: &str = "init";
     pub(crate) const MCP: &str = "mcp";
     pub(crate) const MIGRATION_ADD: &str = "migration-add";
@@ -96,6 +98,7 @@ pub(crate) mod cli_command {
     pub(crate) const WORK_APPEND: &str = "append";
     pub(crate) const WORK_CHECK: &str = "check";
     pub(crate) const WORK_DECIDE: &str = "decide";
+    pub(crate) const WORK_EVIDENCE: &str = "evidence";
     pub(crate) const WORK_FINISH: &str = "finish";
     pub(crate) const WORK_GATES: &str = "gates";
     pub(crate) const WORK_GOAL: &str = "goal";
@@ -114,6 +117,7 @@ pub(crate) enum MemoryTool {
     Append,
     Check,
     Gates,
+    Evidence,
     Decide,
     Receipts,
     Status,
@@ -121,13 +125,14 @@ pub(crate) enum MemoryTool {
 }
 
 impl MemoryTool {
-    const ALL: [Self; 10] = [
+    const ALL: [Self; 11] = [
         Self::AgentDoctor,
         Self::Goal,
         Self::Start,
         Self::Append,
         Self::Check,
         Self::Gates,
+        Self::Evidence,
         Self::Decide,
         Self::Receipts,
         Self::Status,
@@ -142,6 +147,7 @@ impl MemoryTool {
             tool::WORK_APPEND => Some(Self::Append),
             tool::WORK_CHECK => Some(Self::Check),
             tool::WORK_GATES => Some(Self::Gates),
+            tool::WORK_EVIDENCE => Some(Self::Evidence),
             tool::WORK_DECIDE => Some(Self::Decide),
             tool::WORK_RECEIPTS => Some(Self::Receipts),
             tool::WORK_STATUS => Some(Self::Status),
@@ -158,6 +164,7 @@ impl MemoryTool {
             Self::Append => tool::WORK_APPEND,
             Self::Check => tool::WORK_CHECK,
             Self::Gates => tool::WORK_GATES,
+            Self::Evidence => tool::WORK_EVIDENCE,
             Self::Decide => tool::WORK_DECIDE,
             Self::Receipts => tool::WORK_RECEIPTS,
             Self::Status => tool::WORK_STATUS,
@@ -175,6 +182,9 @@ impl MemoryTool {
             Self::Append => "Append to a structured work plan.",
             Self::Check => "Run configured or selected work checks.",
             Self::Gates => "Report configured work gate status for a plan.",
+            Self::Evidence => {
+                "Summarize work gate evidence and receipt freshness; ok=true means inspection succeeded, while overall reports passed or blocked gates."
+            }
             Self::Decide => "Record a structured work decision.",
             Self::Receipts => "List structured work receipts.",
             Self::Status => "Summarize structured work state.",
@@ -217,6 +227,7 @@ impl MemoryTool {
                 &[args::OBJECTIVE, args::SUCCESS, args::VALIDATIONS],
             ),
             Self::Gates => object_schema(&[(args::PLAN_ID, string_schema())], &[args::PLAN_ID]),
+            Self::Evidence => object_schema(&[(args::PLAN_ID, string_schema())], &[]),
             Self::Start => object_schema(
                 &[
                     (args::TITLE, string_schema()),
@@ -393,4 +404,24 @@ pub(crate) fn required_string_arg(map: &JsonObject, key: &str) -> Result<String>
 
 pub(crate) fn string_arg(map: &JsonObject, key: &str) -> Option<String> {
     map.get(key).and_then(Value::as_str).map(str::to_string)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use super::*;
+
+    #[test]
+    fn memory_tool_names_are_unique_and_complete() {
+        let names = MemoryTool::ALL
+            .iter()
+            .map(|tool| tool.name())
+            .collect::<Vec<_>>();
+        let unique = names.iter().copied().collect::<BTreeSet<_>>();
+
+        assert_eq!(names.len(), 11);
+        assert_eq!(unique.len(), names.len());
+        assert!(unique.contains(tool::WORK_EVIDENCE));
+    }
 }

@@ -491,6 +491,18 @@ fn work_check_marks_batch_fingerprint_unknown_when_checks_mutate_worktree() {
             .unwrap()
             .contains("worktree changed during work check")
     );
+    assert!(
+        gates["gates"][0]["receipt_worktree_fingerprint_error"]
+            .as_str()
+            .unwrap()
+            .contains("before fingerprint")
+    );
+    assert!(
+        gates["gates"][0]["receipt_worktree_fingerprint_error"]
+            .as_str()
+            .unwrap()
+            .contains("after fingerprint")
+    );
 }
 
 #[test]
@@ -509,6 +521,8 @@ fn work_gates_reports_missing_and_passing_required_gates() {
     )
     .unwrap();
     assert_eq!(missing["overall"], "blocked");
+    assert_eq!(missing["ok"], true);
+    assert_eq!(missing["gates_ok"], false);
     assert_eq!(missing["gates"][0]["id"], "custom");
     assert_eq!(missing["gates"][0]["status"], "missing");
     assert_eq!(missing["missing_required"][0], "custom");
@@ -532,8 +546,195 @@ fn work_gates_reports_missing_and_passing_required_gates() {
     )
     .unwrap();
     assert_eq!(passed["overall"], "passed");
+    assert_eq!(passed["ok"], true);
+    assert_eq!(passed["gates_ok"], true);
+    assert_eq!(passed["plan_state"], "open");
     assert_eq!(passed["gates"][0]["status"], "passed");
     assert!(passed["gates"][0]["receipt_id"].as_str().is_some());
+}
+
+#[test]
+fn work_evidence_defaults_to_single_open_plan_and_reports_latest_passing_gate() {
+    let temp = tempdir().unwrap();
+    write_fixture_repo(temp.path());
+    init_git_repo(temp.path());
+    let ctx = RepoContext::load_from(temp.path()).unwrap();
+
+    dispatch(
+        &ctx,
+        CommandKind::Work(crate::cli::WorkCommand::Check(crate::cli::WorkCheckOpts {
+            plan_id: "plan_1".into(),
+            tools: Vec::new(),
+            summary: false,
+        })),
+    )
+    .unwrap();
+
+    let evidence = dispatch(
+        &ctx,
+        CommandKind::Work(crate::cli::WorkCommand::Evidence(
+            crate::cli::WorkEvidenceOpts {
+                plan_id: None,
+                summary: false,
+            },
+        )),
+    )
+    .unwrap();
+
+    assert_eq!(evidence["command"], "work evidence");
+    assert_eq!(evidence["ok"], true);
+    assert_eq!(evidence["plan_id"], "plan_1");
+    assert_eq!(evidence["plan_state"], "open");
+    assert_eq!(
+        evidence["latest_passing_gates"][0]["tool"],
+        "jig.custom_check"
+    );
+    assert_eq!(evidence["latest_passing_gates"][0]["gate_id"], "custom");
+    assert_eq!(
+        evidence["latest_passing_gates"][0]["matches_current_worktree"],
+        true
+    );
+    assert!(
+        evidence["latest_passing_gates"][0]["changed_paths"]
+            .as_array()
+            .is_some()
+    );
+    assert!(
+        evidence["latest_passing_gates"][0]["changed_path_count"]
+            .as_u64()
+            .is_some()
+    );
+    assert_eq!(
+        evidence["latest_passing_gates"][0]["changed_paths_truncated"],
+        false
+    );
+}
+
+#[test]
+fn work_evidence_gate_health_reflects_blocked_gates() {
+    let temp = tempdir().unwrap();
+    write_fixture_repo(temp.path());
+    let ctx = RepoContext::load_from(temp.path()).unwrap();
+
+    let evidence = dispatch(
+        &ctx,
+        CommandKind::Work(crate::cli::WorkCommand::Evidence(
+            crate::cli::WorkEvidenceOpts {
+                plan_id: None,
+                summary: false,
+            },
+        )),
+    )
+    .unwrap();
+
+    assert_eq!(evidence["overall"], "blocked");
+    assert_eq!(evidence["ok"], true);
+    assert_eq!(evidence["gates_ok"], false);
+    assert_eq!(evidence["missing_required"][0], "custom");
+}
+
+#[test]
+fn work_evidence_reports_closed_plan_state() {
+    let temp = tempdir().unwrap();
+    write_fixture_repo(temp.path());
+    init_git_repo(temp.path());
+    let ctx = RepoContext::load_from(temp.path()).unwrap();
+
+    dispatch(
+        &ctx,
+        CommandKind::Work(crate::cli::WorkCommand::Check(crate::cli::WorkCheckOpts {
+            plan_id: "plan_1".into(),
+            tools: Vec::new(),
+            summary: false,
+        })),
+    )
+    .unwrap();
+    dispatch(
+        &ctx,
+        CommandKind::Work(crate::cli::WorkCommand::Finish(
+            crate::cli::WorkFinishOpts {
+                plan_id: "plan_1".into(),
+                resolution: Some("done".into()),
+                outcome: Some("success".into()),
+            },
+        )),
+    )
+    .unwrap();
+
+    let evidence = dispatch(
+        &ctx,
+        CommandKind::Work(crate::cli::WorkCommand::Evidence(
+            crate::cli::WorkEvidenceOpts {
+                plan_id: Some("plan_1".into()),
+                summary: false,
+            },
+        )),
+    )
+    .unwrap();
+
+    assert_eq!(evidence["overall"], "passed");
+    assert_eq!(evidence["plan_state"], "closed");
+}
+
+#[test]
+fn work_evidence_requires_plan_id_when_multiple_plans_are_open() {
+    let temp = tempdir().unwrap();
+    write_fixture_repo(temp.path());
+    let ctx = RepoContext::load_from(temp.path()).unwrap();
+    crate::state::plans_open(
+        &ctx,
+        crate::state::PlanOpenRequest {
+            title: "Second plan".into(),
+            body: Some("Second plan body".into()),
+            body_file: None,
+        },
+    )
+    .unwrap();
+
+    let error = dispatch(
+        &ctx,
+        CommandKind::Work(crate::cli::WorkCommand::Evidence(
+            crate::cli::WorkEvidenceOpts {
+                plan_id: None,
+                summary: false,
+            },
+        )),
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("Multiple open work plans"));
+    assert!(error.contains("Pass --plan-id to choose"));
+}
+
+#[test]
+fn work_evidence_without_open_plan_points_to_work_status() {
+    let temp = tempdir().unwrap();
+    write_fixture_repo(temp.path());
+    let ctx = RepoContext::load_from(temp.path()).unwrap();
+    crate::state::plans_close(
+        &ctx,
+        crate::state::PlanCloseRequest {
+            plan_id: "plan_1".into(),
+            resolution: Some("done".into()),
+        },
+    )
+    .unwrap();
+
+    let error = dispatch(
+        &ctx,
+        CommandKind::Work(crate::cli::WorkCommand::Evidence(
+            crate::cli::WorkEvidenceOpts {
+                plan_id: None,
+                summary: false,
+            },
+        )),
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("No open work plans"));
+    assert!(error.contains("scripts/jig work status --summary"));
 }
 
 #[test]
@@ -730,6 +931,42 @@ fn work_gates_reject_unknown_required_gate_freshness() {
     .to_string();
 
     assert!(error.contains("Unknown: [custom]"));
+}
+
+#[test]
+fn work_gates_reports_unsupported_gate_kind() {
+    let temp = tempdir().unwrap();
+    write_fixture_repo(temp.path());
+    fs::write(
+        temp.path().join(".jig.toml"),
+        r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.2.0-beta.1"
+
+[[work.gates]]
+id = "custom"
+kind = "unsupported-kind"
+"#,
+    )
+    .unwrap();
+    let ctx = RepoContext::load_from(temp.path()).unwrap();
+
+    let error = dispatch(
+        &ctx,
+        CommandKind::Work(crate::cli::WorkCommand::Finish(
+            crate::cli::WorkFinishOpts {
+                plan_id: "plan_1".into(),
+                resolution: Some("done".into()),
+                outcome: Some("success".into()),
+            },
+        )),
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("Unsupported: [custom (kind: unsupported-kind)]"));
 }
 
 #[test]

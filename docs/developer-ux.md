@@ -1,0 +1,176 @@
+# Developer UX
+
+Jig is designed to make a repository feel immediately operable to a developer, an agent, or a CI job without requiring any of them to rediscover the same local conventions. The core UX promise is simple: after a repo is initialized or adopted, `scripts/jig` becomes the stable front door for setup, checks, local development, work evidence, agent readiness, and selected machine-local secrets.
+
+That front door is intentionally repo-local. Developers do not need to remember whether a project uses a root Cargo workspace, SQLx metadata, a Vite frontend, a custom schema dump, or a particular MCP command. The repo records those decisions in `.jig.toml` and `.agent/jig-contract.json`, and the generated launcher pins the runtime version that knows how to execute them.
+
+## First Contact
+
+Jig splits the first-run experience into two cases:
+
+- `jig init` creates a new repository with the harness already present.
+- `jig adopt` adds the harness to an existing repository while preserving project-owned files and guidance.
+
+Both flows generate the same core assets: `.jig.toml`, `scripts/jig`, `.mcp.json`, root agent guidance, `agent-map.md`, `.agent/PLANS.md`, `.agent/jig-contract.json`, scripts, and CI workflows. Existing root `AGENTS.md` content is preserved; Jig only manages the marked block between the Jig comments. Existing root `Makefile` content also remains project-owned, because generated commands are routed through `scripts/jig`.
+
+The practical result is that a new contributor can start with a small command set:
+
+```sh
+scripts/jig bootstrap
+scripts/jig doctor --summary
+scripts/jig check contract
+scripts/jig check fmt
+scripts/jig check clippy
+scripts/jig check test
+```
+
+Those commands are boring on purpose. They are meant to be copyable by humans, agents, onboarding docs, and CI without each caller having to infer project layout.
+
+## Adopting Existing Repos
+
+Adoption is optimized for low surprise:
+
+- Repo-specific guidance remains outside the managed block in `AGENTS.md`.
+- Application code, crate ownership, schema dump implementation, and app-specific orchestration stay project-owned.
+- Template-managed files are not overwritten during `jig update` unless the caller passes `--force`.
+- `.jig.toml` rejects unknown keys so stale answers and typos fail early.
+- Local template dogfooding requires an explicit committed template source or an explicit VCS ref, which avoids accidentally rendering stale release templates from an unreleased binary.
+
+This makes the adoption path friendly to established repositories. Jig adds an operating harness around the repo instead of trying to reorganize the application.
+
+## Initializing New Repos
+
+For greenfield repositories, `jig init` gives developers an immediate typed contract before the application has much code. Tooling-only repos can start without SQLx:
+
+```sh
+jig init /path/to/new-repo --repo-name new-repo --sqlx-enabled false
+```
+
+Rust backend repos can opt into migration and SQLx checks from the start:
+
+```sh
+jig init /path/to/new-repo \
+  --repo-name new-repo \
+  --rust-migration-dir migrations
+```
+
+The default Rust check commands skip cleanly when no root `Cargo.toml` exists yet. Once real application structure appears, the repo can replace the generated defaults in `.jig.toml` with project-owned commands.
+
+## Day-To-Day Loop
+
+The daily developer loop is built around a few stable verbs:
+
+- `scripts/jig bootstrap` prepares local dependencies.
+- `scripts/jig doctor --summary` checks runtime, config, contract, required tools, agent skills, proxy status, vault status, and the next setup command.
+- `scripts/jig check ...` runs configured repo checks and records receipts by default.
+- `scripts/jig work ...` opens work, runs configured gates, reports receipt status, and refuses to finish work without fresh required evidence.
+- `scripts/jig mcp` exposes the same command contract to MCP clients.
+- `scripts/jig agent doctor --summary` remains the focused local agent tooling check.
+
+This is where Jig is most agent-friendly: checks are not just shell commands, they are named tools with structured results and append-only evidence under `.agent/state/`. A reviewer can inspect what was run, against which worktree fingerprint, and whether the required gates are still fresh.
+
+## Dev Proxy
+
+The dev proxy improves local development by separating the public developer URL from whichever port an app happens to use today. Repos declare supervised apps in `[dev]` and `[[dev.apps]]`, then developers can run:
+
+```sh
+scripts/jig dev
+scripts/jig proxy list
+```
+
+Jig assigns or verifies app ports, starts trusted repo-configured commands, waits for readiness, and publishes stable local routes. Vite apps get structured `--port`, `--host`, and `--strictPort` injection when configured with `argv`, which avoids many fragile package-script edits.
+
+Manual services can still join the same local routing model:
+
+```sh
+scripts/jig proxy alias api --port 8080
+```
+
+The proxy is friendly because it removes repeated port hunting, browser bookmark churn, and ad hoc hosts-file notes. It is also deliberately explicit around trust boundaries:
+
+- HTTPS certificate generation and trust require explicit commands.
+- Trust-store mutation requires `--accept-trust-scope`.
+- LAN mode must be enabled deliberately.
+- Alias routes remain loopback-client-only even when LAN mode is enabled.
+- App commands inherit the developer environment, but the long-running background proxy process starts with a constrained environment.
+
+Those constraints keep the normal path smooth while making machine-wide or network-visible changes visible in the command line.
+
+## Vault
+
+The vault handles a narrow but common developer problem: a local command needs a secret, but the repo should not store it and command receipts should not capture it.
+
+The basic flow is:
+
+```sh
+scripts/jig vault init
+scripts/jig vault secret set api_token --value-prompt
+scripts/jig vault run --env TOKEN=api_token -- sh -c 'printf "%s\n" "$TOKEN"'
+scripts/jig vault run --file TOKEN_FILE=api_token -- sh -c 'cat "$TOKEN_FILE"'
+scripts/jig vault audit verify
+```
+
+Vault state is machine-local, encrypted, and stored outside `.agent/state`. Secret listing returns names and metadata, never values. `vault run` resolves requested secrets into a cleaned child-process environment or private temporary files, captures stdout and stderr, redacts known secret forms, returns JSON, and mirrors the child exit status.
+
+The friendliness here is in the workflow shape: developers get an auditable secret handoff without adding new project-specific secret scripts. The important limits are also clear:
+
+- Vault reduces accidental exposure; it is not a sandbox.
+- Once a child process receives a secret, that child can use or disclose it.
+- Output is buffered so redaction can happen before display.
+- Non-interactive unlocks use `JIG_VAULT_PASSPHRASE`; command-line passphrases are intentionally unsupported.
+- Audit metadata, including secret names and run IDs, is plaintext local operational metadata.
+
+## Agent And MCP Friendliness
+
+Jig treats agents as first-class repo operators. The generated root `AGENTS.md`, `agent-map.md`, crate-level guide requirements, MCP server, and work receipts all serve the same goal: reduce guessing.
+
+An agent can discover:
+
+- where repo-level and crate-level instructions live
+- which checks exist for this repo profile
+- which tools are stable contract tools
+- which commands are runtime-owned local conveniences
+- whether required work gates have fresh receipts
+- whether local Codex-side Jig skills are available
+
+The MCP surface is especially useful because it exposes the same declared tools as the CLI. Agents can call named tools instead of scraping README instructions or hard-coding one repo's check commands.
+
+## Update And Maintenance UX
+
+Jig's template update model favors predictable maintenance:
+
+```sh
+jig update
+jig update --recopy
+```
+
+Plain `jig update` advances to the resolved template source. `jig update --recopy` re-renders from the stored commit and answers in `.jig.toml`. Changed managed files are protected unless `--force` is used.
+
+This lets maintainers separate two tasks that are often conflated:
+
+- "Re-render the current harness answers."
+- "Move this repo to a newer Jig template."
+
+The distinction matters for downstream repos because the harness is shared infrastructure, but the application remains project-owned.
+
+## What Makes Jig Developer-Friendly
+
+Jig's developer friendliness comes from a few consistent product choices:
+
+- It gives every repo a small, stable command vocabulary.
+- It records repo conventions in committed configuration instead of tribal memory.
+- It preserves existing repo ownership during adoption.
+- It makes local checks and work evidence inspectable.
+- It makes MCP and CLI use converge on the same runtime contract.
+- It keeps machine-local proxy and vault state out of repo history.
+- It makes broad trust changes explicit at the command line.
+- It supports dogfooding through `JIG_DEV_BIN` so Jig changes can be validated through the same launcher generated repos use.
+
+The intentional friction is part of the UX. Trusting a local CA, exposing a proxy on the LAN, installing Codex marketplace support, overwriting managed files, or injecting secrets into a child process all require explicit commands. Ordinary repo work stays quick; higher-blast-radius actions are visible and auditable.
+
+## Related References
+
+- [Adoption Guide](./adoption.md)
+- [Configuration Reference](./configuration.md)
+- [Public Contract](./public-contract.md)
+- [Repo Intent For Agents](./repo-intent.md)

@@ -116,11 +116,11 @@ pub(super) fn wait_for_app_ready_with_timeout(
         if Instant::now() >= deadline {
             if is_port_free(target_host, port) {
                 bail!(
-                    "App '{name}' did not listen on {target_host}:{port} within {timeout:?}. The process may have ignored PORT/HOST or rebound to a different port; configure the app to fail when the requested port is unavailable."
+                    "App '{name}' did not listen on {target_host}:{port} within {timeout:?}. The process may have ignored PORT/HOST or rebound to a different port. Likely fix: configure the app to honor PORT={port} and HOST={target_host}, and make it fail when the requested port is unavailable."
                 );
             }
             bail!(
-                "App '{name}' did not listen on {target_host}:{port} within {timeout:?}, and that port is now in use by another process."
+                "App '{name}' did not listen on {target_host}:{port} within {timeout:?}, and that port is now in use by another process. Likely fix: stop the process using that port or configure a different [[dev.apps]].port."
             );
         }
         thread::sleep(APP_READY_CHECK_INTERVAL);

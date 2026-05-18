@@ -162,6 +162,7 @@ pub(crate) struct VaultSecretSetRequest {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum VaultSecretValueSource {
+    Auto,
     Stdin,
     Prompt,
 }
@@ -175,6 +176,7 @@ pub(crate) struct VaultSecretRemoveRequest {
 #[derive(Debug)]
 pub(crate) struct VaultRunRequest {
     pub(crate) env: Vec<String>,
+    pub(crate) files: Vec<String>,
     pub(crate) command: Vec<String>,
     pub(crate) vault: VaultRuntimeOptions,
 }
@@ -197,6 +199,7 @@ pub(crate) enum WorkCommand {
     Append(WorkAppendRequest),
     Check(WorkCheckRequest),
     Gates(WorkGatesRequest),
+    Evidence(WorkEvidenceRequest),
     Decide(WorkDecisionRequest),
     Receipts(WorkReceiptsRequest),
     Status,
@@ -241,6 +244,11 @@ pub(crate) struct WorkCheckRequest {
 #[derive(Debug, Deserialize)]
 pub(crate) struct WorkGatesRequest {
     pub(crate) plan_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct WorkEvidenceRequest {
+    pub(crate) plan_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

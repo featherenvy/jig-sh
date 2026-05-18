@@ -35,9 +35,30 @@ fn top_level_help_describes_common_commands() {
     assert_help_contains(&help, "Create a new repository");
     assert_help_contains(&help, "check");
     assert_help_contains(&help, "Run configured project checks");
+    assert_help_contains(&help, "doctor");
+    assert_help_contains(&help, "Report repo harness readiness");
+    assert_help_contains(&help, "info");
+    assert_help_contains(&help, "Summarize repo Jig configuration");
     assert_help_contains(&help, "Manage structured work plans");
     assert_help_contains(&help, "Inspect or bootstrap local agent tooling");
     assert_help_omits(&help, "generate-sqlx-unchecked-queries-todo");
+}
+
+#[test]
+fn doctor_help_includes_examples() {
+    let doctor_help = rendered_help(&["doctor"]);
+    assert_help_contains(&doctor_help, "jig doctor");
+    assert_help_contains(&doctor_help, "jig doctor --summary");
+    assert_help_contains(&doctor_help, "--summary");
+}
+
+#[test]
+fn info_help_includes_examples_and_alias() {
+    let info_help = rendered_help(&["info"]);
+    assert_help_contains(&info_help, "jig info");
+    assert_help_contains(&info_help, "jig info --summary");
+    assert_help_contains(&info_help, "jig explain --summary");
+    assert_help_contains(&info_help, "--summary");
 }
 
 #[test]
@@ -51,6 +72,8 @@ fn nested_help_describes_work_and_agent_commands() {
     assert_help_contains(&work_help, "Start a structured work plan");
     assert_help_contains(&work_help, "gates");
     assert_help_contains(&work_help, "Show required gate status");
+    assert_help_contains(&work_help, "evidence");
+    assert_help_contains(&work_help, "Summarize receipt evidence");
 
     let agent_help = Cli::command()
         .find_subcommand_mut("agent")
@@ -79,6 +102,14 @@ fn work_check_help_includes_examples() {
     let work_check_help = rendered_help(&["work", "check"]);
     assert_help_contains(&work_check_help, "jig work check --plan-id plan_abc123");
     assert_help_contains(&work_check_help, "--tool jig.test");
+}
+
+#[test]
+fn work_evidence_help_includes_examples() {
+    let work_evidence_help = rendered_help(&["work", "evidence"]);
+    assert_help_contains(&work_evidence_help, "jig work evidence --summary");
+    assert_help_contains(&work_evidence_help, "--plan-id plan_abc123");
+    assert_help_contains(&work_evidence_help, "changed paths covered");
 }
 
 #[test]
@@ -115,6 +146,10 @@ fn vault_help_includes_quick_start_examples() {
         &vault_secret_set_help,
         "jig vault secret set api_token --value-stdin",
     );
+
+    let vault_run_help = rendered_help(&["vault", "run"]);
+    assert_help_contains(&vault_run_help, "--file");
+    assert_help_contains(&vault_run_help, "jig vault run --file TOKEN_FILE=api_token");
 }
 
 #[test]
@@ -147,6 +182,14 @@ fn human_summary_flags_are_discoverable() {
     assert_help_contains(&agent_doctor_help, "--summary");
     assert_help_contains(&agent_doctor_help, "human-readable readiness summary");
 
+    let doctor_help = rendered_help(&["doctor"]);
+    assert_help_contains(&doctor_help, "--summary");
+    assert_help_contains(&doctor_help, "human-readable readiness summary");
+
+    let info_help = rendered_help(&["info"]);
+    assert_help_contains(&info_help, "--summary");
+    assert_help_contains(&info_help, "human-readable repo summary");
+
     let work_status_help = rendered_help(&["work", "status"]);
     assert_help_contains(&work_status_help, "--summary");
     assert_help_contains(&work_status_help, "human-readable work summary");
@@ -155,6 +198,15 @@ fn human_summary_flags_are_discoverable() {
     assert_help_contains(&work_receipts_help, "--summary");
     assert_help_contains(&work_receipts_help, "human-readable receipt summary");
     assert_help_contains(&work_receipts_help, "work receipts --failed-only --summary");
+
+    let work_evidence_help = rendered_help(&["work", "evidence"]);
+    assert_help_contains(&work_evidence_help, "--summary");
+    assert_help_contains(&work_evidence_help, "human-readable evidence summary");
+
+    let vault_run_help = rendered_help(&["vault", "run"]);
+    assert_help_contains(&vault_run_help, "--summary");
+    assert_help_contains(&vault_run_help, "human-readable brokered run summary");
+    assert_help_contains(&vault_run_help, "--file");
 }
 
 #[test]

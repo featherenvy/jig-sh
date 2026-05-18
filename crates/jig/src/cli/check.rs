@@ -1,0 +1,90 @@
+use clap::{Args, Subcommand};
+
+use crate::tool_defs;
+
+use super::{AgentMapOpts, ToolOpts};
+
+pub(super) const CHECK_AFTER_HELP: &str = "\
+Run configured project checks or Jig-owned repository policy checks.
+
+Examples:
+  jig check fmt
+  jig check contract
+  jig check rust-file-loc --changed-against origin/main";
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum CheckCommand {
+    /// Run the configured Rust format check.
+    #[command(name = tool_defs::cli_command::CHECK_FMT)]
+    Fmt(ToolOpts),
+    /// Run the configured Rust clippy check.
+    #[command(name = tool_defs::cli_command::CHECK_CLIPPY)]
+    Clippy(ToolOpts),
+    /// Run the configured default test command.
+    #[command(name = tool_defs::cli_command::CHECK_TEST)]
+    Test(ToolOpts),
+    /// Run the configured locked test command.
+    #[command(name = tool_defs::cli_command::CHECK_TEST_LOCKED)]
+    TestLocked(ToolOpts),
+    /// Run the configured TypeScript lint command.
+    #[command(name = tool_defs::cli_command::CHECK_TYPESCRIPT_LINT)]
+    TypeScriptLint(ToolOpts),
+    /// Run the configured TypeScript typecheck command.
+    #[command(name = tool_defs::cli_command::CHECK_TYPESCRIPT_TYPECHECK)]
+    TypeScriptTypecheck(ToolOpts),
+    /// Run the configured TypeScript build command.
+    #[command(name = tool_defs::cli_command::CHECK_TYPESCRIPT_BUILD)]
+    TypeScriptBuild(ToolOpts),
+    /// Run the configured TypeScript coverage command.
+    #[command(name = tool_defs::cli_command::CHECK_TYPESCRIPT_COVERAGE)]
+    TypeScriptCoverage(ToolOpts),
+    /// Verify committed SQLx metadata when SQLx is enabled.
+    #[command(name = tool_defs::cli_command::CHECK_SQLX)]
+    Sqlx(ToolOpts),
+    /// Verify generated schema documentation when schema dumps are enabled.
+    #[command(name = tool_defs::cli_command::CHECK_SCHEMA)]
+    Schema(ToolOpts),
+    /// Validate the generated Jig command contract and runtime wiring.
+    #[command(name = tool_defs::cli_command::CHECK_CONTRACT)]
+    Contract(ToolOpts),
+    /// Check agent-map.md coverage and links.
+    #[command(name = tool_defs::cli_command::CHECK_AGENT_MAP)]
+    AgentMap(AgentMapOpts),
+    /// Verify crate-level AGENTS.md guide coverage and required sections.
+    #[command(name = tool_defs::cli_command::CHECK_AGENT_GUIDES)]
+    AgentGuides,
+    /// Enforce Rust file-size policy for changed or tracked files.
+    #[command(name = tool_defs::cli_command::CHECK_RUST_FILE_LOC)]
+    RustFileLoc(CheckRustFileLocOpts),
+    /// Fail if disallowed mod.rs files exist under configured crate roots.
+    #[command(name = tool_defs::cli_command::CHECK_NO_MOD_RS)]
+    NoModRs,
+    /// Verify existing migrations were not mutated.
+    #[command(name = tool_defs::cli_command::CHECK_MIGRATION_IMMUTABILITY)]
+    MigrationImmutability(CheckMigrationImmutabilityOpts),
+    /// Verify non-test SQLx queries use compile-time checked macros.
+    #[command(name = tool_defs::cli_command::CHECK_SQLX_UNCHECKED_NON_TEST)]
+    SqlxUncheckedNonTest,
+}
+
+#[derive(Args, Debug)]
+pub(crate) struct CheckRustFileLocOpts {
+    #[arg(long, help = "Check staged Rust files against HEAD.")]
+    pub(crate) staged: bool,
+    #[arg(
+        long = "changed-against",
+        help = "Check Rust files changed between the given git ref and HEAD."
+    )]
+    pub(crate) changed_against: Option<String>,
+    #[arg(
+        long,
+        help = "Check all tracked Rust files against a zero baseline; existing oversized legacy files fail unless annotated."
+    )]
+    pub(crate) all: bool,
+}
+
+#[derive(Args, Debug)]
+pub(crate) struct CheckMigrationImmutabilityOpts {
+    #[arg(long = "changed-against", help = "Git ref to compare against")]
+    pub(crate) changed_against: String,
+}

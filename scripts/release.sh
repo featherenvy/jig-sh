@@ -8,9 +8,13 @@ PACKAGE_NAME="jig-sh"
 PUBLISH_PACKAGE_NAMES=("jig-dev-proxy" "$PACKAGE_NAME")
 BIN_NAME="jig"
 RELEASE_FIXTURE_FILES=(
+  examples/adopted-custom-commands.toml
   examples/backend-only.toml
   examples/full-stack.toml
+  examples/rust-backend-only.toml
+  examples/rust-sqlx-schema-dump.toml
   examples/tooling-only.toml
+  examples/vite-frontend.toml
   tests/fixtures/backend-only.toml
   tests/fixtures/full-stack.toml
   tests/fixtures/tooling-only.toml

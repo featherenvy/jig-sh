@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 use super::answers::RenderAnswers;
 
 pub(super) const ROOT_AGENTS_PATH: &str = "AGENTS.md";
+pub(super) const ROOT_AGENTS_BLOCK_BEGIN: &str = "<!-- BEGIN JIG MANAGED BLOCK -->";
+pub(super) const ROOT_AGENTS_BLOCK_END: &str = "<!-- END JIG MANAGED BLOCK -->";
 
 const REMOVED_MANAGED_PATHS: &[&str] = &[
     "scripts/add-migration.sh",

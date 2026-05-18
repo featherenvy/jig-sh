@@ -1,5 +1,5 @@
 use crate::Result;
-use crate::run::{env_var_names_equal, is_preserved_env_var_name};
+use crate::env_policy::{env_var_names_equal, is_preserved_env_var_name};
 use crate::types::{EnvVarName, SecretName};
 
 #[non_exhaustive]
@@ -54,13 +54,93 @@ impl BrokeredEnv {
 
 #[non_exhaustive]
 #[derive(Clone, Debug)]
+pub struct BrokeredFile {
+    var: EnvVarName,
+    secret_name: SecretName,
+}
+
+impl BrokeredFile {
+    pub fn new(var: EnvVarName, secret_name: SecretName) -> Result<Self> {
+        #[cfg(not(unix))]
+        {
+            return Err(crate::VaultError::new(
+                crate::VaultErrorKind::InvalidInput,
+                format!(
+                    "vault file mapping '{}={}' requires Unix-style owner-only temporary files; use --env on this platform",
+                    var.as_str(),
+                    secret_name.as_str()
+                ),
+            ));
+        }
+
+        #[cfg(unix)]
+        {
+            if is_preserved_env_var_name(var.as_str()) {
+                return Err(crate::VaultError::new(
+                    crate::VaultErrorKind::InvalidInput,
+                    format!(
+                        "vault file mapping cannot inject a path into preserved environment variable '{}'",
+                        var.as_str()
+                    ),
+                ));
+            }
+            Ok(Self { var, secret_name })
+        }
+    }
+
+    pub fn parse(value: &str) -> Result<Self> {
+        let (var, secret_name) = value.split_once('=').ok_or_else(|| {
+            crate::VaultError::new(
+                crate::VaultErrorKind::InvalidInput,
+                format!("vault file mapping '{value}' must have the form VAR=SECRET_NAME"),
+            )
+        })?;
+        if var.is_empty() {
+            return Err(crate::VaultError::new(
+                crate::VaultErrorKind::InvalidInput,
+                format!("vault file mapping '{value}' must have a non-empty VAR"),
+            ));
+        }
+        if secret_name.is_empty() {
+            return Err(crate::VaultError::new(
+                crate::VaultErrorKind::InvalidInput,
+                format!("vault file mapping '{value}' must have a non-empty SECRET_NAME"),
+            ));
+        }
+        Self::new(EnvVarName::parse(var)?, SecretName::parse(secret_name)?)
+    }
+
+    pub fn var(&self) -> &EnvVarName {
+        &self.var
+    }
+
+    pub fn secret_name(&self) -> &SecretName {
+        &self.secret_name
+    }
+
+    pub(crate) fn into_parts(self) -> (EnvVarName, SecretName) {
+        (self.var, self.secret_name)
+    }
+}
+
+#[non_exhaustive]
+#[derive(Clone, Debug)]
 pub struct BrokeredRun {
     command: Vec<String>,
     env: Vec<BrokeredEnv>,
+    files: Vec<BrokeredFile>,
 }
 
 impl BrokeredRun {
     pub fn new(command: Vec<String>, env: Vec<BrokeredEnv>) -> Result<Self> {
+        Self::with_files(command, env, Vec::new())
+    }
+
+    pub fn with_files(
+        command: Vec<String>,
+        env: Vec<BrokeredEnv>,
+        files: Vec<BrokeredFile>,
+    ) -> Result<Self> {
         if command.is_empty() {
             return Err(crate::VaultError::new(
                 crate::VaultErrorKind::InvalidInput,
@@ -70,7 +150,7 @@ impl BrokeredRun {
         for (index, mapping) in env.iter().enumerate() {
             if env[..index]
                 .iter()
-                .any(|prior| env_var_names_equal(prior.var().as_str(), mapping.var().as_str()))
+                .any(|prior| same_env_var(prior, mapping))
             {
                 return Err(crate::VaultError::new(
                     crate::VaultErrorKind::InvalidInput,
@@ -81,7 +161,37 @@ impl BrokeredRun {
                 ));
             }
         }
-        Ok(Self { command, env })
+        for (index, mapping) in files.iter().enumerate() {
+            if files[..index]
+                .iter()
+                .any(|prior| same_file_var(prior, mapping))
+            {
+                return Err(crate::VaultError::new(
+                    crate::VaultErrorKind::InvalidInput,
+                    format!(
+                        "vault file mapping specifies environment variable '{}' more than once",
+                        mapping.var().as_str()
+                    ),
+                ));
+            }
+            if env
+                .iter()
+                .any(|prior| env_var_names_equal(prior.var().as_str(), mapping.var().as_str()))
+            {
+                return Err(crate::VaultError::new(
+                    crate::VaultErrorKind::InvalidInput,
+                    format!(
+                        "vault mapping specifies environment variable '{}' as both an env and file mapping",
+                        mapping.var().as_str()
+                    ),
+                ));
+            }
+        }
+        Ok(Self {
+            command,
+            env,
+            files,
+        })
     }
 
     pub fn command(&self) -> &[String] {
@@ -92,9 +202,21 @@ impl BrokeredRun {
         &self.env
     }
 
-    pub(crate) fn into_parts(self) -> (Vec<String>, Vec<BrokeredEnv>) {
-        (self.command, self.env)
+    pub fn files(&self) -> &[BrokeredFile] {
+        &self.files
     }
+
+    pub(crate) fn into_parts(self) -> (Vec<String>, Vec<BrokeredEnv>, Vec<BrokeredFile>) {
+        (self.command, self.env, self.files)
+    }
+}
+
+fn same_env_var(left: &BrokeredEnv, right: &BrokeredEnv) -> bool {
+    env_var_names_equal(left.var().as_str(), right.var().as_str())
+}
+
+fn same_file_var(left: &BrokeredFile, right: &BrokeredFile) -> bool {
+    env_var_names_equal(left.var().as_str(), right.var().as_str())
 }
 
 #[cfg(test)]
@@ -134,6 +256,51 @@ mod tests {
         .to_string();
 
         assert!(error.contains("more than once"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn brokered_run_rejects_duplicate_file_and_env_names() {
+        let error = BrokeredRun::with_files(
+            vec!["true".into()],
+            vec![BrokeredEnv::parse("TOKEN=api_token").unwrap()],
+            vec![BrokeredFile::parse("TOKEN=api_token_file").unwrap()],
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("TOKEN"));
+        assert!(error.contains("both an env and file mapping"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn brokered_file_rejects_preserved_environment_names() {
+        let error = BrokeredFile::parse("PATH=api_token")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("preserved environment variable"));
+    }
+
+    #[cfg(not(unix))]
+    #[test]
+    fn brokered_file_rejects_file_mappings_on_non_unix() {
+        let error = BrokeredFile::parse("TOKEN_FILE=api_token").unwrap_err();
+        assert_eq!(error.kind(), VaultErrorKind::InvalidInput);
+        assert!(
+            error
+                .to_string()
+                .contains("requires Unix-style owner-only temporary files")
+        );
+    }
+
+    #[test]
+    fn brokered_file_reports_empty_mapping_side() {
+        let missing_var = BrokeredFile::parse("=api_token").unwrap_err().to_string();
+        assert!(missing_var.contains("non-empty VAR"));
+
+        let missing_secret = BrokeredFile::parse("TOKEN_FILE=").unwrap_err().to_string();
+        assert!(missing_secret.contains("non-empty SECRET_NAME"));
     }
 
     #[test]

@@ -363,6 +363,54 @@ fn parses_agent_doctor_command() {
 }
 
 #[test]
+fn parses_top_level_doctor_command() {
+    let cli = Cli::try_parse_from(["jig", "doctor"]).unwrap();
+
+    match cli.command {
+        CommandKind::Doctor(opts) => {
+            assert!(!opts.summary);
+        }
+        other => panic!("expected doctor command, got {other:?}"),
+    }
+
+    let summary = Cli::try_parse_from(["jig", "doctor", "--summary"]).unwrap();
+    match summary.command {
+        CommandKind::Doctor(opts) => {
+            assert!(opts.summary);
+        }
+        other => panic!("expected doctor summary command, got {other:?}"),
+    }
+}
+
+#[test]
+fn parses_top_level_info_command_and_explain_alias() {
+    let cli = Cli::try_parse_from(["jig", "info"]).unwrap();
+
+    match cli.command {
+        CommandKind::Info(opts) => {
+            assert!(!opts.summary);
+        }
+        other => panic!("expected info command, got {other:?}"),
+    }
+
+    let summary = Cli::try_parse_from(["jig", "info", "--summary"]).unwrap();
+    match summary.command {
+        CommandKind::Info(opts) => {
+            assert!(opts.summary);
+        }
+        other => panic!("expected info summary command, got {other:?}"),
+    }
+
+    let alias = Cli::try_parse_from(["jig", "explain", "--summary"]).unwrap();
+    match alias.command {
+        CommandKind::Info(opts) => {
+            assert!(opts.summary);
+        }
+        other => panic!("expected info alias command, got {other:?}"),
+    }
+}
+
+#[test]
 fn parses_agent_bootstrap_marketplace() {
     let cli = Cli::try_parse_from([
         "jig",
@@ -486,6 +534,29 @@ fn parses_vault_commands() {
         other => panic!("expected vault secret set command, got {other:?}"),
     }
 
+    let default_prompt_set =
+        Cli::try_parse_from(["jig", "vault", "secret", "set", "api_token"]).unwrap();
+    match default_prompt_set.command {
+        CommandKind::Vault(VaultCommand::Secret(VaultSecretCommand::Set(opts))) => {
+            assert_eq!(opts.name, "api_token");
+            assert!(!opts.value_stdin);
+            assert!(!opts.value_prompt);
+        }
+        other => panic!("expected vault secret set command, got {other:?}"),
+    }
+
+    let duplicate_value_source = Cli::try_parse_from([
+        "jig",
+        "vault",
+        "secret",
+        "set",
+        "api_token",
+        "--value-stdin",
+        "--value-prompt",
+    ])
+    .unwrap_err();
+    assert!(duplicate_value_source.to_string().contains("cannot"));
+
     let audit = Cli::try_parse_from(["jig", "vault", "audit", "verify"]).unwrap();
     match audit.command {
         CommandKind::Vault(VaultCommand::Audit(VaultAuditCommand::Verify(_))) => {}
@@ -496,8 +567,11 @@ fn parses_vault_commands() {
         "jig",
         "vault",
         "run",
+        "--summary",
         "--env",
         "TOKEN=api_token",
+        "--file",
+        "TOKEN_FILE=api_token",
         "--",
         "sh",
         "-c",
@@ -506,7 +580,9 @@ fn parses_vault_commands() {
     .unwrap();
     match run.command {
         CommandKind::Vault(VaultCommand::Run(opts)) => {
+            assert!(opts.summary);
             assert_eq!(opts.env, vec!["TOKEN=api_token"]);
+            assert_eq!(opts.files, vec!["TOKEN_FILE=api_token"]);
             assert_eq!(opts.command, vec!["sh", "-c", "true"]);
         }
         other => panic!("expected vault run command, got {other:?}"),
@@ -609,12 +685,17 @@ fn proxy_json_ok_false_is_cli_failure() {
             proxy: ProxyRuntimeOpts::default(),
         }
     )));
+    assert!(test_command_reports_failure_with_ok(&CommandKind::Doctor(
+        DoctorOpts::default()
+    )));
     assert!(test_command_reports_failure_with_ok(&CommandKind::Agent(
         AgentCommand::Doctor(AgentDoctorOpts::default())
     )));
     assert!(test_command_reports_failure_with_ok(&CommandKind::Vault(
         VaultCommand::Run(VaultRunOpts {
+            summary: false,
             env: vec!["TOKEN=api_token".into()],
+            files: Vec::new(),
             vault: VaultRuntimeOpts::default(),
             command: vec!["true".into()],
         })
@@ -825,5 +906,36 @@ fn parses_work_gates_command() {
             assert!(opts.summary);
         }
         other => panic!("expected work gates command, got {other:?}"),
+    }
+}
+
+#[test]
+fn parses_work_evidence_command() {
+    let cli = Cli::try_parse_from(["jig", "work", "evidence", "--summary"]).unwrap();
+
+    match cli.command {
+        CommandKind::Work(WorkCommand::Evidence(opts)) => {
+            assert_eq!(opts.plan_id, None);
+            assert!(opts.summary);
+        }
+        other => panic!("expected work evidence command, got {other:?}"),
+    }
+
+    let with_plan = Cli::try_parse_from([
+        "jig",
+        "work",
+        "evidence",
+        "--plan-id",
+        "plan_1",
+        "--summary",
+    ])
+    .unwrap();
+
+    match with_plan.command {
+        CommandKind::Work(WorkCommand::Evidence(opts)) => {
+            assert_eq!(opts.plan_id.as_deref(), Some("plan_1"));
+            assert!(opts.summary);
+        }
+        other => panic!("expected work evidence command, got {other:?}"),
     }
 }

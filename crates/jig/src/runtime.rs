@@ -172,6 +172,7 @@ pub(crate) fn call_tool(ctx: &RepoContext, name: &str, args: Value) -> Result<Va
         Some(MemoryTool::Append) => work::append_from_args(ctx, args),
         Some(MemoryTool::Check) => work::check_from_args(ctx, args),
         Some(MemoryTool::Gates) => work::gates_from_args(ctx, args),
+        Some(MemoryTool::Evidence) => work::evidence_from_args(ctx, args),
         Some(MemoryTool::Decide) => work::decide_from_args(ctx, args),
         Some(MemoryTool::Receipts) => work::receipts_from_args(ctx, args),
         Some(MemoryTool::Status) => crate::state::state_summary(ctx),

@@ -1,0 +1,1 @@
+Plan: preserve source errors for dev app spawn failures; make route cleanup failures visible; expose MCP command fallback diagnostics instead of silently defaulting; rerun focused Rust error-handling review and configured gates.

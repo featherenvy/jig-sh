@@ -4,6 +4,7 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
+use serde::Serialize;
 
 #[cfg(test)]
 use super::ALWAYS_TASK_MUTATED_PATHS;
@@ -22,11 +23,21 @@ pub(super) struct ApplyRenderOptions<'a> {
     pub(super) progress: CliProgress,
 }
 
+#[derive(Clone, Debug, Default, Serialize)]
+pub(super) struct ApplyRenderReport {
+    pub(super) files_created: Vec<String>,
+    pub(super) files_modified: Vec<String>,
+    pub(super) files_removed: Vec<String>,
+    pub(super) files_unchanged: Vec<String>,
+    pub(super) managed_blocks_inserted: Vec<String>,
+    pub(super) managed_blocks_rendered: Vec<String>,
+}
+
 pub(super) fn apply_staged_render(
     staged: &StagedRender,
     destination: &Path,
     options: ApplyRenderOptions<'_>,
-) -> Result<()> {
+) -> Result<ApplyRenderReport> {
     if !options.force {
         options
             .progress
@@ -55,20 +66,41 @@ pub(super) fn apply_staged_render(
         "apply managed paths",
         format!("{} path(s)", staged.managed_paths.len()),
     );
+    let mut report = ApplyRenderReport::default();
     for relative in &staged.managed_paths {
         let rendered_path = staged.destination.join(relative);
         let destination_path = destination.join(relative);
+        let relative_text = relative.display().to_string();
         if path_exists(&rendered_path) {
+            if path_exists(&destination_path) {
+                if files_match(&rendered_path, &destination_path)? {
+                    report.files_unchanged.push(relative_text.clone());
+                    continue;
+                } else {
+                    report.files_modified.push(relative_text.clone());
+                    if is_root_agents_path(relative)
+                        && managed_block_inserted(&rendered_path, Some(&destination_path))?
+                    {
+                        report.managed_blocks_inserted.push(relative_text.clone());
+                    }
+                }
+            } else {
+                report.files_created.push(relative_text.clone());
+                if is_root_agents_path(relative) && managed_block_inserted(&rendered_path, None)? {
+                    report.managed_blocks_rendered.push(relative_text.clone());
+                }
+            }
             options
                 .progress
                 .log_blocked_on_err(copy_rendered_path(&rendered_path, &destination_path))?;
         } else if path_exists(&destination_path) {
+            report.files_removed.push(relative_text);
             options
                 .progress
                 .log_blocked_on_err(remove_destination_path(&destination_path))?;
         }
     }
-    Ok(())
+    Ok(report)
 }
 
 fn staged_render_conflicts(
@@ -118,6 +150,23 @@ fn conflict_count_message(count: usize) -> String {
 
 fn is_root_agents_path(relative: &Path) -> bool {
     managed_paths::is_root_agents_path(relative)
+}
+
+fn managed_block_inserted(rendered_path: &Path, destination_path: Option<&Path>) -> Result<bool> {
+    if !file_contains_complete_managed_block(rendered_path)? {
+        return Ok(false);
+    }
+    match destination_path {
+        Some(destination_path) => Ok(!file_contains_complete_managed_block(destination_path)?),
+        None => Ok(true),
+    }
+}
+
+fn file_contains_complete_managed_block(path: &Path) -> Result<bool> {
+    let contents =
+        fs::read_to_string(path).with_context(|| format!("Failed to read {}", path.display()))?;
+    Ok(contents.contains(managed_paths::ROOT_AGENTS_BLOCK_BEGIN)
+        && contents.contains(managed_paths::ROOT_AGENTS_BLOCK_END))
 }
 
 fn destination_is_regular_file(path: &Path) -> Result<bool> {

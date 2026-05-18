@@ -340,9 +340,10 @@ fn write_atomic_text(path: &Path, contents: &str) -> AnyResult<()> {
     result
 }
 
-fn sync_parent_dir(path: &Path) -> AnyResult<()> {
+fn sync_parent_dir(_path: &Path) -> AnyResult<()> {
     #[cfg(unix)]
     {
+        let path = _path;
         let dir = File::open(path)
             .with_context(|| format!("failed to open parent directory {}", path.display()))?;
         dir.sync_all()
@@ -351,12 +352,16 @@ fn sync_parent_dir(path: &Path) -> AnyResult<()> {
     Ok(())
 }
 
+#[cfg(unix)]
 fn private_open_options() -> OpenOptions {
     let mut options = OpenOptions::new();
-    #[cfg(unix)]
-    {
-        options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
-    }
+    options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+    options
+}
+
+#[cfg(not(unix))]
+fn private_open_options() -> OpenOptions {
+    let options = OpenOptions::new();
     options
 }
 
@@ -409,9 +414,10 @@ fn ensure_tree_has_no_symlinks(root: &Path, path: &Path) -> AnyResult<()> {
     Ok(())
 }
 
-fn ensure_private_dir_permissions(path: &Path) -> AnyResult<()> {
+fn ensure_private_dir_permissions(_path: &Path) -> AnyResult<()> {
     #[cfg(unix)]
     {
+        let path = _path;
         fs::set_permissions(path, fs::Permissions::from_mode(0o700)).with_context(|| {
             format!("failed to set vault home permissions on {}", path.display())
         })?;
@@ -436,9 +442,10 @@ fn ensure_private_dir_permissions(path: &Path) -> AnyResult<()> {
     Ok(())
 }
 
-fn ensure_create_ancestor_is_not_shared_writable(path: &Path) -> AnyResult<()> {
+fn ensure_create_ancestor_is_not_shared_writable(_path: &Path) -> AnyResult<()> {
     #[cfg(unix)]
     {
+        let path = _path;
         // This checks the first existing ancestor that would own creation of
         // the vault home. Higher ancestors are outside the directory-entry
         // boundary this local state store can harden.

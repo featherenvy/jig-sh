@@ -1,0 +1,19 @@
+repo_name = "acme-web"
+default_branch = "main"
+ci_github_runner = "ubuntu-latest"
+jig_version = "0.2.0-beta.1"
+template_source_url = ""
+sqlx_enabled = false
+rust_crate_roots = ["crates"]
+schema_dump_enabled = false
+bootstrap_command = "npm ci"
+rust_fmt_check_command = "printf '%s\\n' 'No Rust workspace configured; skipping fmt.'"
+rust_clippy_command = "printf '%s\\n' 'No Rust workspace configured; skipping clippy.'"
+rust_test_command = "npm test"
+rust_test_locked_command = "npm test"
+web_package_manager = "npm"
+
+[[frontend_apps]]
+name = "web"
+dir = "web"
+coverage_threshold = 80

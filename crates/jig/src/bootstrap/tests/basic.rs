@@ -48,6 +48,90 @@ fn seed_answers_only_serializes_provided_values() {
     assert!(!mapping.contains_key("default_branch"));
 }
 
+#[test]
+fn initial_next_steps_are_tailored_to_rendered_config() {
+    let destination = PathBuf::from("/tmp/demo");
+    let result = initial_copy::BootstrapCopyResult {
+        default_branch: Some("main".into()),
+        bootstrap_command_configured: true,
+        dev_apps_configured: true,
+        codex_skills_configured: true,
+        sqlx_enabled: true,
+        schema_dump_enabled: true,
+        apply_report: sync::ApplyRenderReport::default(),
+        notes: Vec::new(),
+    };
+
+    let steps = initial_next_steps(InitialCommand::Adopt, &destination, &result);
+
+    assert_eq!(steps[0], "cd /tmp/demo");
+    assert!(steps[1].starts_with("Review .jig.toml"));
+    assert!(steps.iter().any(|step| step == "scripts/jig bootstrap"));
+    assert!(
+        steps
+            .iter()
+            .any(|step| step == "scripts/jig doctor --summary")
+    );
+    assert!(
+        steps
+            .iter()
+            .any(|step| step == "scripts/jig check contract")
+    );
+    assert!(steps.iter().any(|step| step == "scripts/jig dev"));
+    assert!(
+        steps
+            .iter()
+            .any(|step| step == "scripts/jig agent bootstrap")
+    );
+    assert!(steps.iter().any(|step| step.contains("cargo-sqlx")));
+    assert!(
+        steps
+            .iter()
+            .any(|step| step.contains("scripts/dump-schema.sh"))
+    );
+    assert!(
+        steps
+            .iter()
+            .any(|step| step.contains("Commit the adoption diff"))
+    );
+
+    let quoted_steps = initial_next_steps(
+        InitialCommand::Init,
+        Path::new("/tmp/demo repo"),
+        &initial_copy::BootstrapCopyResult {
+            default_branch: Some("main".into()),
+            bootstrap_command_configured: true,
+            dev_apps_configured: false,
+            codex_skills_configured: false,
+            sqlx_enabled: false,
+            schema_dump_enabled: false,
+            apply_report: sync::ApplyRenderReport::default(),
+            notes: Vec::new(),
+        },
+    );
+    assert_eq!(quoted_steps[0], "cd '/tmp/demo repo'");
+
+    let no_bootstrap_steps = initial_next_steps(
+        InitialCommand::Init,
+        Path::new("/tmp/no-bootstrap"),
+        &initial_copy::BootstrapCopyResult {
+            default_branch: Some("main".into()),
+            bootstrap_command_configured: false,
+            dev_apps_configured: false,
+            codex_skills_configured: false,
+            sqlx_enabled: false,
+            schema_dump_enabled: false,
+            apply_report: sync::ApplyRenderReport::default(),
+            notes: Vec::new(),
+        },
+    );
+    assert!(
+        !no_bootstrap_steps
+            .iter()
+            .any(|step| step == "scripts/jig bootstrap")
+    );
+}
+
 fn write_answers_fixture(dir: &Path, sqlx_enabled: Option<bool>) {
     let mut body = String::from("default_branch = \"main\"\n");
     if let Some(sqlx_enabled) = sqlx_enabled {
@@ -119,6 +203,105 @@ fn rendered_conflicts_ignores_identical_files() {
 
     let conflicts = rendered_conflicts(rendered.path(), destination.path()).unwrap();
     assert!(conflicts.is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn apply_staged_render_does_not_rewrite_preserved_files() {
+    use std::collections::BTreeSet;
+    use std::os::unix::fs::PermissionsExt;
+
+    let staged_root = tempdir().unwrap();
+    let rendered_destination = staged_root.path().join("rendered");
+    let destination = tempdir().unwrap();
+    fs::create_dir_all(rendered_destination.join("scripts")).unwrap();
+    fs::create_dir_all(destination.path().join("scripts")).unwrap();
+    fs::write(rendered_destination.join("scripts/jig"), "same").unwrap();
+    fs::write(destination.path().join("scripts/jig"), "same").unwrap();
+
+    fs::set_permissions(
+        destination.path().join("scripts"),
+        fs::Permissions::from_mode(0o555),
+    )
+    .unwrap();
+
+    let staged = staged_render::StagedRender {
+        _root: staged_root,
+        destination: rendered_destination,
+        managed_paths: BTreeSet::from([PathBuf::from("scripts/jig")]),
+    };
+    let report = apply_staged_render(
+        &staged,
+        destination.path(),
+        ApplyRenderOptions {
+            force: true,
+            allow_answers_overwrite: true,
+            conflict_message: "conflict",
+            progress: CliProgress::new("test"),
+        },
+    )
+    .unwrap();
+
+    fs::set_permissions(
+        destination.path().join("scripts"),
+        fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+
+    assert_eq!(report.files_unchanged, vec!["scripts/jig"]);
+    assert!(report.files_modified.is_empty());
+}
+
+#[test]
+fn apply_staged_render_reports_managed_block_insertions_only_when_inserted() {
+    use std::collections::BTreeSet;
+
+    let staged_root = tempdir().unwrap();
+    let rendered_destination = staged_root.path().join("rendered");
+    let destination = tempdir().unwrap();
+    fs::create_dir_all(&rendered_destination).unwrap();
+    fs::write(
+        rendered_destination.join("AGENTS.md"),
+        "# Guide\n\n<!-- BEGIN JIG MANAGED BLOCK -->\nmanaged\n<!-- END JIG MANAGED BLOCK -->\n",
+    )
+    .unwrap();
+    fs::write(destination.path().join("AGENTS.md"), "# Existing\n").unwrap();
+
+    let staged = staged_render::StagedRender {
+        _root: staged_root,
+        destination: rendered_destination,
+        managed_paths: BTreeSet::from([PathBuf::from("AGENTS.md")]),
+    };
+    let report = apply_staged_render(
+        &staged,
+        destination.path(),
+        ApplyRenderOptions {
+            force: true,
+            allow_answers_overwrite: true,
+            conflict_message: "conflict",
+            progress: CliProgress::new("test"),
+        },
+    )
+    .unwrap();
+
+    assert_eq!(report.managed_blocks_inserted, vec!["AGENTS.md"]);
+    assert!(report.managed_blocks_rendered.is_empty());
+
+    let second_report = apply_staged_render(
+        &staged,
+        destination.path(),
+        ApplyRenderOptions {
+            force: true,
+            allow_answers_overwrite: true,
+            conflict_message: "conflict",
+            progress: CliProgress::new("test"),
+        },
+    )
+    .unwrap();
+
+    assert!(second_report.managed_blocks_inserted.is_empty());
+    assert!(second_report.managed_blocks_rendered.is_empty());
+    assert_eq!(second_report.files_unchanged, vec!["AGENTS.md"]);
 }
 
 #[cfg(unix)]

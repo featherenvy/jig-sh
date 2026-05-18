@@ -3,13 +3,19 @@
 These TOML files are starting points for `jig init --answers-file` or
 `jig adopt --answers-file`.
 
-Keep these examples in lockstep with `tests/fixtures/*.toml`; release and
-fixture checks verify matching contents so visible answer files and fixture
+Every `examples/*.toml` file is smoke-rendered by fixture validation. The
+fixture-backed examples `backend-only.toml`, `full-stack.toml`, and
+`tooling-only.toml` also stay in lockstep with `tests/fixtures/*.toml`; release
+and fixture checks verify matching contents so visible answer files and fixture
 coverage do not drift.
 
-- `tooling-only.toml`: Rust workspace with no SQLx or web app checks.
-- `backend-only.toml`: SQLx-enabled Rust backend with schema dump checks disabled.
-- `full-stack.toml`: SQLx-enabled backend with frontend app entries.
+- `rust-backend-only.toml`: Rust backend with no SQLx.
+- `backend-only.toml`: Rust + SQLx with schema dump checks disabled.
+- `rust-sqlx-schema-dump.toml`: Rust + SQLx + schema dump.
+- `vite-frontend.toml`: Vite frontend checks and dev proxy config; it maps the generic Rust test slot to `npm test` for frontend-only smoke coverage.
+- `full-stack.toml`: backend + frontend behind the generated dev proxy.
+- `tooling-only.toml`: repo workflow harness with no app assumptions.
+- `adopted-custom-commands.toml`: adopted existing repo with custom commands.
 
 Copy an example, adjust repository names, paths, and commands, then run
 `jig init` or `jig adopt` with `--answers-file`.

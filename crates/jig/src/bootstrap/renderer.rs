@@ -18,8 +18,6 @@ use crate::progress::CliProgress;
 
 const TEMPLATE_SUBDIRECTORY: &str = "templates/project";
 const TEMPLATE_SUFFIX: &str = ".jinja";
-const JIG_BLOCK_BEGIN: &str = "<!-- BEGIN JIG MANAGED BLOCK -->";
-const JIG_BLOCK_END: &str = "<!-- END JIG MANAGED BLOCK -->";
 
 pub(super) struct RenderStageRequest<'a> {
     pub(super) template: &'a PreparedTemplateSource,
@@ -296,12 +294,19 @@ fn merge_jig_block(existing: &str, block: &str, path: &Path) -> Result<String> {
 }
 
 fn jig_block_bounds(contents: &str, path: &Path) -> Result<Option<(usize, usize)>> {
-    let begins = contents.match_indices(JIG_BLOCK_BEGIN).collect::<Vec<_>>();
-    let ends = contents.match_indices(JIG_BLOCK_END).collect::<Vec<_>>();
+    let begins = contents
+        .match_indices(managed_paths::ROOT_AGENTS_BLOCK_BEGIN)
+        .collect::<Vec<_>>();
+    let ends = contents
+        .match_indices(managed_paths::ROOT_AGENTS_BLOCK_END)
+        .collect::<Vec<_>>();
 
     match (begins.as_slice(), ends.as_slice()) {
         ([], []) => Ok(None),
-        ([(begin, _)], [(end, _)]) if begin < end => Ok(Some((*begin, end + JIG_BLOCK_END.len()))),
+        ([(begin, _)], [(end, _)]) if begin < end => Ok(Some((
+            *begin,
+            end + managed_paths::ROOT_AGENTS_BLOCK_END.len(),
+        ))),
         _ => bail!(
             "Malformed Jig managed block in {}. Expected exactly one begin marker before exactly one end marker.",
             path.display()

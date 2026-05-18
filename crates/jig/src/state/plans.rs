@@ -34,6 +34,12 @@ pub(crate) struct PlanCloseRequest {
     pub(crate) resolution: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PlanStatus {
+    Open,
+    Closed,
+}
+
 pub(crate) fn plans_open(ctx: &RepoContext, request: PlanOpenRequest) -> Result<Value> {
     ensure_state_layout(ctx)?;
     let plan_id = new_id("plan");
@@ -146,39 +152,30 @@ pub(crate) fn plans_close(ctx: &RepoContext, request: PlanCloseRequest) -> Resul
 }
 
 pub(crate) fn ensure_plan_is_open(ctx: &RepoContext, plan_id: &str) -> Result<()> {
-    ensure_state_layout(ctx)?;
-    let events = read_jsonl::<PlanEvent>(&ctx.state_file("plans.jsonl"))?;
-    let mut opened = false;
-    let mut closed = false;
-
-    for event in events.iter().filter(|event| event.plan_id() == plan_id) {
-        match event {
-            PlanEvent::Open { .. } => {
-                opened = true;
-                closed = false;
-            }
-            PlanEvent::Close { .. } => closed = true,
-            _ => {}
-        }
-    }
-
-    match (opened, closed) {
-        (true, false) => Ok(()),
-        (true, true) => bail!("Plan is already closed: {plan_id}"),
-        (false, _) => bail!("Plan not found: {plan_id}"),
+    match plan_status(ctx, plan_id)? {
+        Some(PlanStatus::Open) => Ok(()),
+        Some(PlanStatus::Closed) => bail!("Plan is already closed: {plan_id}"),
+        None => bail!("Plan not found: {plan_id}"),
     }
 }
 
 pub(crate) fn ensure_plan_exists(ctx: &RepoContext, plan_id: &str) -> Result<()> {
+    match plan_status(ctx, plan_id)? {
+        Some(_) => Ok(()),
+        None => bail!("Plan not found: {plan_id}"),
+    }
+}
+
+pub(crate) fn plan_status(ctx: &RepoContext, plan_id: &str) -> Result<Option<PlanStatus>> {
     ensure_state_layout(ctx)?;
     let events = read_jsonl::<PlanEvent>(&ctx.state_file("plans.jsonl"))?;
-    if events.iter().any(
-        |event| matches!(event, PlanEvent::Open { plan_id: event_plan_id, .. } if event_plan_id == plan_id),
-    ) {
-        Ok(())
-    } else {
-        bail!("Plan not found: {plan_id}")
-    }
+    Ok(plan_status_from_events(&events, plan_id))
+}
+
+pub(crate) fn open_plan_summaries(ctx: &RepoContext) -> Result<Vec<Value>> {
+    ensure_state_layout(ctx)?;
+    let events = read_jsonl::<PlanEvent>(&ctx.state_file("plans.jsonl"))?;
+    Ok(open_plans(&events))
 }
 
 #[cfg(test)]
@@ -235,6 +232,28 @@ pub(super) fn open_plans(events: &[PlanEvent]) -> Vec<Value> {
             })
         })
         .collect()
+}
+
+fn plan_status_from_events(events: &[PlanEvent], plan_id: &str) -> Option<PlanStatus> {
+    let mut opened = false;
+    let mut closed = false;
+
+    for event in events.iter().filter(|event| event.plan_id() == plan_id) {
+        match event {
+            PlanEvent::Open { .. } => {
+                opened = true;
+                closed = false;
+            }
+            PlanEvent::Close { .. } => closed = true,
+            _ => {}
+        }
+    }
+
+    match (opened, closed) {
+        (true, false) => Some(PlanStatus::Open),
+        (true, true) => Some(PlanStatus::Closed),
+        (false, _) => None,
+    }
 }
 
 fn plan_body(body: Option<String>, body_file: Option<PathBuf>) -> Result<String> {

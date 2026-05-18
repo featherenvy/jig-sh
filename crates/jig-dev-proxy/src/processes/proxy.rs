@@ -1,4 +1,5 @@
 use std::fs::{self, File, OpenOptions};
+use std::io::ErrorKind;
 #[cfg(unix)]
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 #[cfg(unix)]
@@ -104,9 +105,11 @@ fn ensure_proxy_running_after_lock(
     }
 
     terminate_child(&mut child);
+    // Keep the startup timeout as the primary error. Waiting here only reaps
+    // the child after terminate_child has performed best-effort cleanup.
     let _ = child.wait();
     bail!(
-        "Timed out waiting for Jig proxy to listen. Logs: {}",
+        "Timed out waiting for Jig proxy to listen. Logs: {}. Likely fix: inspect the proxy log for bind or certificate errors, stop any process using the requested proxy port, or run `scripts/jig proxy cert generate --force` for HTTPS certificate issues.",
         store.log_path().display()
     )
 }
@@ -203,8 +206,25 @@ pub(super) fn open_proxy_log(store: &StateStore) -> Result<File> {
             // removed before rename so repeated restarts cannot grow the set of
             // retained proxy logs.
             let rotated = path.with_file_name("proxy.log.1");
-            let _ = fs::remove_file(&rotated);
-            fs::rename(&path, rotated)?;
+            match fs::remove_file(&rotated) {
+                Ok(()) => {}
+                Err(error) if error.kind() == ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!("Failed to remove rotated proxy log {}", rotated.display())
+                    });
+                }
+            }
+            // If rename fails after the stale rotated file is removed, the
+            // active log remains in place and the contextual error tells the
+            // user which paths need inspection.
+            fs::rename(&path, &rotated).with_context(|| {
+                format!(
+                    "Failed to rotate proxy log {} to {}",
+                    path.display(),
+                    rotated.display()
+                )
+            })?;
         }
     }
     let file = OpenOptions::new()
@@ -317,7 +337,7 @@ fn ensure_requested_http_port(
         return Ok(());
     }
     bail!(
-        "A Jig proxy is already running in state dir {} on HTTP port {}, but this command requested HTTP port {}. Run `scripts/jig proxy stop && scripts/jig proxy start --http-port {}` with the same JIG_PROXY_STATE_DIR, or retry with --http-port {}.",
+        "A Jig proxy is already running in state dir {} on HTTP port {}, but this command requested HTTP port {}. Likely fix: run `scripts/jig proxy stop && scripts/jig proxy start --http-port {}` with the same JIG_PROXY_STATE_DIR, or retry with --http-port {}.",
         store.root().display(),
         actual_port,
         settings.http_port,
@@ -337,14 +357,14 @@ pub(super) fn ensure_requested_https(store: &StateStore, settings: &ProxySetting
         // HTTP state but no HTTPS port, it is a live HTTP-only proxy rather than
         // a transient startup snapshot.
         bail!(
-            "A Jig proxy is already running without the requested HTTPS listener in state dir {}. Run `scripts/jig proxy stop && scripts/jig proxy start --https --https-port {}` with the same JIG_PROXY_STATE_DIR, then retry the dev command.",
+            "A Jig proxy is already running without the requested HTTPS listener in state dir {}. Likely fix: run `scripts/jig proxy stop && scripts/jig proxy start --https --https-port {}` with the same JIG_PROXY_STATE_DIR, then retry the dev command.",
             store.root().display(),
             requested_port
         )
     };
     if actual_port != requested_port {
         bail!(
-            "A Jig proxy is already running in state dir {} on HTTPS port {}, but this command requested HTTPS port {}. Run `scripts/jig proxy stop && scripts/jig proxy start --https --https-port {}` with the same JIG_PROXY_STATE_DIR, or retry with --https-port {}.",
+            "A Jig proxy is already running in state dir {} on HTTPS port {}, but this command requested HTTPS port {}. Likely fix: run `scripts/jig proxy stop && scripts/jig proxy start --https --https-port {}` with the same JIG_PROXY_STATE_DIR, or retry with --https-port {}.",
             store.root().display(),
             actual_port,
             requested_port,
@@ -354,7 +374,7 @@ pub(super) fn ensure_requested_https(store: &StateStore, settings: &ProxySetting
     }
     if !is_tcp_listening("127.0.0.1", actual_port) {
         bail!(
-            "A Jig proxy is already running without the requested HTTPS listener in state dir {}. Run `scripts/jig proxy stop && scripts/jig proxy start --https --https-port {}` with the same JIG_PROXY_STATE_DIR, then retry the dev command.",
+            "A Jig proxy is already running without the requested HTTPS listener in state dir {}. Likely fix: run `scripts/jig proxy stop && scripts/jig proxy start --https --https-port {}` with the same JIG_PROXY_STATE_DIR, then retry the dev command.",
             store.root().display(),
             requested_port
         )
@@ -377,7 +397,7 @@ fn ensure_no_unregistered_proxy_on_requested_port(
             .is_some_and(|token| is_jig_proxy_http("127.0.0.1", settings.http_port, Some(token)))
         {
             bail!(
-                "A Jig proxy is already running on HTTP port {} but it is not registered in state dir {}. Use the same JIG_PROXY_STATE_DIR as the running proxy, choose a different --http-port, or stop the other proxy first.",
+                "A Jig proxy is already running on HTTP port {} but it is not registered in state dir {}. Likely fix: use the same JIG_PROXY_STATE_DIR as the running proxy, choose a different --http-port, or stop the other proxy first.",
                 settings.http_port,
                 store.root().display()
             );
@@ -387,13 +407,13 @@ fn ensure_no_unregistered_proxy_on_requested_port(
         // checks above are required for identity-sensitive operations.
         if is_any_jig_proxy_http("127.0.0.1", settings.http_port) {
             bail!(
-                "A Jig proxy is already running on HTTP port {} but this state dir {} cannot authenticate to it. Use the same JIG_PROXY_STATE_DIR as the running proxy, choose a different --http-port, or stop the other proxy first.",
+                "A Jig proxy is already running on HTTP port {} but this state dir {} cannot authenticate to it. Likely fix: use the same JIG_PROXY_STATE_DIR as the running proxy, choose a different --http-port, or stop the other proxy first.",
                 settings.http_port,
                 store.root().display()
             );
         }
         bail!(
-            "HTTP port {} is already in use. Choose a different --http-port or stop the process currently using that port.",
+            "HTTP port {} is already in use. Likely fix: choose a different --http-port or stop the process currently using that port.",
             settings.http_port
         );
     }

@@ -1,0 +1,1 @@
+Follow-up fix after final review: make work gates/evidence summaries plan-state aware so closed plans do not suggest impossible finish/check commands. Validate with focused tests and configured work gates.

@@ -102,7 +102,7 @@ plugins = [
 
 Jig Codex skills are optional Codex plugin bundles used by agents working in generated Jig repos; the default marketplace source is `bpcakes/jig-skills`.
 
-Use `scripts/jig agent doctor` to report whether the local Codex installation can use the configured marketplace and to show diagnostic plugin enablement flags. Add `--summary` for human-readable readiness output; omit it for stable JSON automation output. `agent doctor` exits nonzero until required setup is complete. The top-level `ok` result requires Codex marketplace support and registered marketplace sources; plugin enablement is reported separately because the supported Codex bootstrap path is marketplace registration. Use `scripts/jig agent bootstrap` to run `codex plugin marketplace add` when exactly one marketplace is configured. If multiple marketplaces are configured, `agent bootstrap` requires `--marketplace <source>` so a repo cannot install several user-level Codex marketplaces by default. `agent bootstrap` mutates user-level Codex config, so it is intentionally separate from the project-owned `bootstrap_command`.
+Use `scripts/jig doctor` as the first readiness check for a repo. It reports the pinned runtime, `.jig.toml`, contract validity, required command executables, agent skills, proxy status, vault status, and the next setup command. Use `scripts/jig agent doctor` when you only need to report whether the local Codex installation can use the configured marketplace and to show diagnostic plugin enablement flags. Add `--summary` for human-readable readiness output; omit it for stable JSON automation output. `agent doctor` exits nonzero until required setup is complete. The agent check requires Codex marketplace support and registered marketplace sources; plugin enablement is reported separately because the supported Codex bootstrap path is marketplace registration. Use `scripts/jig agent bootstrap` to run `codex plugin marketplace add` when exactly one marketplace is configured. If multiple marketplaces are configured, `agent bootstrap` requires `--marketplace <source>` so a repo cannot install several user-level Codex marketplaces by default. `agent bootstrap` mutates user-level Codex config, so it is intentionally separate from the project-owned `bootstrap_command`.
 
 Omitting `agent_tooling`, `agent_tooling.codex`, or `agent_tooling.codex.marketplaces` uses the default Jig skills marketplace. Set `marketplaces = []` to opt out explicitly. In `agent doctor` output, `codex.available` is `true` or `false` when Codex is required, and `null` when the Codex probe is skipped because `marketplaces = []`.
 
@@ -131,7 +131,7 @@ tool = "jig.test"
 
 `kind: check` gates must reference execution tool names declared in `.agent/jig-contract.json`. `scripts/jig work check --plan-id ...` runs configured check gates in order unless one or more `--tool` values are passed explicitly. Add `--summary` for concise terminal output; JSON remains the default automation output.
 
-`scripts/jig work gates --plan-id ...` reports each configured gate as `passed`, `missing`, `failed`, `stale`, `unknown`, or `unsupported`. Add `--summary` for the human scan path. `scripts/jig work finish --plan-id ...` refuses to close work while required gates are missing, failed, stale, unknown, or unsupported. Check gate freshness is based on the non-`.agent/` worktree fingerprint from the latest check or check-batch receipt that proves the gate.
+`scripts/jig work gates --plan-id ...` reports each configured gate as `passed`, `missing`, `failed`, `stale`, `unknown`, or `unsupported`. Add `--summary` for the human scan path. `scripts/jig work evidence --summary` is the higher-level human view: it shows the latest gate evidence per tool, whether the proving receipt matches the current worktree, changed paths covered by the receipt, and the exact stale or unknown freshness reason. For `work gates` and `work evidence`, top-level `ok: true` means the inspection command completed; read `overall`, `gates_ok`, and each gate `status` to decide whether work is blocked. Receipt `changed_paths` are repo-relative names from `git status --short`; they can include `.agent/` state paths and untracked filenames, so do not treat receipt JSON as secret-free metadata if local filenames are sensitive. `scripts/jig work finish --plan-id ...` refuses to close work while required gates are missing, failed, stale, unknown, or unsupported. Check gate freshness is based on the non-`.agent/` worktree fingerprint from the latest check or check-batch receipt that proves the gate.
 
 Required check gates should not create or modify non-`.agent/` files during `work check`. Build outputs, generated metadata, and lockfiles should be committed when they are source-of-truth, ignored when they are disposable, or generated before running the fingerprinted check. If a check does intentionally settle generated files, rerun `scripts/jig work check --plan-id ...` after reviewing those changes so the gate evidence matches the final worktree.
 
@@ -329,13 +329,15 @@ Quick start:
 scripts/jig vault init
 scripts/jig vault secret set api_token --value-prompt
 scripts/jig vault run --env TOKEN=api_token -- sh -c 'printf "%s\n" "$TOKEN"'
+scripts/jig vault run --file TOKEN_FILE=api_token -- sh -c 'cat "$TOKEN_FILE"'
 scripts/jig vault audit verify
 ```
 
 At a glance:
 
 - Terminal commands prompt for the vault passphrase; non-interactive commands use `JIG_VAULT_PASSPHRASE`.
-- `vault secret set --value-prompt` is the human entry path; `--value-stdin` is the byte-exact automation path for piped or redirected stdin.
+- `vault secret set NAME` defaults to the hidden prompt when run from an interactive terminal; `--value-stdin` is the byte-exact automation path for piped or redirected stdin.
+- On Unix, `vault run --file VAR=SECRET` writes a secret to a private `0600` temporary file and passes the path through `VAR`; non-Unix platforms reject `--file`.
 - `vault run` returns redacted JSON and mirrors the child process exit status, but output is buffered before display.
 - Vault reduces accidental secret exposure; it is not a child-process sandbox.
 
@@ -343,7 +345,7 @@ At a glance:
 
 Keep `JIG_VAULT_PASSPHRASE` exported or re-export it for every non-interactive command that unlocks the vault, including `secret list`, `run`, and `audit verify`; `vault status` is the only vault command that does not require the passphrase. `vault status` is a non-creating probe: it refuses a symlinked vault home, but it does not create missing directories or tighten permissions. Its `exists` and `vault_file_exists` fields report whether `vault.json` exists, not whether the home directory exists.
 
-The vault file is encrypted at rest with a passphrase-derived wrapping key and a random data-encryption key. Secret listing commands return names and metadata, never values. `scripts/jig vault secret set NAME --value-prompt` stores a hidden UTF-8 terminal entry without a trailing newline. `scripts/jig vault secret set NAME --value-stdin` requires piped or redirected stdin and stores those bytes exactly as provided, including a trailing newline from commands such as `echo`; use `printf` when the newline is not part of the secret. Secret values must be between 4 bytes and 1 MiB so redaction can match them safely without unbounded local memory use. `scripts/jig vault run --env VAR=SECRET -- <command>` resolves named secrets, starts a child process with a cleaned environment plus the requested secret variables, captures stdout and stderr, and redacts known secret forms before returning JSON. Environment injection necessarily gives the standard library and child process an OS-owned environment copy that Jig cannot zeroize afterward. Each captured stream is capped at 1 MiB; exceeding the cap fails the brokered run instead of buffering unbounded output. The cleaned environment preserves only a small allowlist of process basics and locale variables, not arbitrary `LC_*`, `SSH_AUTH_SOCK`, `XDG_*`, or `TZ` variables; the child uses the preserved `PATH` inherited by the `jig` process to resolve command names. `vault run --env` rejects mappings that would overwrite preserved environment variables such as `PATH`, `HOME`, `TMPDIR`, or locale variables. The broker does not sandbox the child's filesystem view. Environment variable names must match `[A-Za-z_][A-Za-z0-9_]*`. Environment injection requires UTF-8 secret values; binary values need a future file-delivery mode.
+The vault file is encrypted at rest with a passphrase-derived wrapping key and a random data-encryption key. Secret listing commands return names and metadata, never values. `scripts/jig vault secret set NAME` defaults to hidden UTF-8 terminal entry without a trailing newline when run interactively; pass `--value-prompt` to request that path explicitly. `scripts/jig vault secret set NAME --value-stdin` requires piped or redirected stdin and stores those bytes exactly as provided, including a trailing newline from commands such as `echo`; use `printf` when the newline is not part of the secret. Non-interactive `secret set NAME` without `--value-stdin` fails instead of waiting for input. Secret values must be between 4 bytes and 1 MiB so redaction can match them safely without unbounded local memory use. `scripts/jig vault run --env VAR=SECRET -- <command>` resolves named secrets, starts a child process with a cleaned environment plus the requested secret variables, captures stdout and stderr, and redacts known secret forms before returning JSON. On Unix, `scripts/jig vault run --file VAR=SECRET -- <command>` writes each requested secret to a private temporary file with mode `0600`, injects the file path as `VAR`, and removes the temp directory when the brokered process exits normally through Jig; abrupt process termination such as `SIGKILL` can leave temp files behind for OS temp cleanup. Non-Unix platforms reject `--file` because Jig cannot guarantee equivalent secret-file permissions there; use `--env` or a platform-specific wrapper instead. Environment injection necessarily gives the standard library and child process an OS-owned environment copy that Jig cannot zeroize afterward. File delivery keeps the value out of the environment but still gives the child filesystem access to the secret bytes while it runs. Each captured stream is capped at 1 MiB; exceeding the cap fails the brokered run instead of buffering unbounded output. The cleaned environment preserves only a small allowlist of process basics and locale variables, not arbitrary `LC_*`, `SSH_AUTH_SOCK`, `XDG_*`, or `TZ` variables; the child uses the preserved `PATH` inherited by the `jig` process to resolve command names. `vault run --env` and `vault run --file` reject mappings that would overwrite preserved environment variables such as `PATH`, `HOME`, `TMPDIR`, or locale variables. The broker does not sandbox the child's filesystem view. Environment variable names must match `[A-Za-z_][A-Za-z0-9_]*`.
 
 `vault run` buffers the child process' full stdout and stderr before displaying them because redaction is applied to the captured output. This keeps v1 redaction simple but means long-running commands do not stream output. Redaction can allocate intermediate output buffers that are not zeroized; it is a safety net for displayed output, not an in-memory secrecy boundary. The child is non-interactive: stdin is closed/null, so commands that prompt for input should fail or hang instead of asking the operator. A non-zero child exit is returned in the JSON result and the Jig CLI exits with that child status code, clamped to the portable process-exit range after vault runtime values have unwound through `main`. On Unix, signal-terminated children report both `exit_signal` and shell-style `128 + signal` status.
 
@@ -361,6 +363,7 @@ Useful commands:
 - `scripts/jig vault secret remove api_token`
 - `scripts/jig vault audit verify`
 - `scripts/jig vault run --env TOKEN=api_token -- sh -c 'printf "%s\n" "$TOKEN"'`
+- `scripts/jig vault run --file TOKEN_FILE=api_token -- sh -c 'cat "$TOKEN_FILE"'`
 
 ## Generated Contract
 
@@ -406,6 +409,8 @@ message before preparing the runtime needed to render command help.
 
 It also provides runtime-owned append-only memory under `.agent/state/*.jsonl` through the structured work namespace:
 
+- `scripts/jig doctor`
+- `scripts/jig doctor --summary`
 - `scripts/jig agent doctor`
 - `scripts/jig agent doctor --summary`
 - `scripts/jig agent bootstrap`
@@ -416,6 +421,8 @@ It also provides runtime-owned append-only memory under `.agent/state/*.jsonl` t
 - `scripts/jig work check --plan-id ... --summary`
 - `scripts/jig work gates --plan-id ...`
 - `scripts/jig work gates --plan-id ... --summary`
+- `scripts/jig work evidence --summary`
+- `scripts/jig work evidence --plan-id ... --summary`
 - `scripts/jig work decide --plan-id ...`
 - `scripts/jig work receipts --plan-id ...`
 - `scripts/jig work receipts --plan-id ... --summary`

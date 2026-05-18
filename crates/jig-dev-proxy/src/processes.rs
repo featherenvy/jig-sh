@@ -12,7 +12,7 @@ use std::sync::atomic::AtomicBool;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
 
 use crate::certs;
@@ -69,7 +69,7 @@ pub(crate) fn run_app(
             Ok(token) => token,
             Err(error) => {
                 terminate_child(&mut child);
-                let _ = child.wait();
+                wait_after_terminate(&mut child);
                 return Err(error);
             }
         }
@@ -79,14 +79,14 @@ pub(crate) fn run_app(
     if spec.proxy {
         let Some(owner_start_token) = owner_start_token else {
             terminate_child(&mut child);
-            let _ = child.wait();
+            wait_after_terminate(&mut child);
             bail!(
                 "Could not verify start identity for child process {pid}; refusing to publish process route"
             );
         };
         let Some((hostname, target_host)) = route_parts else {
             terminate_child(&mut child);
-            let _ = child.wait();
+            wait_after_terminate(&mut child);
             bail!(
                 "Could not prepare process route for child process {pid}; refusing to publish route"
             );
@@ -110,25 +110,30 @@ pub(crate) fn run_app(
             )
         }) {
             terminate_child(&mut child);
-            let _ = child.wait();
+            wait_after_terminate(&mut child);
             return Err(error);
         }
     }
 
-    if let Err(error) = print_app_url(&spec, settings, port, &store) {
-        terminate_child(&mut child);
-        let _ = child.wait();
-        if spec.proxy {
-            let _ = store.remove_route(&spec.hostname);
+    let display = match app_display(&spec, settings, port, pid, &store) {
+        Ok(display) => display,
+        Err(error) => {
+            terminate_child(&mut child);
+            wait_after_terminate(&mut child);
+            if spec.proxy {
+                remove_route_best_effort(&store, &spec.hostname, &spec.name);
+            }
+            return Err(error);
         }
-        return Err(error);
-    }
+    };
+    print_dev_table(std::slice::from_ref(&display));
+
     let status = loop {
         if ctrl_c_requested() {
             terminate_child(&mut child);
-            let _ = child.wait();
+            wait_after_terminate(&mut child);
             if spec.proxy {
-                let _ = store.remove_route(&spec.hostname);
+                remove_route_best_effort(&store, &spec.hostname, &spec.name);
             }
             bail!("Interrupted");
         }
@@ -137,10 +142,10 @@ pub(crate) fn run_app(
             Ok(None) => thread::sleep(Duration::from_millis(100)),
             Err(error) => {
                 if spec.proxy {
-                    let _ = store.remove_route(&spec.hostname);
+                    remove_route_best_effort(&store, &spec.hostname, &spec.name);
                 }
                 terminate_child(&mut child);
-                let _ = child.wait();
+                wait_after_terminate(&mut child);
                 return Err(error.into());
             }
         }
@@ -185,6 +190,7 @@ pub(crate) fn run_apps(
     let mut children = Vec::new();
     let mut routes = Vec::new();
     let mut assigned_ports = HashSet::new();
+    let mut display_rows = Vec::new();
 
     for spec in specs {
         let route_parts = if spec.proxy {
@@ -224,7 +230,7 @@ pub(crate) fn run_apps(
                 Ok(token) => token,
                 Err(error) => {
                     terminate_child(&mut child);
-                    let _ = child.wait();
+                    wait_after_terminate(&mut child);
                     cleanup_children(&mut children);
                     return Err(error);
                 }
@@ -234,7 +240,7 @@ pub(crate) fn run_apps(
         };
         if spec.proxy && owner_start_token.is_none() {
             terminate_child(&mut child);
-            let _ = child.wait();
+            wait_after_terminate(&mut child);
             cleanup_children(&mut children);
             bail!(
                 "Could not verify start identity for child process {child_pid}; refusing to publish process route"
@@ -243,7 +249,7 @@ pub(crate) fn run_apps(
         if spec.proxy {
             let Some((hostname, target_host)) = route_parts else {
                 terminate_child(&mut child);
-                let _ = child.wait();
+                wait_after_terminate(&mut child);
                 cleanup_children(&mut children);
                 bail!(
                     "Could not prepare process route for child process {child_pid}; refusing to publish route"
@@ -268,21 +274,25 @@ pub(crate) fn run_apps(
                 )
             }) {
                 terminate_child(&mut child);
-                let _ = child.wait();
+                wait_after_terminate(&mut child);
                 cleanup_children(&mut children);
                 return Err(error);
             }
             routes.push(route);
         }
-        if let Err(error) = print_app_url(&spec, settings, port, &store) {
-            terminate_child(&mut child);
-            let _ = child.wait();
-            if spec.proxy {
-                let _ = store.remove_route(&spec.hostname);
+        let display = match app_display(&spec, settings, port, child_pid, &store) {
+            Ok(display) => display,
+            Err(error) => {
+                terminate_child(&mut child);
+                wait_after_terminate(&mut child);
+                if spec.proxy {
+                    remove_route_best_effort(&store, &spec.hostname, &spec.name);
+                }
+                cleanup_children(&mut children);
+                return Err(error);
             }
-            cleanup_children(&mut children);
-            return Err(error);
-        }
+        };
+        display_rows.push(display);
         children.push(RunningChild {
             name: spec.name,
             hostname: spec.hostname,
@@ -292,6 +302,8 @@ pub(crate) fn run_apps(
             cleanup_armed: true,
         });
     }
+
+    print_dev_table(&display_rows);
 
     let mut first_exit = None;
     let mut proxy_stopped = false;
@@ -352,7 +364,9 @@ fn prepare_certs_for_hosts(settings: &ProxySettings, hostnames: &[String]) -> Re
     if !settings.https {
         return Ok(());
     }
-    certs::ensure_for_hosts(settings, hostnames)?;
+    certs::ensure_for_hosts(settings, hostnames).with_context(|| {
+        "Failed to prepare HTTPS proxy certificates. Likely fix: run `scripts/jig proxy cert generate --force`, trust the CA with `scripts/jig proxy cert trust --accept-trust-scope`, or disable [dev].https for HTTP-only local development."
+    })?;
     Ok(())
 }
 
@@ -363,10 +377,14 @@ fn validate_explicit_ports(specs: &[AppRunSpec]) -> Result<()> {
             continue;
         };
         if port == 0 {
-            bail!("Explicit development app ports must be greater than 0");
+            bail!(
+                "Explicit development app ports must be greater than 0. Likely fix: remove the [[dev.apps]].port override or set it to an available nonzero port."
+            );
         }
         if !explicit_ports.insert(port) {
-            bail!("Multiple development apps requested port {port}");
+            bail!(
+                "Multiple development apps requested port {port}. Likely fix: assign each [[dev.apps]] entry a unique port or remove explicit port overrides."
+            );
         }
     }
     Ok(())
@@ -395,16 +413,15 @@ fn process_route_parts(
     spec: &AppRunSpec,
 ) -> Result<(RouteHostname, TargetHost)> {
     let hostname = RouteHostname::new(&spec.hostname)?;
-    let target_host = TargetHost::ip_literal(&spec.target_host).map_err(|_| {
-        anyhow!(
+    let target_host = TargetHost::ip_literal(&spec.target_host).with_context(|| {
+        format!(
             "Process route '{}' target host '{}' must be an IP literal",
-            spec.name,
-            spec.target_host
+            spec.name, spec.target_host
         )
     })?;
     if settings.lan && !target_host_is_loopback(&spec.target_host) {
         bail!(
-            "LAN process route '{}' may only target loopback IP literals. Refusing to expose '{}' through the LAN listener.",
+            "LAN process route '{}' may only target loopback IP literals. Refusing to expose '{}' through the LAN listener. Likely fix: bind the app to 127.0.0.1 and let Jig proxy LAN traffic, or disable [dev].lan.",
             spec.name,
             spec.target_host
         );
@@ -432,10 +449,13 @@ fn spawn_child(
         // the app to loopback. Vite's internal allowed-hosts escape hatch keeps
         // routed dev hostnames working while still injecting --host 127.0.0.1;
         // keep this isolated because Vite can rename the variable.
-        command.env(
-            "__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS",
-            vite_allowed_hosts(spec, settings)?,
-        );
+        let allowed_hosts = vite_allowed_hosts(spec, settings).with_context(|| {
+            format!(
+                "Failed to configure Vite allowed hosts for app '{}'. Likely fix: keep [dev].tld and the app route hostname as valid DNS names, or set [[dev.apps]].kind to env-port for non-Vite commands.",
+                spec.name
+            )
+        })?;
+        command.env("__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS", allowed_hosts);
     }
     command
         .stdin(Stdio::inherit())
@@ -443,14 +463,48 @@ fn spawn_child(
         .stderr(Stdio::inherit());
     command.spawn().map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
-            anyhow!(
-                "Failed to run command '{}': executable was not found in PATH",
-                argv[0]
-            )
+            anyhow::Error::new(error).context(format!(
+                "Failed to run command '{}' for dev app '{}' in {}: executable was not found in PATH. Likely fix: run the repo bootstrap command or install the package manager/tool used by [[dev.apps]].argv.",
+                argv[0],
+                spec.name,
+                spec.dir.display()
+            ))
         } else {
-            anyhow!("Failed to run command '{}': {error}", argv[0])
+            anyhow::Error::new(error).context(format!(
+                "Failed to run command '{}' for dev app '{}' in {}. Likely fix: run the repo bootstrap command and verify [[dev.apps]].dir and argv.",
+                argv[0],
+                spec.name,
+                spec.dir.display()
+            ))
         }
     })
+}
+
+fn wait_after_terminate(child: &mut Child) {
+    // Cleanup paths keep the original startup/watch error as primary. Waiting
+    // here only tries to reap the terminated child; failures are not actionable
+    // after terminate_child has already performed the best-effort kill/escalation.
+    // If the child is still present after the deadline, process exit will reap
+    // it; this path must not block the user-facing startup error.
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline {
+        match child.try_wait() {
+            Ok(Some(_)) => return,
+            Ok(None) => thread::sleep(Duration::from_millis(20)),
+            Err(error) => {
+                eprintln!("jig proxy could not reap terminated child process: {error}");
+                return;
+            }
+        }
+    }
+}
+
+fn remove_route_best_effort(store: &StateStore, hostname: &str, app_name: &str) {
+    if let Err(error) = store.remove_route(hostname) {
+        eprintln!(
+            "jig proxy could not remove route '{hostname}' while cleaning up app '{app_name}': {error}"
+        );
+    }
 }
 
 #[cfg(unix)]
@@ -484,30 +538,47 @@ fn choose_app_port(
 ) -> Result<u16> {
     let port = if let Some(port) = explicit {
         if port == 0 {
-            bail!("Explicit development app ports must be greater than 0");
+            bail!(
+                "Explicit development app ports must be greater than 0. Likely fix: remove the [[dev.apps]].port override or set it to an available nonzero port."
+            );
         }
         if assigned_ports.contains(&port) {
-            bail!("Multiple development apps requested port {port}");
+            bail!(
+                "Multiple development apps requested port {port}. Likely fix: assign each [[dev.apps]] entry a unique port or remove explicit port overrides."
+            );
         }
         if !port_is_free(target_host, port)? {
-            bail!("Requested development app port {port} is already in use on {target_host}");
+            bail!(
+                "Requested development app port {port} is already in use on {target_host}. Likely fix: stop the process using that port or configure a different [[dev.apps]].port."
+            );
         }
         port
     } else {
         find_free_app_port_excluding(target_host, assigned_ports)?
     };
     if !assigned_ports.insert(port) {
-        bail!("Multiple development apps requested port {port}");
+        bail!(
+            "Multiple development apps requested port {port}. Likely fix: retry the dev command or assign explicit unique [[dev.apps]].port values."
+        );
     }
     Ok(port)
 }
 
-fn print_app_url(
+#[derive(Clone, Debug)]
+struct AppDisplay {
+    name: String,
+    url: String,
+    pid: u32,
+    lan_note: Option<String>,
+}
+
+fn app_display(
     spec: &AppRunSpec,
     settings: &ProxySettings,
     port: u16,
+    pid: u32,
     store: &StateStore,
-) -> Result<()> {
+) -> Result<AppDisplay> {
     if spec.proxy {
         let (scheme, proxy_port) = if settings.https {
             store
@@ -523,24 +594,80 @@ fn print_app_url(
                 store.read_http_port()?.unwrap_or(settings.http_port),
             )
         };
-        eprintln!("{} -> {scheme}://{}:{proxy_port}", spec.name, spec.hostname);
-        if settings.lan {
+        let lan_note = if settings.lan {
             if let Some(ip) = local_lan_ip_for_ipv4_listener() {
-                eprintln!(
+                Some(format!(
                     "{} LAN -> {scheme}://{}:{} with Host header {} or a local DNS/hosts entry",
                     spec.name, ip, proxy_port, spec.hostname
-                );
+                ))
             } else {
-                eprintln!(
+                Some(format!(
                     "{} LAN -> no non-loopback IPv4 LAN address detected for the IPv4 listener; configure DNS/hosts once an address is available",
                     spec.name
-                );
+                ))
             }
-        }
-        return Ok(());
+        } else {
+            None
+        };
+        return Ok(AppDisplay {
+            name: spec.name.clone(),
+            url: format!("{scheme}://{}:{proxy_port}", spec.hostname),
+            pid,
+            lan_note,
+        });
     }
-    eprintln!("{} -> http://{}:{port}", spec.name, spec.target_host);
-    Ok(())
+    Ok(AppDisplay {
+        name: spec.name.clone(),
+        url: format!("http://{}:{port}", spec.target_host),
+        pid,
+        lan_note: None,
+    })
+}
+
+fn print_dev_table(rows: &[AppDisplay]) {
+    for line in format_dev_table(rows) {
+        eprintln!("{line}");
+    }
+    for note in rows.iter().filter_map(|row| row.lan_note.as_deref()) {
+        eprintln!("{note}");
+    }
+}
+
+fn format_dev_table(rows: &[AppDisplay]) -> Vec<String> {
+    if rows.is_empty() {
+        return Vec::new();
+    }
+    let name_width = rows
+        .iter()
+        .map(|row| row.name.len())
+        .max()
+        .unwrap_or(3)
+        .max(3);
+    let url_width = rows
+        .iter()
+        .map(|row| row.url.len())
+        .max()
+        .unwrap_or(3)
+        .max(3);
+    const RUNNING_STATUS: &str = "running";
+    let status_width = RUNNING_STATUS.len().max("STATUS".len());
+    let pid_width = rows
+        .iter()
+        .map(|row| row.pid.to_string().len())
+        .max()
+        .unwrap_or(3)
+        .max(3);
+    let mut lines = vec![format!(
+        "{:<name_width$}  {:<url_width$}  {:<status_width$}  {:>pid_width$}",
+        "APP", "URL", "STATUS", "PID"
+    )];
+    for row in rows {
+        lines.push(format!(
+            "{:<name_width$}  {:<url_width$}  {:<status_width$}  {:>pid_width$}",
+            row.name, row.url, RUNNING_STATUS, row.pid
+        ));
+    }
+    lines
 }
 
 #[cfg(test)]

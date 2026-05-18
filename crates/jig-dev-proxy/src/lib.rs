@@ -112,16 +112,13 @@ pub fn proxy_stop(request: ProxyStopRequest) -> Result<Value> {
         }));
     }
     let store = StateStore::resolve(request.settings.state_dir.clone())?;
-    let pid = store.read_pid()?;
-    let pid_alive = pid.is_some_and(pid_is_alive);
-    let probed_http_port = store.read_http_port()?;
-    let health_token = store.read_health_token()?;
-    let health_pid = probed_http_port
-        .and_then(|port| jig_proxy_http_pid("127.0.0.1", port, health_token.as_deref()));
-    let handshake_ok = health_pid.is_some();
-    let pid_matches_proxy = pid
-        .zip(health_pid)
-        .is_some_and(|(pid, health_pid)| pid == health_pid);
+    let status = proxy_runtime_status(&store)?;
+    let pid = status.pid;
+    let pid_alive = status.pid_alive;
+    let probed_http_port = status.http_port;
+    let health_pid = status.health_pid;
+    let handshake_ok = status.handshake_ok;
+    let pid_matches_proxy = status.pid_matches_proxy;
     let mut stopped = false;
     if let Some(pid) = pid {
         if pid_alive && pid_matches_proxy {
@@ -181,10 +178,15 @@ fn stop_warning(
         ));
     }
     if pid_alive && handshake_ok && !pid_matches_proxy {
+        let Some(health_pid) = health_pid else {
+            return Some(format!(
+                "A Jig proxy answered the stored health check, but the health response did not include a PID while the PID file points at {}. Runtime files were kept to avoid terminating an unrelated process.",
+                pid
+            ));
+        };
         return Some(format!(
             "A Jig proxy answered on the stored port as PID {}, but the PID file points at {}. Runtime files were kept to avoid terminating an unrelated process; use the matching JIG_PROXY_STATE_DIR or stop the other proxy explicitly.",
-            health_pid.unwrap_or_default(),
-            pid
+            health_pid, pid
         ));
     }
     if pid_alive && handshake_ok {
@@ -207,20 +209,50 @@ fn terminate_proxy_pid(pid: u32) -> bool {
     let Some(unix_pid) = unix_pid(pid) else {
         return false;
     };
-    signal_proxy_pid(unix_pid, libc::SIGTERM);
-    if wait_for_pid_exit(pid, Duration::from_secs(2)) {
-        return true;
+    match signal_proxy_pid(unix_pid, libc::SIGTERM) {
+        SignalResult::Sent => {
+            if wait_for_pid_exit(pid, Duration::from_secs(2)) {
+                return true;
+            }
+        }
+        SignalResult::NotFound => return true,
+        SignalResult::Failed => {}
     }
-    signal_proxy_pid(unix_pid, libc::SIGKILL);
-    wait_for_pid_exit(pid, Duration::from_secs(1))
+    match signal_proxy_pid(unix_pid, libc::SIGKILL) {
+        SignalResult::Sent => wait_for_pid_exit(pid, Duration::from_secs(1)),
+        SignalResult::NotFound => true,
+        SignalResult::Failed => false,
+    }
 }
 
 #[cfg(unix)]
-fn signal_proxy_pid(pid: i32, signal: i32) {
-    unsafe {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SignalResult {
+    Sent,
+    NotFound,
+    Failed,
+}
+
+#[cfg(unix)]
+fn signal_proxy_pid(pid: i32, signal: i32) -> SignalResult {
+    let result = unsafe {
         // SAFETY: pid was range-checked by unix_pid and signal is one of the
         // libc constants used for process termination.
-        let _ = libc::kill(pid, signal);
+        libc::kill(pid, signal)
+    };
+    if result == 0 {
+        SignalResult::Sent
+    } else {
+        classify_signal_error(std::io::Error::last_os_error().raw_os_error())
+    }
+}
+
+#[cfg(unix)]
+fn classify_signal_error(raw_os_error: Option<i32>) -> SignalResult {
+    if raw_os_error == Some(libc::ESRCH) {
+        SignalResult::NotFound
+    } else {
+        SignalResult::Failed
     }
 }
 
@@ -281,6 +313,12 @@ pub fn proxy_list(request: ProxyListRequest) -> Result<Value> {
             "state_dir": path,
             "http_port": null,
             "https_port": null,
+            "pid": null,
+            "pid_alive": false,
+            "health_pid": null,
+            "handshake_ok": false,
+            "pid_matches_proxy": false,
+            "running": false,
             "proxy_exe": null,
             "proxy_exe_note": null,
             "proxy_exe_warning": null,
@@ -291,6 +329,10 @@ pub fn proxy_list(request: ProxyListRequest) -> Result<Value> {
     let store = StateStore::resolve(request.settings.state_dir.clone())?;
     let routes = store.read_routes(!request.raw)?;
     let proxy_exe = store.read_proxy_exe_status()?;
+    let status = proxy_runtime_status(&store)?;
+    // HTTP is the identity and health-check port. HTTPS is informational state
+    // for clients that want to display the TLS listener.
+    let https_port = store.read_https_port()?;
     let proxy_exe_note = if proxy_exe.path.is_some() || proxy_exe.warning.is_some() {
         Some(proxy_exe_note())
     } else {
@@ -299,14 +341,51 @@ pub fn proxy_list(request: ProxyListRequest) -> Result<Value> {
     Ok(json!({
         "ok": true,
         "state_dir": store.root(),
-        "http_port": store.read_http_port()?,
-        "https_port": store.read_https_port()?,
+        "http_port": status.http_port,
+        "https_port": https_port,
+        "pid": status.pid,
+        "pid_alive": status.pid_alive,
+        "health_pid": status.health_pid,
+        "handshake_ok": status.handshake_ok,
+        "pid_matches_proxy": status.pid_matches_proxy,
+        "running": status.handshake_ok && status.pid_matches_proxy,
         "proxy_exe": proxy_exe.path,
         "proxy_exe_note": proxy_exe_note,
         "proxy_exe_warning": proxy_exe.warning,
         "raw": request.raw,
         "routes": routes,
     }))
+}
+
+#[derive(Debug)]
+struct ProxyRuntimeStatus {
+    pid: Option<u32>,
+    pid_alive: bool,
+    http_port: Option<u16>,
+    health_pid: Option<u32>,
+    handshake_ok: bool,
+    pid_matches_proxy: bool,
+}
+
+fn proxy_runtime_status(store: &StateStore) -> Result<ProxyRuntimeStatus> {
+    let pid = store.read_pid()?;
+    let pid_alive = pid.is_some_and(pid_is_alive);
+    let http_port = store.read_http_port()?;
+    let health_token = store.read_health_token()?;
+    let health_pid =
+        http_port.and_then(|port| jig_proxy_http_pid("127.0.0.1", port, health_token.as_deref()));
+    let handshake_ok = health_pid.is_some();
+    let pid_matches_proxy = pid
+        .zip(health_pid)
+        .is_some_and(|(pid, health_pid)| pid == health_pid);
+    Ok(ProxyRuntimeStatus {
+        pid,
+        pid_alive,
+        http_port,
+        health_pid,
+        handshake_ok,
+        pid_matches_proxy,
+    })
 }
 
 fn proxy_exe_note() -> &'static str {
@@ -444,18 +523,25 @@ fn missing_state_dir(settings: &ProxySettings) -> Result<Option<std::path::PathB
     Ok((!path.exists()).then_some(path))
 }
 
+// Keep these helpers public for the sibling `jig` crate's config translation,
+// but hide them from the documented facade. The supported external surface is
+// the request/command API.
+#[doc(hidden)]
 pub fn app_hostname(name: &str, repo_name: &str, tld: &str) -> Result<String> {
     host::route_hostname(name, repo_name, tld)
 }
 
+#[doc(hidden)]
 pub fn dns_label(value: &str) -> Result<String> {
     host::sanitize_label(value)
 }
 
+#[doc(hidden)]
 pub fn validate_tld(tld: &str) -> Result<()> {
     host::validate_tld(tld)
 }
 
+#[doc(hidden)]
 pub fn ip_is_loopback(ip: IpAddr) -> bool {
     host::ip_is_loopback(ip)
 }
@@ -489,6 +575,7 @@ fn validate_alias_target_host(host: &str) -> Result<IpAddr> {
         .with_context(|| format!("Proxy alias target host '{host}' must be an IP literal"))
 }
 
+#[doc(hidden)]
 pub fn parse_ip_literal(host: &str) -> Result<IpAddr> {
     host.parse::<IpAddr>()
         .with_context(|| format!("target host '{host}' must be an IP literal"))

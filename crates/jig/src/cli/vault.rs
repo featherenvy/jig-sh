@@ -6,12 +6,15 @@ use crate::tool_defs;
 
 const VAULT_RUN_AFTER_HELP: &str = "\
 The brokered command must come after --. Secrets are resolved from the local
-vault and injected only into the child process environment. Output is buffered,
+vault and injected only into the child process environment. File delivery is
+Unix-only because Jig requires 0600 secret-file permissions. Output is buffered,
 then redacted. Stdout and stderr are capped at 1 MiB each; brokered runs have a
 30-minute timeout.
 
 Examples:
-  jig vault run --env TOKEN=api_token -- sh -c 'printf \"%s\" \"$TOKEN\"'";
+  jig vault run --env TOKEN=api_token -- sh -c 'printf \"%s\" \"$TOKEN\"'
+  jig vault run --file TOKEN_FILE=api_token -- sh -c 'cat \"$TOKEN_FILE\"'
+  jig vault run --summary --env TOKEN=api_token -- sh -c 'printf \"%s\" \"$TOKEN\"'";
 
 const VAULT_INIT_AFTER_HELP: &str = "\
 Jig prompts twice for a new vault passphrase when run from a terminal. Scripts
@@ -22,11 +25,13 @@ Examples:
   jig vault init";
 
 const VAULT_SECRET_SET_AFTER_HELP: &str = "\
-Use --value-prompt for hidden terminal input, or --value-stdin for automation.
-Stdin must be piped or redirected and is read byte-for-byte; use printf instead
-of echo when a trailing newline is not part of the secret.
+Terminal use defaults to hidden input. Pass --value-prompt explicitly for the
+same behavior, or --value-stdin for automation. Stdin must be piped or
+redirected and is read byte-for-byte; use printf instead of echo when a
+trailing newline is not part of the secret.
 
 Examples:
+  jig vault secret set api_token
   jig vault secret set api_token --value-prompt
   printf '%s' 'secret-value' | jig vault secret set api_token --value-stdin";
 
@@ -111,7 +116,6 @@ pub(crate) struct VaultSecretListOpts {
 #[derive(Args, Debug)]
 #[command(group(
     ArgGroup::new("value_source")
-        .required(true)
         .args(["value_stdin", "value_prompt"])
 ))]
 pub(crate) struct VaultSecretSetOpts {
@@ -142,13 +146,25 @@ pub(crate) struct VaultSecretRemoveOpts {
 }
 
 #[derive(Args, Debug)]
+#[command(group(
+    ArgGroup::new("secret_source")
+        .args(["env", "files"])
+        .required(true)
+        .multiple(true)
+))]
 pub(crate) struct VaultRunOpts {
+    #[arg(long, help = "Print a concise human-readable brokered run summary")]
+    pub(crate) summary: bool,
     #[arg(
         long = "env",
-        required = true,
         help = "Environment mapping VAR=SECRET_NAME; VAR must match [A-Za-z_][A-Za-z0-9_]* and must not be a preserved process variable such as PATH or HOME; may be repeated"
     )]
     pub(crate) env: Vec<String>,
+    #[arg(
+        long = "file",
+        help = "File mapping VAR=SECRET_NAME; writes the secret to a private temp file (0600 on Unix) and injects its path as VAR; may be repeated"
+    )]
+    pub(crate) files: Vec<String>,
     #[command(flatten)]
     pub(crate) vault: VaultRuntimeOpts,
     #[arg(

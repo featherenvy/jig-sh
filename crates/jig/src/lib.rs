@@ -5,6 +5,7 @@ mod command;
 mod context;
 #[cfg(feature = "dev-proxy")]
 mod dev_proxy;
+mod doctor;
 #[cfg(not(feature = "dev-proxy"))]
 mod dev_proxy {
     // Keep the CLI surface parseable in `--no-default-features` binaries while
@@ -42,12 +43,14 @@ mod dev_proxy {
     }
 }
 mod git_receipts;
+mod info;
 mod mcp;
 mod policy;
 mod process;
 mod progress;
 mod runtime;
 mod serde_helpers;
+mod shell;
 mod state;
 #[cfg(test)]
 mod test_env;

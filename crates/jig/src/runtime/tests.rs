@@ -49,6 +49,7 @@ fn dispatch_vault_run_injects_redacts_and_verifies_audit() {
     let output = dispatch_vault(crate::command::VaultCommand::Run(
         crate::command::VaultRunRequest {
             env: vec!["TOKEN=api_token".into()],
+            files: Vec::new(),
             command: vec![
                 "sh".into(),
                 "-c".into(),
@@ -83,6 +84,49 @@ fn dispatch_vault_run_injects_redacts_and_verifies_audit() {
     assert_eq!(verification["event_count"].as_u64().unwrap(), 4);
 }
 
+#[cfg(unix)]
+#[test]
+fn dispatch_vault_run_delivers_secret_file() {
+    let _env = lock_env();
+    let temp = tempdir().unwrap();
+    let vault_home = temp.path().join("vault");
+    let passphrase = "correct horse battery staple";
+    let _passphrase = EnvVarGuard::set("JIG_VAULT_PASSPHRASE", passphrase);
+    capture_vault_passphrase().unwrap();
+    let vault = Vault::resolve(Some(vault_home.clone())).unwrap();
+    let passphrase = SecretString::from(passphrase.to_string());
+    vault.init(&passphrase).unwrap();
+    vault
+        .set_secret(
+            &passphrase,
+            "api_token",
+            SecretBytes::new(b"secret-value".to_vec()),
+        )
+        .unwrap();
+
+    let output = dispatch_vault(crate::command::VaultCommand::Run(
+        crate::command::VaultRunRequest {
+            env: Vec::new(),
+            files: vec!["TOKEN_FILE=api_token".into()],
+            command: vec![
+                "sh".into(),
+                "-c".into(),
+                "test -f \"$TOKEN_FILE\" && cat \"$TOKEN_FILE\"".into(),
+            ],
+            vault: crate::command::VaultRuntimeOptions {
+                home: Some(vault_home),
+            },
+        },
+    ))
+    .unwrap();
+
+    assert_eq!(output["ok"], true);
+    assert_eq!(output["env_mappings"], 0);
+    assert_eq!(output["file_mappings"], 1);
+    assert_eq!(output["result"]["stdout"], "[REDACTED]");
+    assert_eq!(output["result"]["exit_status"], 0);
+}
+
 #[test]
 fn dispatch_vault_run_records_failure_audit_event() {
     let _env = lock_env();
@@ -105,6 +149,7 @@ fn dispatch_vault_run_records_failure_audit_event() {
     let error = dispatch_vault(crate::command::VaultCommand::Run(
         crate::command::VaultRunRequest {
             env: vec!["TOKEN=api_token".into()],
+            files: Vec::new(),
             command: vec!["definitely-not-a-jig-vault-test-command".into()],
             vault: crate::command::VaultRuntimeOptions {
                 home: Some(vault_home.clone()),
@@ -140,6 +185,8 @@ fn runtime_command_from_cli(command: CommandKind) -> RuntimeCommand {
         CommandKind::Init(_)
         | CommandKind::Adopt(_)
         | CommandKind::Update(_)
+        | CommandKind::Doctor(_)
+        | CommandKind::Info(_)
         | CommandKind::Vault(_)
         | CommandKind::Mcp => {
             panic!("runtime test helper only accepts runtime commands")

@@ -309,9 +309,18 @@ fn mcp_work_tools_tolerate_null_optional_defaults() {
         }),
     )
     .unwrap();
+    let evidence = call_tool(
+        &ctx,
+        tool::WORK_EVIDENCE,
+        json!({
+            "plan_id": null
+        }),
+    )
+    .unwrap();
 
     assert_eq!(check["ok"], true);
     assert_eq!(receipts["ok"], true);
+    assert_eq!(evidence["command"], "work evidence");
     assert!(!receipts["receipts"].as_array().unwrap().is_empty());
 }
 

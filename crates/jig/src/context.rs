@@ -253,6 +253,12 @@ struct ContractManifest {
 }
 
 #[derive(Clone, Debug)]
+pub(crate) struct RepoConfigProbe {
+    pub(crate) repo_name: String,
+    pub(crate) jig_version: String,
+}
+
+#[derive(Clone, Debug)]
 pub(crate) struct RepoContext {
     root: PathBuf,
     current_session_path: PathBuf,
@@ -293,17 +299,9 @@ impl RepoContext {
         Self::load_from_root(root).map(Some)
     }
 
-    fn load_from_root(root: PathBuf) -> Result<Self> {
+    pub(crate) fn load_from_root(root: PathBuf) -> Result<Self> {
         let config_path = root.join(".jig.toml");
-        let config_text = fs::read_to_string(&config_path)
-            .with_context(|| format!("Failed to read {}", config_path.display()))?;
-        let config: RepoConfig = toml::from_str(&config_text).with_context(|| {
-            format!(
-                "Failed to parse {}. Jig rejects unknown .jig.toml keys during upgrades; remove typos or experimental keys and retry.",
-                config_path.display()
-            )
-        })?;
-        validate_config(&config)?;
+        let config = load_config(&config_path)?;
 
         let manifest_path = root.join(".agent/jig-contract.json");
         let manifest_text = fs::read_to_string(&manifest_path)
@@ -340,6 +338,14 @@ impl RepoContext {
             current_session_path,
             config,
             manifest,
+        })
+    }
+
+    pub(crate) fn validate_config_file(root: &Path) -> Result<RepoConfigProbe> {
+        let config = load_config(&root.join(".jig.toml"))?;
+        Ok(RepoConfigProbe {
+            repo_name: config.repo_name,
+            jig_version: config.jig_version,
         })
     }
 
@@ -508,6 +514,19 @@ impl RepoContext {
     pub(crate) fn current_session_path(&self) -> PathBuf {
         self.current_session_path.clone()
     }
+}
+
+fn load_config(config_path: &Path) -> Result<RepoConfig> {
+    let config_text = fs::read_to_string(config_path)
+        .with_context(|| format!("Failed to read {}", config_path.display()))?;
+    let config: RepoConfig = toml::from_str(&config_text).with_context(|| {
+        format!(
+            "Failed to parse {}. Jig rejects unknown .jig.toml keys during upgrades; remove typos or experimental keys and retry.",
+            config_path.display()
+        )
+    })?;
+    validate_config(&config)?;
+    Ok(config)
 }
 
 impl FeatureContext for RepoContext {

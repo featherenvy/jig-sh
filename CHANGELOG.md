@@ -22,6 +22,9 @@
 ## Unreleased
 
 ### Added
+- Add `scripts/jig doctor --summary` and `scripts/jig info` / `scripts/jig explain --summary` for repo readiness and configuration snapshots.
+- Add `scripts/jig work evidence --summary` and the `jig.work_evidence` MCP tool for fresh/stale gate evidence inspection.
+- Add `scripts/jig vault run --file VAR=SECRET` for Unix-only secret-file delivery and `scripts/jig vault run --summary` for a human brokered-run summary.
 - Add Jig local development proxy commands for stable repo-scoped dev hostnames, HTTP/HTTPS forwarding, WebSocket support, workspace app discovery, local certificates, and service file generation.
 - Add `scripts/jig dev` and `scripts/jig proxy {start,stop,list,prune,run,alias}` runtime flows for supervised app processes, aliases, and route listing/pruning.
 - Add `scripts/jig proxy cert {generate,status,trust,untrust}` and `scripts/jig proxy service {install,status,uninstall}` for certificate trust management and user service installation; trust-store mutations require `--accept-trust-scope`, and `proxy service install` requires `--accept-service-scope`.
@@ -37,11 +40,17 @@
 - Generated Cargo command defaults now skip with exit 0 and a stdout note when no root `Cargo.toml` exists, so harness-only repos can verify immediately after `jig init`.
 - Regenerating defaults with `jig update --recopy` rewrites `bootstrap_command`, `rust_fmt_check_command`, `rust_clippy_command`, `rust_test_command`, and `rust_test_locked_command` to the no-root-`Cargo.toml` skip form unless the repo has customized those answers.
 - `scripts/jig work check` now rejects unknown or closed plan IDs before running tools; `scripts/jig work gates` still reports status for any existing plan, including closed plans.
+- `scripts/jig work gates` and `scripts/jig work evidence` keep top-level `ok` as command success and expose gate health through `overall`, `gates_ok`, and per-gate `status`.
+- `scripts/jig work gates --summary` now prints freshness reasons, receipt diffs, changed paths, and plan-state-aware next steps; text-grepping scripts should use default JSON instead.
+- `scripts/jig work receipts --summary` and `scripts/jig vault run --summary` preserve short multiline output previews for readability; automation should read the default JSON output.
+- `scripts/jig vault secret set NAME` now defaults to hidden terminal input when run interactively; non-interactive callers must pass `--value-stdin`.
+- `scripts/jig dev` now prints a compact APP / URL / STATUS / PID table and dev-proxy failures include more specific likely-fix guidance.
 - Release automation that builds Jig from a git checkout should fetch tags before building, or set `JIG_ASSUME_RELEASE_BUILD=1` after validating the workspace version and release tag.
 - BREAKING for local dogfooding: resolve `JIG_DEV_BIN` directly instead of copying it into the Jig cache, so local runtime changes use the current development binary after version validation.
 - Hard-fail `scripts/install-jig.sh` when `JIG_DEV_BIN` is set but missing, non-executable, or resolves to a binary whose version does not match the generated repo instead of falling back to cached runtime selection. Direct callers of `scripts/install-jig.sh` should use `scripts/jig`, set a matching `JIG_DEV_BIN`, unset it, or run the normal cached installer path.
 - Split the local development proxy runtime into the `jig-dev-proxy` workspace crate used by the `jig-sh` CLI.
 - Refuse to share an unrelated proxy found on the requested HTTP port unless it is registered in the same proxy state directory.
+- Proxy list/status output now includes loopback health-probe fields such as `health_pid`, `handshake_ok`, `pid_matches_proxy`, and `running`.
 - Prune legacy live process routes that do not have process start tokens on platforms where Jig can verify process start identity.
 - BREAKING: Strictly reject unknown `.jig.toml` config fields so typos and stale local config fail fast.
 - Migration note: remove or rename unknown `.jig.toml` keys reported by the load error before rerunning `scripts/jig`; previously ignored local keys now block startup. This applies to top-level keys plus `[work]`, `[agent_tooling]`, `[agent_tooling.codex]`, `[dev]`, `[[dev.apps]]`, and legacy `[[frontend_apps]]` entries.
@@ -55,6 +64,7 @@
 - Document `JIG_PROXY_STATE_DIR`, proxy CA trust scope, and local dev proxy usage more explicitly.
 
 ### Security
+- `vault run --file` writes each secret to a private Unix `0600` temp file under a `0700` temp directory, wipes brokered temp files before normal cleanup, and removes the temp directory when the brokered process exits; this promotes `tempfile` to a runtime dependency of `jig-vault`.
 - Harden proxy stop, certificate writes, CA regeneration, and TLS handshake behavior for local development sessions.
 - Harden Vite argument handling, including rejection of mismatched explicit Vite port flags, backend response parsing, WebSocket proxy-header scrubbing, and route-cache invalidation.
 - Harden LAN proxy exposure, alias registration, workspace discovery traversal, process-route liveness checks, and route persistence.

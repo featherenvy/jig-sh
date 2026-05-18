@@ -79,8 +79,28 @@ impl RenderAnswers {
         &self.frontend_apps
     }
 
+    pub(super) fn sqlx_enabled(&self) -> bool {
+        self.sqlx_enabled
+    }
+
+    pub(super) fn schema_dump_enabled(&self) -> bool {
+        self.schema_dump_enabled
+    }
+
     pub(super) fn web_package_manager(&self) -> &str {
         &self.web_package_manager
+    }
+
+    pub(super) fn codex_skills_configured(&self) -> bool {
+        self.agent_tooling
+            .codex
+            .marketplaces
+            .iter()
+            .any(|marketplace| !marketplace.plugins.is_empty())
+    }
+
+    pub(super) fn bootstrap_command_configured(&self) -> bool {
+        !self.bootstrap_command.trim().is_empty()
     }
 
     pub(super) fn has_legacy_dev_command(&self) -> bool {
@@ -348,7 +368,12 @@ fn optional_cargo_command(command: &str, label: &str) -> String {
     let skip_message = shell_quote(&format!("{skip_prefix}{label}."));
     // Runtime command dispatch sets CWD to the repo root, so this guard checks
     // for a root Cargo workspace without blocking harness-only repos.
-    format!("if [ -f Cargo.toml ]; then {command}; else printf '%s\\n' {skip_message}; fi")
+    format!(
+        "{}{command}{}printf '%s\\n' {skip_message}{}",
+        crate::shell::OPTIONAL_CARGO_COMMAND_PREFIX,
+        crate::shell::OPTIONAL_CARGO_COMMAND_ELSE,
+        crate::shell::OPTIONAL_CARGO_COMMAND_SUFFIX,
+    )
 }
 
 fn validate_frontend_apps(apps: &[FrontendApp]) -> Result<()> {

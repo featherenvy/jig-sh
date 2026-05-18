@@ -1,0 +1,15 @@
+repo_name = "acme-rust-api"
+default_branch = "main"
+ci_github_runner = "ubuntu-latest"
+jig_version = "0.2.0-beta.1"
+template_source_url = ""
+sqlx_enabled = false
+rust_crate_roots = ["crates"]
+schema_dump_enabled = false
+bootstrap_command = "cargo fetch"
+rust_fmt_check_command = "cargo fmt --all -- --check"
+rust_clippy_command = "cargo clippy --workspace --all-targets --locked -- -D warnings"
+rust_test_command = "cargo test --workspace"
+rust_test_locked_command = "cargo test --workspace --locked"
+web_package_manager = "bun"
+frontend_apps = []

@@ -244,6 +244,20 @@ fn adopt_accepts_npm_frontend_app_and_renders_current_web_and_dev_config() {
             .unwrap()
             .contains("scripts/jig check agent-guides")
     }));
+    assert!(
+        output["adoption_report"]["files_created"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|path| path == "scripts/jig")
+    );
+    assert!(
+        output["adoption_report"]["todos"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|todo| todo.as_str().unwrap().contains("frontend app"))
+    );
     assert!(repo.join("crates/api/AGENTS.md").exists());
     let crate_guide = fs::read_to_string(repo.join("crates/api/AGENTS.md")).unwrap();
     assert!(crate_guide.contains("## Purpose"));

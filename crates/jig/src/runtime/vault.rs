@@ -5,7 +5,7 @@ use std::os::unix::ffi::OsStringExt;
 use std::sync::{Mutex, MutexGuard};
 
 use anyhow::{Context, Result, anyhow, bail};
-use jig_vault::{BrokeredEnv, BrokeredRun, MAX_SECRET_VALUE_LEN, SecretBytes, Vault};
+use jig_vault::{BrokeredEnv, BrokeredFile, BrokeredRun, MAX_SECRET_VALUE_LEN, SecretBytes, Vault};
 use secrecy::SecretString;
 use serde_json::{Value, json};
 use zeroize::Zeroizing;
@@ -99,6 +99,15 @@ fn set(request: VaultSecretSetRequest) -> Result<Value> {
     let vault = vault(&request.vault)?;
     let passphrase = passphrase()?;
     let value = match request.value_source {
+        VaultSecretValueSource::Auto => {
+            if std::io::stdin().is_terminal() {
+                read_secret_value_from_prompt()?
+            } else {
+                bail!(
+                    "vault secret set NAME defaults to hidden prompt only in an interactive terminal; use --value-stdin for piped or redirected input"
+                );
+            }
+        }
         VaultSecretValueSource::Stdin => {
             let stdin = std::io::stdin();
             if stdin.is_terminal() {
@@ -136,11 +145,19 @@ fn run(request: VaultRunRequest) -> Result<Value> {
     let vault = vault(&request.vault)?;
     let passphrase = passphrase()?;
     let env = parse_env_mappings(&request.env)?;
-    let output = vault.run_brokered(&passphrase, BrokeredRun::new(request.command, env)?)?;
+    let files = parse_file_mappings(&request.files)?;
+    let env_mappings = request.env.len();
+    let file_mappings = request.files.len();
+    let output = vault.run_brokered(
+        &passphrase,
+        BrokeredRun::with_files(request.command, env, files)?,
+    )?;
     Ok(json!({
         "ok": output.exit_status == 0,
         "command": "vault run",
         "vault_home": vault.root().display().to_string(),
+        "env_mappings": env_mappings,
+        "file_mappings": file_mappings,
         "result": {
             "exit_status": output.exit_status,
             "exit_signal": output.exit_signal,
@@ -296,6 +313,20 @@ fn parse_env_mappings(values: &[String]) -> Result<Vec<BrokeredEnv>> {
         .collect()
 }
 
+fn parse_file_mappings(values: &[String]) -> Result<Vec<BrokeredFile>> {
+    #[cfg(not(unix))]
+    if !values.is_empty() {
+        bail!(
+            "vault run --file requires Unix-style owner-only temporary files; use --env on this platform"
+        );
+    }
+
+    values
+        .iter()
+        .map(|value| BrokeredFile::parse(value).map_err(anyhow::Error::from))
+        .collect()
+}
+
 fn read_secret_value(mut input: impl Read) -> Result<SecretBytes> {
     // Allocate the full cap up front so secret bytes from stdin do not pass
     // through discarded intermediate Vec buffers during growth.
@@ -354,6 +385,32 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(error.contains("unsupported characters"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn parses_file_mappings() {
+        let parsed = parse_file_mappings(&["TOKEN_FILE=api_token".into()]).unwrap();
+        assert_eq!(parsed[0].var().as_str(), "TOKEN_FILE");
+        assert_eq!(parsed[0].secret_name().as_str(), "api_token");
+    }
+
+    #[cfg(not(unix))]
+    #[test]
+    fn rejects_file_mappings_on_non_unix() {
+        let error = parse_file_mappings(&["TOKEN_FILE=api_token".into()])
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("requires Unix-style owner-only temporary files"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_invalid_file_mapping_shape() {
+        let error = parse_file_mappings(&["TOKEN_FILE".into()])
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("VAR=SECRET_NAME"));
     }
 
     #[test]
