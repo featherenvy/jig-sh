@@ -33,9 +33,9 @@ For local git template checkouts, `jig init` / `jig adopt` use a committed sourc
 
 ## Required Keys
 
-- `repo_name`: display name used in generated docs
+- `repo_name`: display name used in generated docs. During adoption, repo names inferred from Git remotes preserve dots such as `my.app`, while directory-name fallbacks keep the existing dash-sanitized form.
 - `default_branch`: branch name used for base-ref comparisons
-- `ci_github_runner`: runner label for GitHub Actions jobs
+- `ci_github_runner`: `runs-on` value for GitHub Actions jobs
 - `jig_version`: exact runtime version expected by generated repos
 - `work.gates`: required work evidence gates evaluated before `scripts/jig work finish`
 - `agent_tooling`: agent-client tooling expected for this repository, including Jig Codex skills
@@ -60,7 +60,7 @@ When `sqlx_enabled` is `true`, these additional keys are required:
 - `rust_test_command`: implementation behind `scripts/jig check test`; the generated default exits 0 with a stdout note when no root `Cargo.toml` exists, and otherwise surfaces Cargo errors
 - `rust_test_locked_command`: implementation behind `scripts/jig check test-locked`; the generated default exits 0 with a stdout note when no root `Cargo.toml` exists, and otherwise surfaces Cargo errors
 - `web_package_manager`: currently `bun`
-- `frontend_apps`: list of app definitions
+- `frontend_apps`: list of app definitions. A frontend app may use `dir = "."` when the app lives at the repository root.
 - `dev`: Jig-native local development proxy settings and app definitions
 
 The generated no-root-`Cargo.toml` Cargo defaults print a stable stdout prefix that `work check --summary` recognizes as an intentional harness skip. Reworded custom commands still run normally, but they will be summarized as ordinary command output instead of `passed (all skipped)`. Custom commands should not print the exact generated prefix unless they intentionally want to opt into that skip rendering.
@@ -68,6 +68,8 @@ The generated no-root-`Cargo.toml` Cargo defaults print a stable stdout prefix t
 Top-level `*_command` values are committed repo configuration and run through non-login `bash -c` from the repo root with the user's normal process environment. Treat changes to these keys like changes to project-owned shell scripts. Jig-owned checks such as `scripts/jig check contract`, `scripts/jig migration-add NAME`, `scripts/jig check schema`, and repo policy checks run natively inside the binary.
 
 Contracts that declare `"kind": "native"` tools require the repo's pinned `scripts/jig` runtime version. Do not run an older cached `jig` binary against a repo after updating its `.agent/jig-contract.json`; use the launcher so the `jig_version` pin is enforced.
+
+`jig adopt --json` includes a `detection_report` object that records inferred values before rendering. It contains `summary`, `scope`, `repo_name`, `default_branch`, `rust_crate_roots`, `sqlx_enabled`, `rust_migration_dir`, `rust_migration_dirs`, `rust_sqlx_metadata_dir`, `web_package_manager`, `frontend_apps`, `ci_github_runner`, `signals`, and `warnings`. Scan warnings include up to 19 concrete entries plus an omission notice when more were found. `rust_migration_dirs` is informational; only `rust_migration_dir` is applied. When SQLx is detected without migration or metadata directories, adopt warns and synthesizes the default `migrations` and `.sqlx` paths unless overridden.
 
 ## Accepted Key Summary
 

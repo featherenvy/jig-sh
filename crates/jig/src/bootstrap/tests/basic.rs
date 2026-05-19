@@ -527,16 +527,410 @@ fn adopt_defaults_to_tooling_only_when_sqlx_answers_are_omitted() {
     .unwrap();
 
     assert!(
-        output["notes"]
+        output["detection_report"]["summary"]
+            .as_str()
+            .unwrap()
+            .contains("no Rust workspace, no SQLx")
+    );
+    assert!(
+        !output["notes"]
             .as_array()
             .unwrap()
             .iter()
-            .any(|note| note.as_str().unwrap().contains("tooling-only profile"))
+            .any(|note| { note.as_str().unwrap().contains("tooling-only profile") })
     );
     let answers = fs::read_to_string(repo.join(".jig.toml")).unwrap();
     assert!(answers.contains("repo_name = \"repo\""));
     assert!(answers.contains("sqlx_enabled = false"));
     assert!(answers.contains("schema_dump_enabled = false"));
+}
+
+#[test]
+fn adopt_infers_repo_shape_before_resolving_answers() {
+    let _guard = lock_env();
+    let temp = tempdir().unwrap();
+    let template = materialize_template_worktree();
+    let repo = temp.path().join("repo");
+    fs::create_dir_all(repo.join("crates/api/src")).unwrap();
+    fs::create_dir_all(repo.join("migrations")).unwrap();
+    fs::create_dir_all(repo.join(".sqlx")).unwrap();
+    fs::create_dir_all(repo.join("web")).unwrap();
+    fs::create_dir_all(repo.join(".github/workflows")).unwrap();
+    fs::write(
+        repo.join("Cargo.toml"),
+        r#"[workspace]
+members = ["crates/*"]
+
+[workspace.dependencies]
+sqlx = "0.8"
+"#,
+    )
+    .unwrap();
+    fs::write(
+        repo.join("crates/api/Cargo.toml"),
+        r#"[package]
+name = "api"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+sqlx = { workspace = true }
+"#,
+    )
+    .unwrap();
+    fs::write(repo.join("crates/api/src/lib.rs"), "sqlx::migrate!();").unwrap();
+    fs::write(repo.join("migrations/0001_init.sql"), "select 1;").unwrap();
+    fs::write(
+        repo.join("package.json"),
+        r#"{"private":true,"workspaces":["web"]}"#,
+    )
+    .unwrap();
+    fs::write(repo.join("pnpm-lock.yaml"), "lockfileVersion: '9.0'\n").unwrap();
+    fs::write(
+        repo.join("web/package.json"),
+        r#"{
+  "name": "web",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "build:bundle": "vite build",
+    "test:coverage": "vitest run --coverage"
+  }
+}
+"#,
+    )
+    .unwrap();
+    fs::write(
+        repo.join(".github/workflows/rust.yml"),
+        "jobs:\n  test:\n    runs-on: ubuntu-24.04\n",
+    )
+    .unwrap();
+    init_git_repo_for_test(&repo);
+    git(
+        &repo,
+        [
+            "remote",
+            "add",
+            "origin",
+            "git@github.com:owner/inferred-demo.git",
+        ],
+    )
+    .unwrap();
+
+    let output = run_adopt(AdoptOpts {
+        path: repo.clone(),
+        template: Some(template.path().display().to_string()),
+        template_mode: None,
+        vcs_ref: None,
+        force: false,
+        defaults: false,
+        no_input: true,
+        answers: AnswerOpts::default(),
+    })
+    .unwrap();
+
+    assert_eq!(output["detection_report"]["repo_name"], "inferred-demo");
+    assert_eq!(output["detection_report"]["rust_crate_roots"][0], "crates");
+    assert_eq!(output["detection_report"]["sqlx_enabled"], true);
+    assert_eq!(
+        output["detection_report"]["rust_migration_dir"],
+        "migrations"
+    );
+    assert_eq!(output["detection_report"]["web_package_manager"], "pnpm");
+    assert_eq!(output["detection_report"]["frontend_apps"][0]["dir"], "web");
+    let answers = fs::read_to_string(repo.join(".jig.toml")).unwrap();
+    assert!(answers.contains("repo_name = \"inferred-demo\""));
+    assert!(answers.contains("default_branch = \"main\""));
+    assert!(answers.contains("ci_github_runner = \"ubuntu-24.04\""));
+    assert!(answers.contains("sqlx_enabled = true"));
+    assert!(answers.contains("rust_crate_roots = [\"crates\"]"));
+    assert!(answers.contains("rust_migration_dir = \"migrations\""));
+    assert!(answers.contains("rust_sqlx_metadata_dir = \".sqlx\""));
+    assert!(answers.contains("sqlx_check_command = "));
+    assert!(answers.contains("cargo sqlx prepare --check"));
+    assert!(answers.contains("web_package_manager = \"pnpm\""));
+    assert!(answers.contains("[[frontend_apps]]"));
+    assert!(answers.contains("name = \"web\""));
+    assert!(answers.contains("dir = \"web\""));
+    assert!(answers.contains("argv = [\"pnpm\", \"run\", \"dev\"]"));
+    assert!(repo.join("crates/api/AGENTS.md").exists());
+}
+
+#[test]
+fn adopt_keeps_explicit_answers_ahead_of_inference() {
+    let _guard = lock_env();
+    let temp = tempdir().unwrap();
+    let template = materialize_template_worktree();
+    let repo = temp.path().join("repo");
+    fs::create_dir_all(repo.join("web")).unwrap();
+    fs::write(repo.join("package-lock.json"), "{}").unwrap();
+    fs::write(
+        repo.join("web/package.json"),
+        r#"{
+  "name": "web",
+  "scripts": {
+    "dev": "vite",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "build:bundle": "vite build",
+    "test:coverage": "vitest run --coverage"
+  }
+}
+"#,
+    )
+    .unwrap();
+    let answers_file = temp.path().join("answers.toml");
+    fs::write(
+        &answers_file,
+        r#"repo_name = "from-file"
+sqlx_enabled = false
+web_package_manager = "yarn"
+frontend_apps = []
+"#,
+    )
+    .unwrap();
+
+    run_adopt(AdoptOpts {
+        path: repo.clone(),
+        template: Some(template.path().display().to_string()),
+        template_mode: None,
+        vcs_ref: None,
+        force: false,
+        defaults: false,
+        no_input: true,
+        answers: AnswerOpts {
+            answers_file: Some(answers_file),
+            repo_name: Some("from-cli".into()),
+            ..AnswerOpts::default()
+        },
+    })
+    .unwrap();
+
+    let answers = fs::read_to_string(repo.join(".jig.toml")).unwrap();
+    assert!(answers.contains("repo_name = \"from-cli\""));
+    assert!(answers.contains("web_package_manager = \"yarn\""));
+    assert!(answers.contains("frontend_apps = []"));
+    assert!(!answers.contains("[[frontend_apps]]"));
+}
+
+#[test]
+fn adopt_answer_file_migration_dir_keeps_sqlx_enabled_when_inference_finds_no_sqlx() {
+    let _guard = lock_env();
+    let temp = tempdir().unwrap();
+    let template = materialize_template_worktree();
+    let repo = temp.path().join("repo");
+    fs::create_dir_all(&repo).unwrap();
+    let answers_file = temp.path().join("answers.toml");
+    fs::write(
+        &answers_file,
+        r#"repo_name = "from-file"
+rust_migration_dir = "migrations"
+"#,
+    )
+    .unwrap();
+
+    run_adopt(AdoptOpts {
+        path: repo.clone(),
+        template: Some(template.path().display().to_string()),
+        template_mode: None,
+        vcs_ref: None,
+        force: false,
+        defaults: false,
+        no_input: true,
+        answers: AnswerOpts {
+            answers_file: Some(answers_file),
+            ..AnswerOpts::default()
+        },
+    })
+    .unwrap();
+
+    let answers = fs::read_to_string(repo.join(".jig.toml")).unwrap();
+    assert!(answers.contains("sqlx_enabled = true"));
+    assert!(answers.contains("rust_migration_dir = \"migrations\""));
+}
+
+#[test]
+fn adopt_answer_file_sqlx_disabled_suppresses_inferred_migration_defaults() {
+    let _guard = lock_env();
+    let temp = tempdir().unwrap();
+    let template = materialize_template_worktree();
+    let repo = temp.path().join("repo");
+    fs::create_dir_all(repo.join("migrations")).unwrap();
+    fs::write(repo.join("migrations/0001_init.sql"), "select 1;").unwrap();
+    let answers_file = temp.path().join("answers.toml");
+    fs::write(
+        &answers_file,
+        r#"repo_name = "from-file"
+sqlx_enabled = false
+"#,
+    )
+    .unwrap();
+
+    run_adopt(AdoptOpts {
+        path: repo.clone(),
+        template: Some(template.path().display().to_string()),
+        template_mode: None,
+        vcs_ref: None,
+        force: false,
+        defaults: false,
+        no_input: true,
+        answers: AnswerOpts {
+            answers_file: Some(answers_file),
+            ..AnswerOpts::default()
+        },
+    })
+    .unwrap();
+
+    let answers = fs::read_to_string(repo.join(".jig.toml")).unwrap();
+    assert!(answers.contains("sqlx_enabled = false"));
+    assert!(!answers.contains("rust_migration_dir ="));
+}
+
+#[test]
+fn adopt_answer_file_schema_dump_disabled_still_uses_inferred_no_sqlx_profile() {
+    let _guard = lock_env();
+    let temp = tempdir().unwrap();
+    let template = materialize_template_worktree();
+    let repo = temp.path().join("repo");
+    fs::create_dir_all(&repo).unwrap();
+    let answers_file = temp.path().join("answers.toml");
+    fs::write(
+        &answers_file,
+        r#"repo_name = "from-file"
+schema_dump_enabled = false
+"#,
+    )
+    .unwrap();
+
+    run_adopt(AdoptOpts {
+        path: repo.clone(),
+        template: Some(template.path().display().to_string()),
+        template_mode: None,
+        vcs_ref: None,
+        force: false,
+        defaults: false,
+        no_input: true,
+        answers: AnswerOpts {
+            answers_file: Some(answers_file),
+            ..AnswerOpts::default()
+        },
+    })
+    .unwrap();
+
+    let answers = fs::read_to_string(repo.join(".jig.toml")).unwrap();
+    assert!(answers.contains("sqlx_enabled = false"));
+    assert!(answers.contains("schema_dump_enabled = false"));
+}
+
+#[test]
+fn adopt_answer_file_schema_dump_enabled_blocks_inferred_no_sqlx_profile() {
+    let _guard = lock_env();
+    let temp = tempdir().unwrap();
+    let template = materialize_template_worktree();
+    let repo = temp.path().join("repo");
+    fs::create_dir_all(&repo).unwrap();
+    let answers_file = temp.path().join("answers.toml");
+    fs::write(
+        &answers_file,
+        r#"repo_name = "from-file"
+schema_dump_enabled = true
+"#,
+    )
+    .unwrap();
+
+    let error = run_adopt(AdoptOpts {
+        path: repo,
+        template: Some(template.path().display().to_string()),
+        template_mode: None,
+        vcs_ref: None,
+        force: false,
+        defaults: false,
+        no_input: true,
+        answers: AnswerOpts {
+            answers_file: Some(answers_file),
+            ..AnswerOpts::default()
+        },
+    })
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("Missing required answer when sqlx_enabled is true"));
+    assert!(error.contains("schema_dump_enabled implies SQLx"));
+    assert!(error.contains("--rust-migration-dir <dir>"));
+}
+
+#[test]
+fn adopt_cli_sqlx_metadata_dir_blocks_inferred_no_sqlx_profile() {
+    let _guard = lock_env();
+    let temp = tempdir().unwrap();
+    let template = materialize_template_worktree();
+    let repo = temp.path().join("repo");
+    fs::create_dir_all(&repo).unwrap();
+
+    let error = run_adopt(AdoptOpts {
+        path: repo,
+        template: Some(template.path().display().to_string()),
+        template_mode: None,
+        vcs_ref: None,
+        force: false,
+        defaults: false,
+        no_input: true,
+        answers: AnswerOpts {
+            rust_sqlx_metadata_dir: Some(".sqlx".into()),
+            ..AnswerOpts::default()
+        },
+    })
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("Missing required answer when sqlx_enabled is true"));
+    assert!(error.contains("--rust-migration-dir <dir>"));
+}
+
+#[test]
+fn adopt_infers_root_frontend_app() {
+    let _guard = lock_env();
+    let temp = tempdir().unwrap();
+    let template = materialize_template_worktree();
+    let repo = temp.path().join("root-web");
+    fs::create_dir_all(&repo).unwrap();
+    fs::write(repo.join("package-lock.json"), "{}").unwrap();
+    fs::write(
+        repo.join("package.json"),
+        r#"{
+  "name": "root-web",
+  "scripts": {
+    "dev": "vite",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "build:bundle": "vite build",
+    "test:coverage": "vitest run --coverage"
+  }
+}
+"#,
+    )
+    .unwrap();
+
+    run_adopt(AdoptOpts {
+        path: repo.clone(),
+        template: Some(template.path().display().to_string()),
+        template_mode: None,
+        vcs_ref: None,
+        force: false,
+        defaults: false,
+        no_input: true,
+        answers: AnswerOpts::default(),
+    })
+    .unwrap();
+
+    let answers = fs::read_to_string(repo.join(".jig.toml")).unwrap();
+    assert!(answers.contains("sqlx_enabled = false"));
+    assert!(answers.contains("web_package_manager = \"npm\""));
+    assert!(answers.contains("name = \"root-web\""));
+    assert!(answers.contains("dir = \".\""));
+    assert!(answers.contains("kind = \"vite\""));
+    assert!(answers.contains("argv = [\"npm\", \"run\", \"dev\"]"));
 }
 
 #[test]
@@ -596,15 +990,15 @@ fn adopt_defaults_with_schema_dump_enabled_still_requires_sqlx_migration_answer(
 }
 
 #[test]
-fn adopt_no_input_without_defaults_still_requires_sqlx_migration_answer() {
+fn adopt_no_input_without_defaults_uses_inferred_no_sqlx_profile() {
     let _guard = lock_env();
     let temp = tempdir().unwrap();
     let template = materialize_template_worktree();
     let repo = temp.path().join("repo");
     fs::create_dir_all(&repo).unwrap();
 
-    let error = run_adopt(AdoptOpts {
-        path: repo,
+    run_adopt(AdoptOpts {
+        path: repo.clone(),
         template: Some(template.path().display().to_string()),
         template_mode: None,
         vcs_ref: None,
@@ -613,11 +1007,10 @@ fn adopt_no_input_without_defaults_still_requires_sqlx_migration_answer() {
         no_input: true,
         answers: AnswerOpts::default(),
     })
-    .unwrap_err()
-    .to_string();
+    .unwrap();
 
-    assert!(error.contains("Missing required answer when sqlx_enabled is true"));
-    assert!(error.contains("--sqlx-enabled false"));
+    let answers = fs::read_to_string(repo.join(".jig.toml")).unwrap();
+    assert!(answers.contains("sqlx_enabled = false"));
 }
 
 #[test]

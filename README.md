@@ -79,12 +79,12 @@ jig init /path/to/target-repo \
 
 ```sh
 cd /path/to/target-repo
-jig adopt . \
-  --repo-name target-repo \
-  --rust-migration-dir migrations
+jig adopt .
 ```
 
-For a tooling-only repo, replace the migration flag with `--sqlx-enabled false`.
+`jig adopt` scans the existing repo first and fills omitted answers from what it finds, including the repo name, default branch, Rust crate roots, SQLx and migrations, frontend apps, package manager lockfiles, and existing GitHub Actions `runs-on` values. Pass explicit flags such as `--sqlx-enabled false` or `--frontend-app web:web:80` when you need to override the detected shape; run `jig adopt --help` for the full flag syntax.
+
+Frontend app inference only selects packages that already define `dev`, `lint`, `typecheck`, `build:bundle`, and `test:coverage` scripts.
 
 If the destination already has a root `Makefile`, `jig adopt` keeps it project-owned. Generated Jig commands always run through `scripts/jig`.
 
@@ -136,7 +136,7 @@ Use this path when you want the fastest successful loop on a new or adopted repo
    ```sh
    jig init /path/to/new-repo --repo-name new-repo --sqlx-enabled false
    # or, inside an existing repo:
-   jig adopt . --repo-name existing-repo --sqlx-enabled false
+   jig adopt .
    ```
 
 2. Enter the repo and run the unified readiness check.

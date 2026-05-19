@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::fs;
 use std::path::{Component, Path};
 
@@ -50,17 +50,113 @@ pub(super) struct AnswerResolution {
     notes: Vec<String>,
 }
 
+pub(super) struct AnswerInput {
+    raw: RawAnswers,
+    shape: AnswerInputShape,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(super) struct AnswerInputShape {
+    keys: BTreeSet<String>,
+    sqlx_enabled: Option<bool>,
+    schema_dump_enabled: Option<bool>,
+}
+
+const SQLX_SHAPED_ANSWER_KEYS: &[&str] = &[
+    "rust_migration_dir",
+    "rust_sqlx_metadata_dir",
+    "schema_dump_command",
+    "schema_check_command",
+    "sqlx_check_command",
+    "migration_add_command",
+];
+
+impl AnswerInput {
+    pub(super) fn from_opts(opts: &AnswerOpts) -> Result<Self> {
+        let Some(path) = opts.answers_file.as_deref() else {
+            return Ok(Self {
+                raw: RawAnswers::default(),
+                shape: AnswerInputShape::default(),
+            });
+        };
+        let text = fs::read_to_string(path)
+            .with_context(|| format!("Failed to read {}", path.display()))?;
+        let value = toml::from_str::<toml::Value>(&text)
+            .with_context(|| format!("Failed to parse {}", path.display()))?;
+        let table = value
+            .as_table()
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("Failed to parse {} as TOML table", path.display()))?;
+        let raw = value
+            .try_into::<RawAnswers>()
+            .with_context(|| format!("Failed to parse {}", path.display()))?;
+        Ok(Self {
+            raw,
+            shape: AnswerInputShape::from_table(&table),
+        })
+    }
+
+    pub(super) fn shape(&self) -> &AnswerInputShape {
+        &self.shape
+    }
+}
+
+impl AnswerInputShape {
+    pub(super) fn from_table(table: &toml::Table) -> Self {
+        Self {
+            sqlx_enabled: table.get("sqlx_enabled").and_then(toml::Value::as_bool),
+            schema_dump_enabled: table
+                .get("schema_dump_enabled")
+                .and_then(toml::Value::as_bool),
+            keys: table.keys().cloned().collect(),
+        }
+    }
+
+    pub(super) fn contains_key(&self, key: &str) -> bool {
+        self.keys.contains(key)
+    }
+
+    pub(super) fn explicit_sqlx_enabled(&self, answers: &AnswerOpts) -> Option<bool> {
+        answers.sqlx_enabled.or(self.sqlx_enabled)
+    }
+
+    pub(super) fn should_apply_inferred_sqlx_enabled(&self, answers: &AnswerOpts) -> bool {
+        // schema_dump_enabled=true is SQLx-shaped because schema dumps require SQLx.
+        // schema_dump_enabled=false is compatible with the inferred tooling-only profile.
+        self.explicit_sqlx_enabled(answers).is_none()
+            && !answer_opts_has_sqlx_shape(answers)
+            && answers.schema_dump_enabled.or(self.schema_dump_enabled) != Some(true)
+            && !self.has_sqlx_shape()
+    }
+
+    fn has_sqlx_shape(&self) -> bool {
+        SQLX_SHAPED_ANSWER_KEYS
+            .iter()
+            .any(|key| self.keys.contains(*key))
+    }
+}
+
 impl AnswerResolution {
     pub(super) fn from_opts(
         opts: &AnswerOpts,
         destination: &Path,
         use_defaults: bool,
     ) -> Result<Self> {
-        let mut raw = if let Some(path) = opts.answers_file.as_deref() {
-            RawAnswers::from_file(path)?
-        } else {
-            RawAnswers::default()
-        };
+        Self::from_input(
+            AnswerInput::from_opts(opts)?,
+            opts,
+            destination,
+            use_defaults,
+        )
+    }
+
+    pub(super) fn from_input(
+        input: AnswerInput,
+        opts: &AnswerOpts,
+        destination: &Path,
+        use_defaults: bool,
+    ) -> Result<Self> {
+        let mut raw = input.raw;
         raw.merge_opts(opts);
         let sqlx_defaulted_to_tooling_only = if use_defaults {
             raw.apply_sqlx_default_for_cli_defaults()
@@ -312,7 +408,7 @@ impl RawAnswers {
         let rust_migration_dir = self.rust_migration_dir.filter(|value| !value.is_empty());
         if sqlx_enabled && rust_migration_dir.is_none() {
             bail!(
-                "Missing required answer when sqlx_enabled is true: rust_migration_dir. Pass --rust-migration-dir <dir> for SQLx repos, or pass --sqlx-enabled false for tooling-only repos."
+                "Missing required answer when sqlx_enabled is true (including when schema_dump_enabled implies SQLx): rust_migration_dir. Pass --rust-migration-dir <dir> for SQLx repos, or pass --sqlx-enabled false with schema_dump_enabled = false for tooling-only repos."
             );
         }
         if !sqlx_enabled && self.schema_dump_enabled == Some(true) {
@@ -401,6 +497,18 @@ impl RawAnswers {
     }
 }
 
+fn answer_opts_has_sqlx_shape(answers: &AnswerOpts) -> bool {
+    SQLX_SHAPED_ANSWER_KEYS.iter().any(|key| match *key {
+        "rust_migration_dir" => answers.rust_migration_dir.is_some(),
+        "rust_sqlx_metadata_dir" => answers.rust_sqlx_metadata_dir.is_some(),
+        "schema_dump_command" => answers.schema_dump_command.is_some(),
+        "schema_check_command" => answers.schema_check_command.is_some(),
+        "sqlx_check_command" => answers.sqlx_check_command.is_some(),
+        "migration_add_command" => answers.migration_add_command.is_some(),
+        _ => false,
+    })
+}
+
 fn normalize_legacy_command_default(command: &mut Option<String>, legacy_default: &str) {
     if command.as_deref() == Some(legacy_default) {
         *command = None;
@@ -478,6 +586,9 @@ fn validate_frontend_app_dir(app_name: &str, value: &str) -> Result<()> {
             "frontend app '{app_name}' dir '{}' must not contain empty path components",
             value
         );
+    }
+    if value == "." {
+        return Ok(());
     }
     if value.split('/').any(|segment| segment == ".") {
         bail!(

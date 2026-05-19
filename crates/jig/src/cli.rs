@@ -52,9 +52,9 @@ If you passed --template without a value, either omit it to use the default
 or provide a path/URL.
 
 Use one of:
-  jig adopt . --repo-name my-repo --sqlx-enabled false
+  jig adopt .
   jig init /path/to/new-repo --repo-name new-repo --sqlx-enabled false
-  jig adopt . --template /path/to/jig-sh --repo-name my-repo --sqlx-enabled false
+  jig adopt . --template /path/to/jig-sh
 
 Pass --template only for a local checkout, fork, or private template.";
 

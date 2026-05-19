@@ -7,7 +7,7 @@ use serde_json::Value as JsonValue;
 use toml::{Table, Value as TomlValue};
 
 use super::AnswerOpts;
-use super::answers::{AnswerResolution, RenderAnswers};
+use super::answers::{AnswerInput, AnswerResolution, RenderAnswers};
 use super::renderer::{RenderStageRequest, stage_render};
 use super::sync::ApplyRenderReport;
 use super::sync::{ApplyRenderOptions, apply_staged_render};
@@ -25,6 +25,7 @@ pub(super) struct BootstrapCopyRequest<'a> {
     pub(super) destination: &'a Path,
     pub(super) template: &'a PreparedTemplateSource,
     pub(super) answers: &'a AnswerOpts,
+    pub(super) answer_input: Option<AnswerInput>,
     pub(super) use_defaults: bool,
     pub(super) force: bool,
     pub(super) seed_repo_path: Option<&'a Path>,
@@ -48,11 +49,19 @@ pub(super) fn render_and_copy_bootstrap_template(
     request.progress.step("resolve answers", ANSWERS_DETAIL);
     let answer_resolution = request
         .progress
-        .log_blocked_on_err(AnswerResolution::from_opts(
-            request.answers,
-            request.destination,
-            request.use_defaults,
-        ))?;
+        .log_blocked_on_err(match request.answer_input {
+            Some(input) => AnswerResolution::from_input(
+                input,
+                request.answers,
+                request.destination,
+                request.use_defaults,
+            ),
+            None => AnswerResolution::from_opts(
+                request.answers,
+                request.destination,
+                request.use_defaults,
+            ),
+        })?;
     let (answers, mut notes) = answer_resolution.into_parts();
     if request.seed_repo_path.is_some() && !answers.frontend_apps().is_empty() {
         request

@@ -15,7 +15,7 @@ use toml::Value as TomlValue;
 
 use crate::progress::CliProgress;
 
-use answers::RenderAnswers;
+use answers::{AnswerInput, RenderAnswers};
 #[cfg(test)]
 use file_copy::create_symlink;
 use git::init_git_repo;
@@ -35,6 +35,7 @@ use sync::{ApplyRenderOptions, apply_staged_render};
 use template_source::PrivateAnswerOverrides;
 use template_source::{prepare_update_template_source, read_stored_template_state};
 
+mod adopt_infer;
 mod answers;
 mod file_copy;
 mod git;
@@ -70,7 +71,7 @@ pub struct AnswerOpts {
         help = "Default branch used for generated CI and comparison commands"
     )]
     pub default_branch: Option<String>,
-    #[arg(long, help = "GitHub Actions runner label for generated workflows")]
+    #[arg(long, help = "GitHub Actions runs-on value for generated workflows")]
     pub ci_github_runner: Option<String>,
     #[arg(long, help = "Exact Jig runtime version to pin in generated repos")]
     pub jig_version: Option<String>,
@@ -174,9 +175,14 @@ Templates:
   Release builds pin omitted --template to this jig version's release tag.
   Unreleased or dirty local builds require --template /path/to/jig-sh or --vcs-ref.
 
+Adoption scans the existing repository before resolving answers. If SQLx is detected,
+omitted SQLx answers resolve to migration defaults; if it is not detected, omitted SQLx
+answers resolve to a tooling-only profile. Pass --sqlx-enabled true and --rust-migration-dir
+<dir> to override.
+
 Examples:
-  jig adopt . --repo-name my-repo --sqlx-enabled false
-  jig adopt . --template /path/to/jig-sh --template-mode committed --repo-name my-repo --sqlx-enabled false")]
+  jig adopt .
+  jig adopt . --template /path/to/jig-sh --template-mode committed")]
 pub struct AdoptOpts {
     #[arg(default_value = ".", help = "Existing repository directory to adopt")]
     pub path: PathBuf,
@@ -287,6 +293,7 @@ pub fn run_init(opts: InitOpts) -> Result<Value> {
         destination: &destination,
         template: &template,
         answers: &opts.answers,
+        answer_input: None,
         use_defaults: opts.defaults,
         force: opts.force,
         seed_repo_path: None,
@@ -335,11 +342,22 @@ pub fn run_adopt(opts: AdoptOpts) -> Result<Value> {
         opts.template_mode,
         &invocation_cwd,
     ))?;
+    progress.step("infer answers", "scan existing repository");
+    let inference = adopt_infer::infer_adopt_answers(&destination);
+    let mut answers = opts.answers.clone();
+    let answer_input = progress.log_blocked_on_err(AnswerInput::from_opts(&answers))?;
+    let answer_shape = answer_input.shape().clone();
+    progress.info("detected", inference.summary());
+    for warning in inference.warnings() {
+        progress.info("warning", warning);
+    }
+    inference.apply_to_answers(&mut answers, &answer_shape);
 
     let copy_result = render_and_copy_bootstrap_template(BootstrapCopyRequest {
         destination: &destination,
         template: &template,
-        answers: &opts.answers,
+        answers: &answers,
+        answer_input: Some(answer_input),
         use_defaults: opts.defaults,
         force: opts.force,
         seed_repo_path: Some(&destination),
@@ -355,6 +373,7 @@ pub fn run_adopt(opts: AdoptOpts) -> Result<Value> {
         "destination": destination.display().to_string(),
         "answers_file": ANSWERS_FILE,
         "git_initialized": false,
+        "detection_report": inference.report(),
         "adoption_report": adoption_report(&copy_result),
         "next_steps": initial_next_steps(InitialCommand::Adopt, &destination, &copy_result),
         "notes": initial_notes(copy_result.notes),
