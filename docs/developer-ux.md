@@ -32,9 +32,10 @@ Adoption is optimized for low surprise:
 
 - Repo-specific guidance remains outside the managed block in `AGENTS.md`.
 - Application code, crate ownership, schema dump implementation, and app-specific orchestration stay project-owned.
+- `jig adopt` previews by default; `--write` applies the reviewed render after confirmation unless `--defaults` or `--no-input` is supplied, and records an undo-oriented receipt with backups for overwritten managed files.
 - Template-managed files are not overwritten during `jig update` unless the caller passes `--force`.
 - `.jig.toml` rejects unknown keys so stale answers and typos fail early.
-- Local template dogfooding requires an explicit committed template source or an explicit VCS ref, which avoids accidentally rendering stale release templates from an unreleased binary.
+- Local template dogfooding can use embedded templates from an unreleased binary by default, an explicit committed template source for checkout metadata, or an explicit VCS ref for remote template code. Template edits must refresh the checked-in embedded snapshot with `JIG_REFRESH_EMBEDDED_TEMPLATE_SNAPSHOT=1 cargo check -p jig-sh`.
 
 This makes the adoption path friendly to established repositories. Jig adds an operating harness around the repo instead of trying to reorganize the application.
 
@@ -122,7 +123,7 @@ The friendliness here is in the workflow shape: developers get an auditable secr
 
 ## Agent And MCP Friendliness
 
-Jig treats agents as first-class repo operators. The generated root `AGENTS.md`, `agent-map.md`, crate-level guide requirements, MCP server, and work receipts all serve the same goal: reduce guessing.
+Jig treats agents as first-class repo operators. The generated root `AGENTS.md`, `agent-map.md`, optional crate-level guide conventions, MCP server, and work receipts all serve the same goal: reduce guessing.
 
 An agent can discover:
 

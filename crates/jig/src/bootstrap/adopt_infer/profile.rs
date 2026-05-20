@@ -56,7 +56,9 @@ impl AdoptInference {
         if self.sqlx_enabled == Some(true) {
             stack.push("SQLx".into());
         }
-        if let Some(package_manager) = self.web_package_manager.as_deref() {
+        if !self.frontend_apps.is_empty()
+            && let Some(package_manager) = self.web_package_manager.as_deref()
+        {
             stack.push(package_manager.to_string());
         }
         if self.frontend_apps.iter().any(|app| app.kind == "vite") {
@@ -87,7 +89,7 @@ impl AdoptInference {
         assumptions
     }
 
-    fn overrides(
+    pub(super) fn overrides(
         &self,
         explicit_answers: &AnswerOpts,
         answer_shape: &AnswerInputShape,

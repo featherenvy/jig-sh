@@ -1,25 +1,5 @@
 use super::*;
-
-fn with_test_build_template_pin_policy<T>(
-    policy: BuildTemplatePinPolicy,
-    run: impl FnOnce() -> T,
-) -> T {
-    struct Guard(Option<BuildTemplatePinPolicy>);
-
-    impl Drop for Guard {
-        fn drop(&mut self) {
-            TEST_BUILD_TEMPLATE_PIN_POLICY.with(|slot| slot.set(self.0));
-        }
-    }
-
-    let previous = TEST_BUILD_TEMPLATE_PIN_POLICY.with(|slot| {
-        let previous = slot.get();
-        slot.set(Some(policy));
-        previous
-    });
-    let _guard = Guard(previous);
-    run()
-}
+use crate::bootstrap::template_source::prepare_template_source_from_base;
 
 #[test]
 fn adopt_without_template_uses_official_template_release_tag_and_records_metadata() {
@@ -68,6 +48,7 @@ exit 0
         template_mode: None,
         vcs_ref: None,
         force: false,
+        write: true,
         defaults: true,
         no_input: true,
         answers: AnswerOpts {
@@ -133,35 +114,34 @@ fn explicit_official_template_url_still_uses_release_pin() {
 }
 
 #[test]
-fn unreleased_build_rejects_implicit_official_release_pin() {
+fn unreleased_build_uses_embedded_template_without_ref() {
     let no_ref = None;
-    let error = resolve_initial_template_request_with_policy(
+    let request = resolve_initial_template_request_with_policy(
         None,
         &no_ref,
         BuildTemplatePinPolicy::Unreleased,
     )
-    .unwrap_err()
-    .to_string();
+    .unwrap();
 
-    assert!(error.contains("unreleased or dirty local source"));
-    assert!(error.contains(&official_template_ref()));
-    assert!(error.contains("--template /path/to/jig-sh --template-mode committed"));
-    assert!(error.contains("--vcs-ref <ref>"));
+    assert_eq!(request.template, EMBEDDED_TEMPLATE_SOURCE);
+    assert_eq!(request.vcs_ref.as_deref(), None);
+    assert!(request.used_default);
 }
 
 #[test]
-fn run_adopt_rejects_default_template_for_unreleased_build_policy() {
+fn run_adopt_uses_embedded_template_for_unreleased_build_policy() {
     let temp = tempdir().unwrap();
     let repo = temp.path().join("repo");
     write_test_crate_guide(&repo);
 
-    let error = with_test_build_template_pin_policy(BuildTemplatePinPolicy::Unreleased, || {
+    with_test_build_template_pin_policy(BuildTemplatePinPolicy::Unreleased, || {
         run_adopt(AdoptOpts {
-            path: repo,
+            path: repo.clone(),
             template: None,
             template_mode: None,
             vcs_ref: None,
             force: false,
+            write: true,
             defaults: true,
             no_input: true,
             answers: AnswerOpts {
@@ -170,12 +150,122 @@ fn run_adopt_rejects_default_template_for_unreleased_build_policy() {
                 ..AnswerOpts::default()
             },
         })
-        .unwrap_err()
-        .to_string()
+        .unwrap()
     });
 
-    assert!(error.contains("unreleased or dirty local source"));
-    assert!(error.contains(&official_template_ref()));
+    let answers = read_answers_toml(&repo.join(".jig.toml")).unwrap();
+    assert_eq!(
+        answers.get("_src_path").and_then(TomlValue::as_str),
+        Some(EMBEDDED_TEMPLATE_SOURCE)
+    );
+    assert_eq!(answers.get("_commit").and_then(TomlValue::as_str), Some(""));
+    assert!(repo.join("scripts/jig").exists());
+    assert!(repo.join("scripts/install-jig.sh").exists());
+    let installer = fs::read_to_string(repo.join("scripts/install-jig.sh")).unwrap();
+    assert!(installer.contains("resolve_installed_jig_for_embedded_source"));
+    assert!(installer.contains(r#"[[ "$source" == "embedded:jig-sh" ]]"#));
+    assert!(installer.contains("no same-version jig binary was found on PATH"));
+    assert!(installer.contains("JIG_INSTALL_ALLOW_EMBEDDED_SOURCE_FALLBACK=1"));
+}
+
+#[test]
+fn update_uses_stored_embedded_template_by_default() {
+    let temp = tempdir().unwrap();
+    let repo = temp.path().join("repo");
+    write_test_crate_guide(&repo);
+
+    with_test_build_template_pin_policy(BuildTemplatePinPolicy::Unreleased, || {
+        run_adopt(AdoptOpts {
+            path: repo.clone(),
+            template: None,
+            template_mode: None,
+            vcs_ref: None,
+            force: false,
+            write: true,
+            defaults: true,
+            no_input: true,
+            answers: AnswerOpts {
+                repo_name: Some("demo".into()),
+                sqlx_enabled: Some(false),
+                ..AnswerOpts::default()
+            },
+        })
+        .unwrap()
+    });
+    fs::write(repo.join("scripts/install-jig.sh"), "# locally changed\n").unwrap();
+
+    run_update(UpdateOpts {
+        path: repo.clone(),
+        template: None,
+        template_mode: None,
+        recopy: false,
+        force: true,
+        vcs_ref: None,
+        defaults: true,
+        no_input: true,
+    })
+    .unwrap();
+
+    let answers = read_answers_toml(&repo.join(".jig.toml")).unwrap();
+    assert_eq!(
+        answers.get("_src_path").and_then(TomlValue::as_str),
+        Some(EMBEDDED_TEMPLATE_SOURCE)
+    );
+    assert!(
+        fs::read_to_string(repo.join("scripts/install-jig.sh"))
+            .unwrap()
+            .contains("embedded:jig-sh")
+    );
+}
+
+#[test]
+fn embedded_template_source_rejects_mode_and_vcs_ref() {
+    let temp = tempdir().unwrap();
+
+    let mode_error = prepare_template_source_from_base(
+        EMBEDDED_TEMPLATE_SOURCE,
+        Some(TemplateMode::Committed),
+        None,
+        temp.path(),
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(mode_error.contains("--template-mode only applies"));
+
+    let ref_error = prepare_template_source_from_base(
+        EMBEDDED_TEMPLATE_SOURCE,
+        None,
+        Some("main"),
+        temp.path(),
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(ref_error.contains("--vcs-ref only applies"));
+}
+
+#[test]
+fn update_rejects_explicit_switch_from_committed_source_to_embedded_source() {
+    let _guard = lock_env();
+    let temp = tempdir().unwrap();
+    let repo = temp.path().join("repo");
+    write_test_crate_guide(&repo);
+    let template = materialize_template_git_worktree();
+    adopt_repo_for_test(&repo, template.path(), TemplateMode::Committed);
+
+    let error = run_update(UpdateOpts {
+        path: repo,
+        template: Some(EMBEDDED_TEMPLATE_SOURCE.into()),
+        template_mode: None,
+        recopy: false,
+        force: true,
+        vcs_ref: None,
+        defaults: true,
+        no_input: true,
+    })
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("cannot switch template source paths"));
 }
 
 #[test]
@@ -325,6 +415,7 @@ fn default_template_mode_rejects_local_only_mode_before_clone() {
         template_mode: Some(TemplateMode::Committed),
         vcs_ref: None,
         force: false,
+        write: true,
         defaults: true,
         no_input: true,
         answers: AnswerOpts {
@@ -382,6 +473,7 @@ exit 0
         template_mode: None,
         vcs_ref: None,
         force: false,
+        write: true,
         defaults: true,
         no_input: true,
         answers: AnswerOpts {
@@ -433,6 +525,7 @@ exit 0
         template_mode: None,
         vcs_ref: None,
         force: false,
+        write: true,
         defaults: true,
         no_input: true,
         answers: AnswerOpts {

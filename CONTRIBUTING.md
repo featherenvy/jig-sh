@@ -2,7 +2,13 @@
 
 ## Local development
 
-Default `jig init` and `jig adopt` use the official remote template at the `vVERSION` tag for the running binary. When testing unreleased local changes with `cargo run -p jig-sh -- adopt ...`, pass `--template /path/to/jig-sh --template-mode committed` to render from your checkout, or pass `--vcs-ref main` to use the current official branch.
+Release `jig init` and `jig adopt` builds use the official remote template at the `vVERSION` tag for the running binary. Unreleased local builds use the templates embedded in the binary when `--template` is omitted. Repos rendered from embedded templates record `_src_path = "embedded:jig-sh"`; generated launchers reuse a same-version `jig` on `PATH` and require `JIG_INSTALL_ALLOW_EMBEDDED_SOURCE_FALLBACK=1` before falling back to the configured or official release-tag install path. When you need checkout-driven template metadata during development, pass `--template /path/to/jig-sh --template-mode committed`, or pass `--vcs-ref main` to use the current official branch.
+
+When editing `templates/project`, refresh the checked-in embedded-template snapshot before committing:
+
+```sh
+JIG_REFRESH_EMBEDDED_TEMPLATE_SNAPSHOT=1 cargo check -p jig-sh
+```
 
 During a release, the remote `vVERSION` tag is pushed after the crates publish step succeeds. If you install a freshly published binary before the tag is visible on GitHub, use `--vcs-ref main` or a local `--template` path for the first render, then retry the pinned default after the tag is pushed.
 

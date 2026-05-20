@@ -1,29 +1,8 @@
 use std::env;
+use std::fmt::Write as _;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-
-fn main() {
-    println!("cargo:rerun-if-env-changed=JIG_ASSUME_RELEASE_BUILD");
-    println!("cargo:rerun-if-env-changed=CI");
-
-    let assume_release = env::var_os("JIG_ASSUME_RELEASE_BUILD").is_some();
-    let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set by Cargo");
-    add_git_rerun_inputs(&manifest_dir);
-
-    let detected_policy = detect_template_pin_policy(&manifest_dir);
-    let policy = if assume_release {
-        if detected_policy != TemplatePinPolicy::Released {
-            println!(
-                "cargo:warning=JIG_ASSUME_RELEASE_BUILD is overriding Jig's detected {detected_policy} build policy; use this only after version/tag validation."
-            );
-        }
-        TemplatePinPolicy::Released
-    } else {
-        detected_policy
-    };
-
-    emit_template_pin_policy(policy);
-}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum TemplatePinPolicy {
@@ -103,6 +82,173 @@ fn add_git_rerun_inputs(manifest_dir: &str) {
             }
         }
     }
+}
+
+fn generate_embedded_template_manifest(manifest_dir: &str) {
+    let template_root = Path::new(manifest_dir).join("../../templates/project");
+    let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR is set by Cargo"));
+    let output_path = out_dir.join("embedded_templates.rs");
+    if env::var_os("JIG_EMBEDDED_TEMPLATE_SNAPSHOT").is_some() || !template_root.is_dir() {
+        let snapshot = Path::new(manifest_dir).join("src/bootstrap/embedded_templates_snapshot.rs");
+        println!("cargo:rerun-if-changed={}", snapshot.display());
+        fs::copy(&snapshot, &output_path).unwrap_or_else(|error| {
+            panic!(
+                "failed to copy embedded template snapshot {} to {}: {error}",
+                snapshot.display(),
+                output_path.display()
+            )
+        });
+        return;
+    }
+
+    println!("cargo:rerun-if-changed={}", template_root.display());
+    let mut templates = Vec::new();
+    collect_template_files(&template_root, &template_root, &mut templates);
+    templates.sort_by(|left, right| left.0.cmp(&right.0));
+
+    if env::var_os("JIG_REFRESH_EMBEDDED_TEMPLATE_SNAPSHOT").is_some() {
+        let snapshot = Path::new(manifest_dir).join("src/bootstrap/embedded_templates_snapshot.rs");
+        replace_file(
+            &snapshot,
+            render_embedded_template_snapshot(&templates).as_bytes(),
+        );
+        println!(
+            "cargo:warning=refreshed embedded template snapshot {}",
+            snapshot.display()
+        );
+    }
+
+    let output = render_embedded_template_entries(&templates, |path| {
+        format!("include_str!({:?})", path.display().to_string())
+    });
+    fs::write(&output_path, output).unwrap_or_else(|error| {
+        panic!(
+            "failed to write embedded template manifest {}: {error}",
+            output_path.display()
+        )
+    });
+}
+
+fn collect_template_files(root: &Path, current: &Path, templates: &mut Vec<(String, PathBuf)>) {
+    println!("cargo:rerun-if-changed={}", current.display());
+    let entries = fs::read_dir(current).unwrap_or_else(|error| {
+        panic!(
+            "failed to read template directory {}: {error}",
+            current.display()
+        )
+    });
+    for entry in entries {
+        let entry = entry.unwrap_or_else(|error| {
+            panic!(
+                "failed to read template directory entry in {}: {error}",
+                current.display()
+            )
+        });
+        let path = entry.path();
+        let file_type = entry.file_type().unwrap_or_else(|error| {
+            panic!(
+                "failed to inspect template path {}: {error}",
+                path.display()
+            )
+        });
+        if file_type.is_dir() {
+            collect_template_files(root, &path, templates);
+        } else if path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.ends_with(".jinja"))
+        {
+            println!("cargo:rerun-if-changed={}", path.display());
+            let relative = path
+                .strip_prefix(root)
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "template path {} was not under {}: {error}",
+                        path.display(),
+                        root.display()
+                    )
+                })
+                .to_string_lossy()
+                .replace('\\', "/");
+            templates.push((relative, path));
+        }
+    }
+}
+
+fn render_embedded_template_snapshot(templates: &[(String, PathBuf)]) -> String {
+    let mut output = String::new();
+    output
+        .push_str("// Generated from templates/project. Update with JIG_REFRESH_EMBEDDED_TEMPLATE_SNAPSHOT=1 cargo check -p jig-sh.\n");
+    output.push_str(&render_embedded_template_entries(templates, |path| {
+        let contents = fs::read_to_string(path)
+            .unwrap_or_else(|error| panic!("failed to read template {}: {error}", path.display()));
+        raw_string_literal(&contents)
+    }));
+    output
+}
+
+fn render_embedded_template_entries(
+    templates: &[(String, PathBuf)],
+    mut contents_expr: impl FnMut(&Path) -> String,
+) -> String {
+    let mut output = String::new();
+    output.push_str("pub(super) static EMBEDDED_TEMPLATE_FILES: &[EmbeddedTemplateFile] = &[\n");
+    for (relative, path) in templates {
+        writeln!(
+            output,
+            "    EmbeddedTemplateFile {{ relative_path: {relative:?}, contents: {} }},",
+            contents_expr(path),
+        )
+        .expect("writing generated template entries to string cannot fail");
+    }
+    output.push_str("];\n");
+    output
+}
+
+fn raw_string_literal(contents: &str) -> String {
+    // Sixteen hashes leaves ample delimiter space for generated shell/docs content
+    // while keeping generated snapshots readable for normal template content.
+    for hash_count in 1..=16 {
+        let hashes = "#".repeat(hash_count);
+        let closing = format!("\"{hashes}");
+        if !contents.contains(&closing) {
+            return format!("r{hashes}\"{contents}\"{hashes}");
+        }
+    }
+    println!(
+        "cargo:warning=embedded template snapshot used an escaped string literal because raw string delimiters exceeded 16 hashes"
+    );
+    escaped_string_literal(contents)
+}
+
+fn escaped_string_literal(contents: &str) -> String {
+    format!("{contents:?}")
+}
+
+fn replace_file(path: &Path, contents: &[u8]) {
+    let tmp_path = path.with_extension(format!("tmp.{}", std::process::id()));
+    fs::write(&tmp_path, contents).unwrap_or_else(|error| {
+        panic!(
+            "failed to write temporary embedded template snapshot {}: {error}",
+            tmp_path.display()
+        )
+    });
+    #[cfg(windows)]
+    if path.exists() {
+        fs::remove_file(path).unwrap_or_else(|error| {
+            panic!(
+                "failed to replace embedded template snapshot {}: {error}",
+                path.display()
+            )
+        });
+    }
+    fs::rename(&tmp_path, path).unwrap_or_else(|error| {
+        let _ = fs::remove_file(&tmp_path);
+        panic!(
+            "failed to replace embedded template snapshot {}: {error}",
+            path.display()
+        )
+    });
 }
 
 fn git_dirs(manifest_dir: &str) -> Vec<PathBuf> {
@@ -210,4 +356,30 @@ fn git_output(manifest_dir: &str, args: &[&str]) -> Option<String> {
         return None;
     }
     Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn main() {
+    println!("cargo:rerun-if-env-changed=JIG_ASSUME_RELEASE_BUILD");
+    println!("cargo:rerun-if-env-changed=JIG_EMBEDDED_TEMPLATE_SNAPSHOT");
+    println!("cargo:rerun-if-env-changed=JIG_REFRESH_EMBEDDED_TEMPLATE_SNAPSHOT");
+    println!("cargo:rerun-if-env-changed=CI");
+
+    let assume_release = env::var_os("JIG_ASSUME_RELEASE_BUILD").is_some();
+    let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set by Cargo");
+    add_git_rerun_inputs(&manifest_dir);
+    generate_embedded_template_manifest(&manifest_dir);
+
+    let detected_policy = detect_template_pin_policy(&manifest_dir);
+    let policy = if assume_release {
+        if detected_policy != TemplatePinPolicy::Released {
+            println!(
+                "cargo:warning=JIG_ASSUME_RELEASE_BUILD is overriding Jig's detected {detected_policy} build policy; use this only after version/tag validation."
+            );
+        }
+        TemplatePinPolicy::Released
+    } else {
+        detected_policy
+    };
+
+    emit_template_pin_policy(policy);
 }

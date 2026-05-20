@@ -80,13 +80,14 @@ jig init /path/to/target-repo \
 ```sh
 cd /path/to/target-repo
 jig adopt .
+jig adopt . --write
 ```
 
-`jig adopt` scans the existing repo first and fills omitted answers from what it finds, including the repo name, default branch, Rust crate roots, SQLx and migrations, frontend apps, package manager lockfiles, and existing GitHub Actions `runs-on` values. Pass explicit flags such as `--sqlx-enabled false` or `--frontend-app web:web:80` when you need to override the detected shape; run `jig adopt --help` for the full flag syntax.
+`jig adopt` scans the existing repo first and previews the managed-file changes without writing them. Re-run with `--write` after reviewing the summary; interactive writes ask for confirmation unless `--defaults` or `--no-input` is supplied. Omitted answers are filled from what adopt finds, including the repo name, default branch, Rust crate roots, SQLx and migrations, frontend apps, package manager lockfiles for detected frontend apps, and existing GitHub Actions `runs-on` values. Pass explicit flags such as `--sqlx-enabled false` or `--frontend-app web:web:80` when you need to override the detected shape; add `--json` when automation needs the full detection report. Run `jig adopt --help` for the full flag syntax.
 
 Frontend app inference only selects packages that already define `dev`, `lint`, `typecheck`, `build:bundle`, and `test:coverage` scripts.
 
-If the destination already has a root `Makefile`, `jig adopt` keeps it project-owned. Generated Jig commands always run through `scripts/jig`.
+If the destination already has a root `Makefile`, `jig adopt` keeps it project-owned. Generated Jig commands always run through `scripts/jig`. Write-mode adoption records `.agent/state/adopt-last.json` with backups for overwritten managed files; use it as the first stop when undoing an adoption write.
 
 **Update an adopted repo:**
 
@@ -137,6 +138,7 @@ Use this path when you want the fastest successful loop on a new or adopted repo
    jig init /path/to/new-repo --repo-name new-repo --sqlx-enabled false
    # or, inside an existing repo:
    jig adopt .
+   jig adopt . --write
    ```
 
 2. Enter the repo and run the unified readiness check.
@@ -227,7 +229,13 @@ Pass `--template` only when you want to dogfood a local checkout, fork, or priva
 --template /path/to/jig-sh --template-mode committed
 ```
 
-Unreleased or dirty local builds installed from a checkout refuse the implicit official `vVERSION` pin because that tag can describe older template code than the binary you are running. Dirty means tracked working-tree changes. Pass `--template /path/to/jig-sh --template-mode committed` to render from your checkout, or pass `--vcs-ref main` or another explicit official ref when you intentionally want remote template code.
+Unreleased or dirty local builds installed from a checkout use the templates embedded in the binary when `--template` is omitted, so local `cargo install --path crates/jig` workflows do not need a matching remote release tag. Dirty means tracked working-tree changes. Repos rendered this way record `_src_path = "embedded:jig-sh"`; their generated launcher first reuses a same-version `jig` on `PATH`. If no same-version binary is available, the launcher fails unless `JIG_INSTALL_ALLOW_EMBEDDED_SOURCE_FALLBACK=1` is set to knowingly install from `template_source_url` or the official release-tag install path. Pass `--template /path/to/jig-sh --template-mode committed` to render from your checkout, or pass `--vcs-ref main` or another explicit official ref when you intentionally want remote template code.
+
+When changing files under `templates/project`, refresh the packaged embedded-template snapshot before committing:
+
+```sh
+JIG_REFRESH_EMBEDDED_TEMPLATE_SNAPSHOT=1 cargo check -p jig-sh
+```
 
 Release automation that builds Jig from a git checkout must either fetch tags before building or set the build-time environment variable `JIG_ASSUME_RELEASE_BUILD=1` while running `cargo build` / `cargo install`, after validating the version and tag.
 

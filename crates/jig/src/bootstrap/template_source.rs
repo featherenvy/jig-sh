@@ -6,17 +6,18 @@ use anyhow::{Context, Result, bail};
 use tempfile::TempDir;
 use toml::{Table, Value as TomlValue};
 
-use crate::process::{require_success, run_checked_output};
-
 use super::git::{ensure_clean_git_work_tree, git_stdout, is_git_work_tree};
 use super::path::absolute_path_from;
 use super::{
     ANSWERS_FILE, GIT_BIN_ENV, REMOTE_TEMPLATE_MODE_ERROR, TEMPLATE_LOCAL_PATH_KEY,
     TEMPLATE_MODE_KEY, TemplateMode, UpdateOpts, external_program, read_answers_toml,
 };
+use crate::process::{require_success, run_checked_output};
 
 const COMMIT_KEY: &str = "_commit";
 const SRC_PATH_KEY: &str = "_src_path";
+// Keep this sentinel in sync with templates/project/scripts/install-jig.sh.jinja.
+pub(super) const EMBEDDED_TEMPLATE_SOURCE: &str = "embedded:jig-sh";
 
 #[derive(Clone, Debug, Default)]
 pub(super) struct TemplateIdentity {
@@ -90,21 +91,27 @@ impl PrivateAnswerOverrides {
 #[derive(Clone, Debug)]
 pub(super) struct PreparedTemplateSource {
     identity: TemplateIdentity,
-    render_root: PathBuf,
+    render_source: TemplateRenderSource,
     _checkout: Option<Arc<TempDir>>,
+}
+
+#[derive(Clone, Debug)]
+pub(super) enum TemplateRenderSource {
+    Filesystem(PathBuf),
+    Embedded,
 }
 
 impl PreparedTemplateSource {
     fn new(
         source: String,
-        render_root: PathBuf,
+        render_source: TemplateRenderSource,
         resolved_commit: Option<String>,
         local_path: Option<String>,
         checkout: Option<Arc<TempDir>>,
     ) -> Self {
         Self {
             identity: TemplateIdentity::new(source, resolved_commit, local_path),
-            render_root,
+            render_source,
             _checkout: checkout,
         }
     }
@@ -113,8 +120,8 @@ impl PreparedTemplateSource {
         self.identity.source()
     }
 
-    pub(super) fn render_root(&self) -> &Path {
-        &self.render_root
+    pub(super) fn render_source(&self) -> &TemplateRenderSource {
+        &self.render_source
     }
 
     pub(super) fn vcs_ref(&self) -> Option<&str> {
@@ -138,7 +145,7 @@ impl PreparedTemplateSource {
     ) -> Self {
         Self::new(
             source,
-            render_root,
+            TemplateRenderSource::Filesystem(render_root),
             vcs_ref,
             private_answers.template_local_path,
             None,
@@ -201,6 +208,22 @@ pub(super) fn prepare_template_source_from_base(
     vcs_ref: Option<&str>,
     path_base: &Path,
 ) -> Result<PreparedTemplateSource> {
+    if is_embedded_template_source(template) {
+        if template_mode.is_some() {
+            bail!("--template-mode only applies to local git template paths.");
+        }
+        if vcs_ref.is_some() {
+            bail!("--vcs-ref only applies to remote templates or local git template paths.");
+        }
+        return Ok(PreparedTemplateSource::new(
+            EMBEDDED_TEMPLATE_SOURCE.into(),
+            TemplateRenderSource::Embedded,
+            None,
+            None,
+            None,
+        ));
+    }
+
     if is_remote_template_source(template) {
         if template_mode.is_some() {
             bail!(REMOTE_TEMPLATE_MODE_ERROR);
@@ -238,7 +261,7 @@ pub(super) fn prepare_template_source_from_base(
         }
         return Ok(PreparedTemplateSource::new(
             local_template.display().to_string(),
-            local_template,
+            TemplateRenderSource::Filesystem(local_template),
             vcs_ref.map(str::to_string),
             None,
             None,
@@ -261,7 +284,7 @@ fn prepare_remote_template_source(
 
     Ok(PreparedTemplateSource::new(
         template.to_string(),
-        render_root,
+        TemplateRenderSource::Filesystem(render_root),
         Some(resolved_vcs_ref),
         None,
         Some(checkout),
@@ -289,7 +312,7 @@ fn prepare_committed_template_source(
 
     Ok(PreparedTemplateSource::new(
         template_path.clone(),
-        render_root,
+        TemplateRenderSource::Filesystem(render_root),
         Some(resolved_vcs_ref),
         Some(template_path),
         checkout,
@@ -382,7 +405,10 @@ fn ensure_update_template_identity(
     stored: &StoredTemplateState,
     prepared: &PreparedTemplateSource,
 ) -> Result<()> {
-    if !stored.has_source_path() || template_identities_match(stored, prepared) {
+    if !stored.has_source_path()
+        || is_embedded_template_source(stored.source_path())
+        || template_identities_match(stored, prepared)
+    {
         return Ok(());
     }
 
@@ -462,7 +488,10 @@ fn inherited_update_template_mode(
     requested_mode: Option<TemplateMode>,
     stored: &StoredTemplateState,
 ) -> Option<TemplateMode> {
-    if requested_mode.is_some() || is_remote_template_source(template) {
+    if requested_mode.is_some()
+        || is_remote_template_source(template)
+        || is_embedded_template_source(template)
+    {
         requested_mode
     } else {
         stored.template_mode
@@ -540,4 +569,8 @@ pub(super) fn test_final_update_template_state(
 
 pub(super) fn is_remote_template_source(template: &str) -> bool {
     template.contains("://") || template.starts_with("git@") && template.contains(':')
+}
+
+pub(super) fn is_embedded_template_source(template: &str) -> bool {
+    template == EMBEDDED_TEMPLATE_SOURCE
 }

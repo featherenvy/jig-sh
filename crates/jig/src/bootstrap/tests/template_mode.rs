@@ -14,6 +14,7 @@ fn adopt_local_git_template_defaults_to_committed_mode() {
         template_mode: None,
         vcs_ref: None,
         force: false,
+        write: true,
         defaults: true,
         no_input: true,
         answers: AnswerOpts {
@@ -52,6 +53,7 @@ fn adopt_local_git_template_rejects_dirty_committed_source() {
         template_mode: None,
         vcs_ref: None,
         force: false,
+        write: true,
         defaults: true,
         no_input: true,
         answers: AnswerOpts {
@@ -184,7 +186,7 @@ fn update_replaces_jig_block_without_overwriting_custom_root_agents() {
         template: None,
         template_mode: None,
         recopy: false,
-        force: false,
+        force: true,
         vcs_ref: None,
         defaults: true,
         no_input: true,

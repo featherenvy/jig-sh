@@ -234,8 +234,19 @@ pub(super) fn infer_sqlx(
                 "SQLx default .sqlx/".into(),
             ));
         }
-        if synthesized_migration_dir || synthesized_metadata_dir {
-            let warning = "SQLx was detected but migration or metadata directories were not; using default SQLx paths unless overridden";
+        let warning = match (synthesized_migration_dir, synthesized_metadata_dir) {
+            (true, true) => Some(
+                "SQLx was detected but migration and metadata directories were not; using default SQLx paths unless overridden",
+            ),
+            (true, false) => Some(
+                "SQLx was detected but no migration directory was found; using default migrations/ unless overridden",
+            ),
+            (false, true) => Some(
+                "SQLx metadata directory was not detected; using default .sqlx/ unless overridden",
+            ),
+            (false, false) => None,
+        };
+        if let Some(warning) = warning {
             push_scan_warning(warnings, root, warning);
             if synthesized_migration_dir {
                 if let Some(migration_dir) = &mut out.migration_dir {

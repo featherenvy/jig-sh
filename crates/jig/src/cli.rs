@@ -39,22 +39,31 @@ pub(crate) use work::{
     about = "Repo-local agent runtime and bootstrapper for jig.sh"
 )]
 struct Cli {
+    #[arg(
+        long,
+        global = true,
+        help = "Print structured JSON output when a command defaults to human-readable output"
+    )]
+    json: bool,
     #[command(subcommand)]
     command: CommandKind,
 }
 
 const TEMPLATE_ERROR_HINT: &str = "\
 Templates:
-  Omit --template to use the official jig-sh harness template:
+  Omit --template to use the default jig-sh harness template.
+  Release builds use the official template:
   https://github.com/bpcakes/jig-sh.git
+  Unreleased local builds use templates embedded in the jig binary.
 
 If you passed --template without a value, either omit it to use the default
 or provide a path/URL.
 
 Use one of:
   jig adopt .
+  jig adopt . --write
   jig init /path/to/new-repo --repo-name new-repo --sqlx-enabled false
-  jig adopt . --template /path/to/jig-sh
+  jig adopt . --write --template /path/to/jig-sh
 
 Pass --template only for a local checkout, fork, or private template.";
 

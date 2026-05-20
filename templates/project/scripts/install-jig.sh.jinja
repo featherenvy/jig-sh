@@ -72,6 +72,7 @@ JIG_VERSION="$(read_field jig_version)"
 SRC_PATH="$(read_field _src_path)"
 TEMPLATE_COMMIT="$(read_field _commit)"
 TEMPLATE_SOURCE_URL="$(read_field template_source_url)"
+OFFICIAL_JIG_SOURCE="https://github.com/bpcakes/jig-sh.git"
 
 if [[ -z "$JIG_VERSION" ]]; then
   echo "Failed to read jig_version from $ANSWERS_FILE." >&2
@@ -86,6 +87,12 @@ fi
 is_remote_source() {
   local source="$1"
   [[ "$source" == *"://"* || "$source" == git@*:* ]]
+}
+
+is_embedded_source() {
+  local source="$1"
+  # Keep this sentinel in sync with EMBEDDED_TEMPLATE_SOURCE in the Rust runtime.
+  [[ "$source" == "embedded:jig-sh" ]]
 }
 
 # JIG_INSTALL_PROFILE is for direct installer calls. The scripts/jig launcher
@@ -375,6 +382,15 @@ install_from_git_source() {
   assert_exact_version "$BIN_PATH"
 }
 
+resolve_installed_jig_for_embedded_source() {
+  local candidate
+  candidate="$(command -v jig 2>/dev/null || true)"
+  [[ -n "$candidate" ]] || return 1
+  candidate="$(resolve_executable_path "$candidate")" || return 1
+  assert_exact_version "$candidate" >/dev/null || return 1
+  printf '%s\n' "$candidate"
+}
+
 if [[ -n "${JIG_DEV_BIN:-}" ]]; then
   install_from_dev_bin
   exit 0
@@ -400,6 +416,20 @@ if [[ -z "$INSTALL_ROOT_ARG" ]] && is_jig_source_checkout "$ROOT_DIR"; then
   install_from_local_source "$ROOT_DIR"
   printf '%s\n' "$BIN_PATH"
   exit 0
+fi
+
+if is_embedded_source "$SRC_PATH"; then
+  if BIN_PATH="$(resolve_installed_jig_for_embedded_source)"; then
+    printf '%s\n' "$BIN_PATH"
+    exit 0
+  elif [[ "${JIG_INSTALL_ALLOW_EMBEDDED_SOURCE_FALLBACK:-}" != "1" ]]; then
+    echo "This repo was rendered from embedded Jig templates, but no same-version jig binary was found on PATH." >&2
+    echo "Install the matching jig binary or set JIG_DEV_BIN to it. To knowingly install from ${TEMPLATE_SOURCE_URL:-$OFFICIAL_JIG_SOURCE} instead, set JIG_INSTALL_ALLOW_EMBEDDED_SOURCE_FALLBACK=1." >&2
+    exit 1
+  else
+    SRC_PATH="${TEMPLATE_SOURCE_URL:-$OFFICIAL_JIG_SOURCE}"
+    echo "Warning: installing from $SRC_PATH instead of the embedded template payload that adopted this repo." >&2
+  fi
 fi
 
 if [[ "$INSTALL_PROFILE" != "default" && -z "$INSTALL_ROOT_ARG" ]]; then

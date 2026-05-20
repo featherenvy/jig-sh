@@ -41,7 +41,7 @@ enum RustCrateRole {
 #[derive(Clone, Debug)]
 enum CrateGuideAction {
     Existing,
-    Scaffold,
+    MissingProjectOwned,
     SkipNonProduction(String),
     NotDirectConfiguredCrate,
 }
@@ -162,7 +162,7 @@ impl CrateGuideAction {
     fn as_str(&self) -> &'static str {
         match self {
             Self::Existing => "existing",
-            Self::Scaffold => "scaffold",
+            Self::MissingProjectOwned => "missing_project_owned",
             Self::SkipNonProduction(_) => "skip_non_production",
             Self::NotDirectConfiguredCrate => "not_direct_configured_crate",
         }
@@ -221,7 +221,7 @@ fn guide_action(
         return CrateGuideAction::Existing;
     }
     if is_direct_child_of_configured_crate_root(root, crate_dir, rust_crate_roots) {
-        return CrateGuideAction::Scaffold;
+        return CrateGuideAction::MissingProjectOwned;
     }
     CrateGuideAction::NotDirectConfiguredCrate
 }

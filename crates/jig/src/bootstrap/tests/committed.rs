@@ -36,6 +36,70 @@ fn init_rejects_vcs_ref_for_non_git_local_template() {
 }
 
 #[test]
+fn update_allows_embedded_source_to_switch_to_committed_checkout() {
+    let _guard = lock_env();
+    let temp = tempdir().unwrap();
+    let repo = temp.path().join("repo");
+    write_test_crate_guide(&repo);
+    let template = materialize_template_git_worktree();
+    commit_template_root_guide(template.path(), "# Checkout Marker\n", "template update");
+
+    with_test_build_template_pin_policy(BuildTemplatePinPolicy::Unreleased, || {
+        run_adopt(AdoptOpts {
+            path: repo.clone(),
+            template: None,
+            template_mode: None,
+            vcs_ref: None,
+            force: false,
+            write: true,
+            defaults: true,
+            no_input: true,
+            answers: AnswerOpts {
+                repo_name: Some("demo".into()),
+                sqlx_enabled: Some(false),
+                ..AnswerOpts::default()
+            },
+        })
+        .unwrap();
+    });
+
+    run_update(UpdateOpts {
+        path: repo.clone(),
+        template: Some(template.path().display().to_string()),
+        template_mode: Some(TemplateMode::Committed),
+        recopy: false,
+        force: true,
+        vcs_ref: None,
+        defaults: true,
+        no_input: true,
+    })
+    .unwrap();
+
+    let root_guide = fs::read_to_string(repo.join("AGENTS.md")).unwrap();
+    assert!(root_guide.contains("Checkout Marker"));
+
+    let expected_local_path = fs::canonicalize(template.path())
+        .unwrap()
+        .display()
+        .to_string();
+    let answers = read_answers_toml(&repo.join(".jig.toml")).unwrap();
+    assert_eq!(
+        answers.get("_src_path").and_then(TomlValue::as_str),
+        Some(expected_local_path.as_str())
+    );
+    assert_eq!(
+        answers.get(TEMPLATE_MODE_KEY).and_then(TomlValue::as_str),
+        Some(TemplateMode::Committed.as_str())
+    );
+    assert_eq!(
+        answers
+            .get(TEMPLATE_LOCAL_PATH_KEY)
+            .and_then(TomlValue::as_str),
+        Some(expected_local_path.as_str())
+    );
+}
+
+#[test]
 fn update_committed_mode_rewrites_normalized_remote_source_to_local_checkout() {
     let _guard = lock_env();
     let fixture = NormalizedRemoteCommittedFixture::new(false);

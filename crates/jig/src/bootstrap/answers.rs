@@ -195,10 +195,6 @@ impl RenderAnswers {
         &self.template_source_url
     }
 
-    pub(super) fn rust_crate_roots(&self) -> &[String] {
-        &self.rust_crate_roots
-    }
-
     pub(super) fn frontend_apps(&self) -> &[FrontendApp] {
         &self.frontend_apps
     }

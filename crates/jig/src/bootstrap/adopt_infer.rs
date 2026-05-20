@@ -67,6 +67,10 @@ pub(super) struct AdoptInference {
     metadata: BTreeMap<String, InferenceMetadata>,
 }
 
+pub(super) struct AdoptionReview {
+    pub(super) items: Vec<String>,
+}
+
 pub(super) fn infer_adopt_answers(root: &Path) -> AdoptInference {
     let mut warnings = Vec::new();
     let scan = RepoScan::collect(root, &mut warnings);
@@ -74,10 +78,15 @@ pub(super) fn infer_adopt_answers(root: &Path) -> AdoptInference {
     let default_branch = infer_default_branch_with_metadata(root, &mut warnings);
     let rust_crate_roots = infer_rust_crate_roots_with_metadata(root, &mut warnings);
     let repo_topology = infer_repo_topology(root, &scan, &rust_crate_roots.roots, &mut warnings);
-    let package_manager = infer_package_manager_with_metadata(root, &scan, &mut warnings);
+    let mut package_manager_warnings = Vec::new();
+    let package_manager =
+        infer_package_manager_with_metadata(root, &scan, &mut package_manager_warnings);
     let commands = infer_commands(root, &scan, &mut warnings);
     let frontend_apps =
         infer_frontend_apps_with_metadata(root, repo_name.value.as_deref(), &mut warnings);
+    if !frontend_apps.apps.is_empty() {
+        warnings.extend(package_manager_warnings);
+    }
     let github_ci = infer_ci_github_runner_with_metadata(root, &scan, &mut warnings);
     let mut inference = AdoptInference {
         repo_name: repo_name.value.clone(),
@@ -176,16 +185,16 @@ pub(super) fn infer_adopt_answers(root: &Path) -> AdoptInference {
             inference.record_command_metadata(key, candidate);
         }
     }
-    if let Some(value) = inference.web_package_manager.clone() {
-        inference.record_metadata(
-            "web_package_manager",
-            json!(value),
-            package_manager.sources,
-            Confidence::High,
-            Vec::new(),
-        );
-    }
     if !inference.frontend_apps.is_empty() {
+        if let Some(value) = inference.web_package_manager.clone() {
+            inference.record_metadata(
+                "web_package_manager",
+                json!(value),
+                package_manager.sources,
+                Confidence::High,
+                Vec::new(),
+            );
+        }
         inference.record_metadata(
             "frontend_apps",
             json!(inference.frontend_apps.clone()),
@@ -326,7 +335,9 @@ pub(super) fn infer_adopt_answers(root: &Path) -> AdoptInference {
                 .join(", ")
         ));
     }
-    if let Some(package_manager) = inference.web_package_manager.as_deref() {
+    if !inference.frontend_apps.is_empty()
+        && let Some(package_manager) = inference.web_package_manager.as_deref()
+    {
         inference
             .signals
             .push(format!("package manager: {package_manager}"));
@@ -369,12 +380,6 @@ impl AdoptInference {
             answer_shape,
             "ci_github_runner",
         );
-        fill_string(
-            &mut answers.web_package_manager,
-            self.web_package_manager.as_deref(),
-            answer_shape,
-            "web_package_manager",
-        );
         fill_vec(
             &mut answers.rust_crate_roots,
             &self.rust_crate_roots,
@@ -386,6 +391,14 @@ impl AdoptInference {
             &self.frontend_apps,
             answer_shape,
         );
+        if !answers.frontend_apps.is_empty() || answer_shape.contains_key("web_package_manager") {
+            fill_string(
+                &mut answers.web_package_manager,
+                self.web_package_manager.as_deref(),
+                answer_shape,
+                "web_package_manager",
+            );
+        }
         fill_string(
             &mut answers.rust_fmt_check_command,
             self.rust_fmt_check_command.as_deref(),
@@ -460,12 +473,62 @@ impl AdoptInference {
             [app] => format!("one {} app at {}", app.kind, app.dir),
             apps => format!("{} frontend apps", apps.len()),
         };
+        if self.frontend_apps.is_empty() {
+            return format!("{rust}, {sqlx}, {frontend}");
+        }
         let package_manager = self
             .web_package_manager
             .as_deref()
             .map(|value| format!("{value} lockfile"))
             .unwrap_or_else(|| "no web lockfile".into());
         format!("{rust}, {sqlx}, {frontend}, {package_manager}")
+    }
+
+    pub(super) fn adoption_review(
+        &self,
+        resolved_answers: &AnswerOpts,
+        explicit_answers: &AnswerOpts,
+        answer_shape: &AnswerInputShape,
+    ) -> AdoptionReview {
+        let mut items = Vec::new();
+        items.push(format!("stack: {}", self.detected_stack_label()));
+        if self.frontend_apps.is_empty() {
+            items.push("frontend: no apps configured; web package-manager lockfiles are ignored until a frontend app is supplied".into());
+        } else if let Some(package_manager) = resolved_answers.web_package_manager.as_deref() {
+            items.push(format!(
+                "frontend: {} app(s), using {package_manager}",
+                self.frontend_apps.len()
+            ));
+        }
+        if self.sqlx_enabled == Some(true) {
+            match resolved_answers.rust_migration_dir.as_deref() {
+                Some(dir) => items.push(format!("SQLx: enabled with migrations at {dir}")),
+                None => {
+                    items.push(
+                        "SQLx: enabled; confirm migration and metadata paths in .jig.toml".into(),
+                    );
+                }
+            }
+        }
+        if matches!(
+            self.rust_crate_root_source_kind,
+            RustCrateRootSourceKind::WorkspaceFallback
+        ) {
+            items.push(
+                "Rust: workspace fallback used; confirm rust_crate_roots in .jig.toml".into(),
+            );
+        }
+        let overrides = self.overrides(explicit_answers, answer_shape);
+        if !overrides.is_empty() {
+            items.push(format!("overrides: {} explicit answer(s)", overrides.len()));
+        }
+        if !self.warnings.is_empty() {
+            items.push(format!(
+                "warnings: {} item(s); review before writing",
+                self.warnings.len()
+            ));
+        }
+        AdoptionReview { items }
     }
 
     pub(super) fn report(&self) -> JsonValue {
@@ -483,7 +546,11 @@ impl AdoptInference {
             "rust_clippy_command": self.rust_clippy_command,
             "rust_test_command": self.rust_test_command,
             "rust_test_locked_command": self.rust_test_locked_command,
-            "web_package_manager": self.web_package_manager,
+            "web_package_manager": if self.frontend_apps.is_empty() {
+                JsonValue::Null
+            } else {
+                json!(self.web_package_manager)
+            },
             "frontend_apps": self.frontend_apps,
             "frontend_profiles": self.frontend_profiles,
             "ci_github_runner": self.ci_github_runner,
@@ -578,7 +645,7 @@ mod tests {
 
     use super::super::git::git;
     use super::*;
-    use crate::bootstrap::adopt_infer::scan::MAX_SCAN_WARNINGS;
+    use crate::bootstrap::adopt_infer::scan::{MAX_SCAN_DEPTH, MAX_SCAN_WARNINGS};
 
     fn infer_sqlx(root: &Path, warnings: &mut Vec<String>) -> super::rust_sqlx::SqlxInference {
         let scan = RepoScan::collect(root, warnings);
@@ -698,6 +765,99 @@ mod tests {
         assert_eq!(
             warnings.last().map(String::as_str),
             Some("additional inference scan warnings omitted")
+        );
+    }
+
+    #[test]
+    fn generated_dependency_dirs_are_skipped_without_depth_warnings() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(
+            temp.path()
+                .join("terraform/environments/production/.terraform/providers/registry.terraform.io/hashicorp/aws"),
+        )
+        .unwrap();
+        fs::create_dir_all(
+            temp.path().join(
+                "Perdify-iOS/PerdifyGRPC/.build/checkouts/swift-nio-transport-services/Sources",
+            ),
+        )
+        .unwrap();
+
+        let mut warnings = Vec::new();
+        let scan = RepoScan::collect(temp.path(), &mut warnings);
+
+        assert!(
+            !scan
+                .dirs_named("registry.terraform.io")
+                .any(|path| path.ends_with("registry.terraform.io")),
+            "expected .terraform provider tree to be skipped"
+        );
+        assert!(
+            !scan
+                .dirs_named("checkouts")
+                .any(|path| path.ends_with("checkouts")),
+            "expected SwiftPM .build tree to be skipped"
+        );
+        assert!(
+            warnings
+                .iter()
+                .all(|warning| !warning.contains("maximum inference scan depth reached")),
+            "generated dependency dirs should not emit depth warnings: {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn gitignored_paths_are_excluded_from_repo_scan() {
+        let temp = tempfile::tempdir().unwrap();
+        git(temp.path(), ["init"]).unwrap();
+        fs::write(temp.path().join(".gitignore"), "ignored/\n").unwrap();
+        fs::create_dir_all(temp.path().join("ignored/deep")).unwrap();
+        fs::create_dir_all(temp.path().join("visible")).unwrap();
+        fs::write(temp.path().join("ignored/deep/package.json"), "{}").unwrap();
+        fs::write(temp.path().join("visible/package.json"), "{}").unwrap();
+
+        let mut warnings = Vec::new();
+        let scan = RepoScan::collect(temp.path(), &mut warnings);
+
+        let package_paths = scan
+            .named_files("package.json")
+            .map(|path| {
+                path.strip_prefix(temp.path())
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(package_paths, vec!["visible/package.json"]);
+        assert!(
+            warnings
+                .iter()
+                .all(|warning| !warning.contains("maximum inference scan depth reached")),
+            "gitignored paths should not consume depth budget: {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn scan_depth_warnings_are_reported_once() {
+        let temp = tempfile::tempdir().unwrap();
+        for branch in ["left", "right"] {
+            let mut path = temp.path().join(branch);
+            for level in 0..(MAX_SCAN_DEPTH + 2) {
+                path = path.join(format!("level-{level}"));
+            }
+            fs::create_dir_all(path).unwrap();
+        }
+
+        let mut warnings = Vec::new();
+        RepoScan::collect(temp.path(), &mut warnings);
+
+        assert_eq!(
+            warnings
+                .iter()
+                .filter(|warning| warning.contains("maximum inference scan depth reached"))
+                .count(),
+            1,
+            "expected one depth warning, got {warnings:?}"
         );
     }
 
@@ -1162,6 +1322,23 @@ edition = "2024"
     }
 
     #[test]
+    fn absent_optional_frontend_workspace_conventions_do_not_warn() {
+        let temp = tempfile::tempdir().unwrap();
+
+        let inference = infer_adopt_answers(temp.path());
+
+        assert!(inference.frontend_apps.is_empty());
+        assert!(
+            inference.warnings.iter().all(|warning| {
+                !warning.contains("pnpm-workspace.yaml")
+                    && !warning.contains("could not read directory")
+            }),
+            "absent optional frontend conventions should stay quiet: {:?}",
+            inference.warnings
+        );
+    }
+
+    #[test]
     fn empty_pnpm_workspace_is_reported_as_warning() {
         let temp = tempfile::tempdir().unwrap();
         fs::write(temp.path().join("pnpm-workspace.yaml"), "packages:\n").unwrap();
@@ -1594,8 +1771,51 @@ sqlx = "0.8"
 
         assert_eq!(inference.sqlx_enabled, Some(true));
         assert!(inference.warnings.iter().any(|warning| {
-            warning.contains("SQLx was detected but migration or metadata directories were not")
+            warning.contains("SQLx was detected but migration and metadata directories were not")
         }));
+    }
+
+    #[test]
+    fn sqlx_migration_dir_without_metadata_reports_metadata_warning_only() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::write(
+            temp.path().join("Cargo.toml"),
+            r#"[package]
+name = "demo"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+sqlx = "0.8"
+"#,
+        )
+        .unwrap();
+        fs::create_dir_all(temp.path().join("crates/perdify-db/migrations")).unwrap();
+        fs::write(
+            temp.path()
+                .join("crates/perdify-db/migrations/20260101000000_init.sql"),
+            "select 1;",
+        )
+        .unwrap();
+
+        let inference = infer_adopt_answers(temp.path());
+
+        assert_eq!(inference.sqlx_enabled, Some(true));
+        assert_eq!(
+            inference.rust_migration_dir.as_deref(),
+            Some("crates/perdify-db/migrations")
+        );
+        assert!(
+            inference
+                .warnings
+                .iter()
+                .any(|warning| { warning.contains("SQLx metadata directory was not detected") })
+        );
+        assert!(
+            inference.warnings.iter().all(|warning| {
+                !warning.contains("migration and metadata directories were not")
+            })
+        );
     }
 
     #[test]

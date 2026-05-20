@@ -30,6 +30,8 @@ pub(super) struct BootstrapCopyRequest<'a> {
     pub(super) answer_input: Option<AnswerInput>,
     pub(super) use_defaults: bool,
     pub(super) force: bool,
+    pub(super) dry_run: bool,
+    pub(super) backup_root: Option<PathBuf>,
     pub(super) seed_repo_path: Option<&'a Path>,
     pub(super) progress: CliProgress,
 }
@@ -101,7 +103,9 @@ pub(super) fn render_and_copy_bootstrap_template(
         request.destination,
         ApplyRenderOptions {
             force: request.force,
+            dry_run: request.dry_run,
             allow_answers_overwrite: false,
+            backup_root: request.backup_root.as_deref(),
             conflict_message: "Adopt would overwrite template-managed paths. No files were changed. Re-run with --force or clear these paths first:",
             progress: request.progress,
         },

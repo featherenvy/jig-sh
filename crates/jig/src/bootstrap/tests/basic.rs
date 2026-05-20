@@ -51,6 +51,9 @@ fn seed_answers_only_serializes_provided_values() {
 
 #[test]
 fn initial_next_steps_are_tailored_to_rendered_config() {
+    assert_eq!(template_progress_label(None), "default jig-sh template");
+    assert_eq!(template_progress_label(Some("/tmp/jig-sh")), "/tmp/jig-sh");
+
     let destination = PathBuf::from("/tmp/demo");
     let result = initial_copy::BootstrapCopyResult {
         default_branch: Some("main".into()),
@@ -115,6 +118,40 @@ fn initial_next_steps_are_tailored_to_rendered_config() {
         steps
             .iter()
             .any(|step| step.contains("Commit the adoption diff"))
+    );
+
+    let preview_steps = initial_next_steps(
+        InitialCommand::Adopt,
+        Path::new("/tmp/preview"),
+        &initial_copy::BootstrapCopyResult {
+            default_branch: Some("main".into()),
+            bootstrap_command_configured: true,
+            frontend_apps_configured: true,
+            codex_skills_configured: true,
+            sqlx_enabled: true,
+            schema_dump_enabled: true,
+            render_preview: initial_copy::AdoptionRenderPreview::default(),
+            apply_report: sync::ApplyRenderReport {
+                dry_run: true,
+                ..sync::ApplyRenderReport::default()
+            },
+            notes: Vec::new(),
+        },
+    );
+    assert!(
+        preview_steps
+            .iter()
+            .any(|step| step.contains("jig adopt --write"))
+    );
+    assert!(
+        preview_steps
+            .iter()
+            .any(|step| step == "No files were changed by this preview.")
+    );
+    assert!(
+        !preview_steps
+            .iter()
+            .any(|step| step.starts_with("scripts/jig"))
     );
 
     let quoted_steps = initial_next_steps(
@@ -260,6 +297,8 @@ fn apply_staged_render_does_not_rewrite_preserved_files() {
         ApplyRenderOptions {
             force: true,
             allow_answers_overwrite: true,
+            dry_run: false,
+            backup_root: None,
             conflict_message: "conflict",
             progress: CliProgress::new("test"),
         },
@@ -302,6 +341,8 @@ fn apply_staged_render_reports_managed_block_insertions_only_when_inserted() {
         ApplyRenderOptions {
             force: true,
             allow_answers_overwrite: true,
+            dry_run: false,
+            backup_root: None,
             conflict_message: "conflict",
             progress: CliProgress::new("test"),
         },
@@ -317,6 +358,8 @@ fn apply_staged_render_reports_managed_block_insertions_only_when_inserted() {
         ApplyRenderOptions {
             force: true,
             allow_answers_overwrite: true,
+            dry_run: false,
+            backup_root: None,
             conflict_message: "conflict",
             progress: CliProgress::new("test"),
         },
@@ -326,6 +369,50 @@ fn apply_staged_render_reports_managed_block_insertions_only_when_inserted() {
     assert!(second_report.managed_blocks_inserted.is_empty());
     assert!(second_report.managed_blocks_rendered.is_empty());
     assert_eq!(second_report.files_unchanged, vec!["AGENTS.md"]);
+}
+
+#[test]
+fn apply_staged_render_allows_root_agents_managed_block_update_without_force() {
+    use std::collections::BTreeSet;
+
+    let staged_root = tempdir().unwrap();
+    let rendered_destination = staged_root.path().join("rendered");
+    let destination = tempdir().unwrap();
+    fs::create_dir_all(&rendered_destination).unwrap();
+    fs::write(
+        rendered_destination.join("AGENTS.md"),
+        "# Existing\n\nCustom repo guidance.\n\n<!-- BEGIN JIG MANAGED BLOCK -->\nnew\n<!-- END JIG MANAGED BLOCK -->\n",
+    )
+    .unwrap();
+    fs::write(
+        destination.path().join("AGENTS.md"),
+        "# Existing\n\nCustom repo guidance.\n\n<!-- BEGIN JIG MANAGED BLOCK -->\nold\n<!-- END JIG MANAGED BLOCK -->\n",
+    )
+    .unwrap();
+
+    let staged = staged_render::StagedRender {
+        _root: staged_root,
+        destination: rendered_destination,
+        managed_paths: BTreeSet::from([PathBuf::from("AGENTS.md")]),
+    };
+    let report = apply_staged_render(
+        &staged,
+        destination.path(),
+        ApplyRenderOptions {
+            force: false,
+            allow_answers_overwrite: true,
+            dry_run: false,
+            backup_root: None,
+            conflict_message: "conflict",
+            progress: CliProgress::new("test"),
+        },
+    )
+    .unwrap();
+
+    let root_guide = fs::read_to_string(destination.path().join("AGENTS.md")).unwrap();
+    assert_eq!(report.files_modified, vec!["AGENTS.md"]);
+    assert!(root_guide.contains("Custom repo guidance."));
+    assert!(root_guide.contains("new"));
 }
 
 #[cfg(unix)]
@@ -523,6 +610,7 @@ fn adopt_defaults_to_tooling_only_when_sqlx_answers_are_omitted() {
         template_mode: None,
         vcs_ref: None,
         force: false,
+        write: true,
         defaults: true,
         no_input: true,
         answers: AnswerOpts::default(),
@@ -546,6 +634,184 @@ fn adopt_defaults_to_tooling_only_when_sqlx_answers_are_omitted() {
     assert!(answers.contains("repo_name = \"repo\""));
     assert!(answers.contains("sqlx_enabled = false"));
     assert!(answers.contains("schema_dump_enabled = false"));
+}
+
+#[test]
+fn adopt_previews_by_default_without_writing_files() {
+    let _guard = lock_env();
+    let temp = tempdir().unwrap();
+    let template = materialize_template_worktree();
+    let repo = temp.path().join("repo");
+    fs::create_dir_all(&repo).unwrap();
+    fs::write(repo.join("package.json"), r#"{"private":true}"#).unwrap();
+    fs::write(repo.join("bun.lock"), "").unwrap();
+
+    let output = run_adopt(AdoptOpts {
+        path: repo.clone(),
+        template: Some(template.path().display().to_string()),
+        template_mode: None,
+        vcs_ref: None,
+        force: false,
+        write: false,
+        defaults: true,
+        no_input: true,
+        answers: AnswerOpts::default(),
+    })
+    .unwrap();
+
+    assert_eq!(output["render_mode"], "preview");
+    assert_eq!(output["write"], false);
+    assert_eq!(output["adoption_report"]["dry_run"], true);
+    assert_eq!(
+        output["detection_report"]["web_package_manager"],
+        serde_json::Value::Null
+    );
+    assert_eq!(
+        output["adoption_profile"]["detected_stack"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|value| value.as_str().unwrap())
+            .collect::<Vec<_>>(),
+        Vec::<&str>::new()
+    );
+    assert!(
+        output["next_steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|step| step.as_str().unwrap().contains("jig adopt --write"))
+    );
+    assert!(!repo.join(".jig.toml").exists());
+    assert!(!repo.join("scripts/jig").exists());
+}
+
+#[test]
+fn adopt_preview_reports_conflicts_without_overwriting() {
+    let _guard = lock_env();
+    let temp = tempdir().unwrap();
+    let template = materialize_template_worktree();
+    let repo = temp.path().join("repo");
+    fs::create_dir_all(&repo).unwrap();
+
+    run_adopt(AdoptOpts {
+        path: repo.clone(),
+        template: Some(template.path().display().to_string()),
+        template_mode: None,
+        vcs_ref: None,
+        force: false,
+        write: true,
+        defaults: true,
+        no_input: true,
+        answers: AnswerOpts::default(),
+    })
+    .unwrap();
+    fs::write(repo.join(".agent/PLANS.md"), "repo-owned plan notes\n").unwrap();
+
+    let output = run_adopt(AdoptOpts {
+        path: repo.clone(),
+        template: Some(template.path().display().to_string()),
+        template_mode: None,
+        vcs_ref: None,
+        force: false,
+        write: false,
+        defaults: true,
+        no_input: true,
+        answers: AnswerOpts::default(),
+    })
+    .unwrap();
+
+    assert_eq!(output["render_mode"], "preview");
+    assert!(
+        output["adoption_report"]["conflicts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|conflict| {
+                conflict["path"] == ".agent/PLANS.md" && conflict["kind"] == "modified_managed_path"
+            })
+    );
+    assert_eq!(
+        fs::read_to_string(repo.join(".agent/PLANS.md")).unwrap(),
+        "repo-owned plan notes\n"
+    );
+}
+
+#[test]
+fn adopt_write_records_backup_receipt_for_overwritten_managed_files() {
+    let _guard = lock_env();
+    let temp = tempdir().unwrap();
+    let template = materialize_template_worktree();
+    let repo = temp.path().join("repo");
+    fs::create_dir_all(&repo).unwrap();
+
+    run_adopt(AdoptOpts {
+        path: repo.clone(),
+        template: Some(template.path().display().to_string()),
+        template_mode: None,
+        vcs_ref: None,
+        force: false,
+        write: true,
+        defaults: true,
+        no_input: true,
+        answers: AnswerOpts::default(),
+    })
+    .unwrap();
+    fs::write(repo.join(".agent/PLANS.md"), "repo-owned plan notes\n").unwrap();
+
+    let output = run_adopt(AdoptOpts {
+        path: repo.clone(),
+        template: Some(template.path().display().to_string()),
+        template_mode: None,
+        vcs_ref: None,
+        force: true,
+        write: true,
+        defaults: true,
+        no_input: true,
+        answers: AnswerOpts::default(),
+    })
+    .unwrap();
+
+    assert_eq!(output["render_mode"], "copy");
+    assert!(
+        output["adoption_report"]["conflicts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|conflict| conflict["path"] == ".agent/PLANS.md")
+    );
+    let receipt_path = repo.join(".agent/state/adopt-last.json");
+    let receipt: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&receipt_path).unwrap()).unwrap();
+    assert!(
+        receipt["backup_root"]
+            .as_str()
+            .unwrap()
+            .contains("adopt-backups")
+    );
+    let backup = receipt["apply_report"]["backups"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|backup| backup["path"] == ".agent/PLANS.md")
+        .expect("missing .agent/PLANS.md backup");
+    let backup_path = backup["backup_path"].as_str().unwrap();
+    assert_eq!(
+        fs::read_to_string(backup_path).unwrap(),
+        "repo-owned plan notes\n"
+    );
+    assert!(
+        receipt["undo_hint"]
+            .as_str()
+            .unwrap()
+            .contains("apply_report.files_created")
+    );
+    assert!(
+        receipt["undo_hint"]
+            .as_str()
+            .unwrap()
+            .contains("Delete backup_root")
+    );
 }
 
 #[test]
@@ -627,6 +893,7 @@ sqlx = { workspace = true }
         template_mode: None,
         vcs_ref: None,
         force: false,
+        write: true,
         defaults: false,
         no_input: true,
         answers: AnswerOpts::default(),
@@ -676,6 +943,13 @@ sqlx = { workspace = true }
     assert_eq!(
         output["adoption_profile"]["ci_shape"]["generated_jig_checks_role"],
         "supplement_existing_ci"
+    );
+    assert!(
+        !output["adoption_review"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item.as_str().unwrap().contains("overrides:"))
     );
     assert!(
         output["adoption_profile"]["generated_gates"]
@@ -762,7 +1036,7 @@ sqlx = { workspace = true }
             "generated_gates missing rendered work gate command {expected}"
         );
     }
-    assert!(repo.join("crates/api/AGENTS.md").exists());
+    assert!(!repo.join("crates/api/AGENTS.md").exists());
 }
 
 #[test]
@@ -819,6 +1093,7 @@ edition = "2024"
         template_mode: None,
         vcs_ref: None,
         force: false,
+        write: true,
         defaults: false,
         no_input: true,
         answers: AnswerOpts::default(),
@@ -834,7 +1109,7 @@ edition = "2024"
         .unwrap();
     assert_eq!(api["kind"], "binary");
     assert_eq!(api["role"], "app/service");
-    assert_eq!(api["guide_action"], "scaffold");
+    assert_eq!(api["guide_action"], "missing_project_owned");
     let util = crates
         .iter()
         .find(|krate| krate["dir"] == "crates/util")
@@ -855,7 +1130,7 @@ edition = "2024"
             .unwrap()
             .contains("non-production")
     );
-    assert!(repo.join("crates/api/AGENTS.md").exists());
+    assert!(!repo.join("crates/api/AGENTS.md").exists());
     assert!(!repo.join("crates/fixtures/AGENTS.md").exists());
 }
 
@@ -880,6 +1155,7 @@ fn adopt_reports_sources_for_multiple_migration_dirs() {
         template_mode: None,
         vcs_ref: None,
         force: false,
+        write: true,
         defaults: false,
         no_input: true,
         answers: AnswerOpts::default(),
@@ -986,6 +1262,7 @@ test-locked:
         template_mode: None,
         vcs_ref: None,
         force: false,
+        write: true,
         defaults: false,
         no_input: true,
         answers: AnswerOpts::default(),
@@ -1061,6 +1338,7 @@ test-locked:
         template_mode: None,
         vcs_ref: None,
         force: false,
+        write: true,
         defaults: false,
         no_input: true,
         answers: AnswerOpts::default(),
@@ -1124,6 +1402,7 @@ edition = "2024"
         template_mode: None,
         vcs_ref: None,
         force: false,
+        write: true,
         defaults: false,
         no_input: true,
         answers: AnswerOpts::default(),
@@ -1164,6 +1443,7 @@ edition = "2024"
         template_mode: None,
         vcs_ref: None,
         force: false,
+        write: true,
         defaults: false,
         no_input: true,
         answers: AnswerOpts::default(),
@@ -1215,6 +1495,7 @@ fmt-check:
         template_mode: None,
         vcs_ref: None,
         force: false,
+        write: true,
         defaults: false,
         no_input: true,
         answers: AnswerOpts::default(),
@@ -1252,6 +1533,7 @@ edition = "2024"
         template_mode: None,
         vcs_ref: None,
         force: false,
+        write: true,
         defaults: false,
         no_input: true,
         answers: AnswerOpts::default(),
@@ -1322,6 +1604,7 @@ frontend_apps = []
         template_mode: None,
         vcs_ref: None,
         force: false,
+        write: true,
         defaults: false,
         no_input: true,
         answers: AnswerOpts {
@@ -1393,6 +1676,7 @@ rust_migration_dir = "migrations"
         template_mode: None,
         vcs_ref: None,
         force: false,
+        write: true,
         defaults: false,
         no_input: true,
         answers: AnswerOpts {
@@ -1430,6 +1714,7 @@ sqlx_enabled = false
         template_mode: None,
         vcs_ref: None,
         force: false,
+        write: true,
         defaults: false,
         no_input: true,
         answers: AnswerOpts {
@@ -1466,6 +1751,7 @@ schema_dump_enabled = false
         template_mode: None,
         vcs_ref: None,
         force: false,
+        write: true,
         defaults: false,
         no_input: true,
         answers: AnswerOpts {
@@ -1502,6 +1788,7 @@ schema_dump_enabled = true
         template_mode: None,
         vcs_ref: None,
         force: false,
+        write: true,
         defaults: false,
         no_input: true,
         answers: AnswerOpts {
@@ -1531,6 +1818,7 @@ fn adopt_cli_sqlx_metadata_dir_blocks_inferred_no_sqlx_profile() {
         template_mode: None,
         vcs_ref: None,
         force: false,
+        write: true,
         defaults: false,
         no_input: true,
         answers: AnswerOpts {
@@ -1575,6 +1863,7 @@ fn adopt_infers_root_frontend_app() {
         template_mode: None,
         vcs_ref: None,
         force: false,
+        write: true,
         defaults: false,
         no_input: true,
         answers: AnswerOpts::default(),
@@ -1604,6 +1893,7 @@ fn adopt_defaults_with_migration_dir_keeps_sqlx_enabled() {
         template_mode: None,
         vcs_ref: None,
         force: false,
+        write: true,
         defaults: true,
         no_input: true,
         answers: AnswerOpts {
@@ -1632,6 +1922,7 @@ fn adopt_defaults_with_schema_dump_enabled_still_requires_sqlx_migration_answer(
         template_mode: None,
         vcs_ref: None,
         force: false,
+        write: true,
         defaults: true,
         no_input: true,
         answers: AnswerOpts {
@@ -1660,6 +1951,7 @@ fn adopt_no_input_without_defaults_uses_inferred_no_sqlx_profile() {
         template_mode: None,
         vcs_ref: None,
         force: false,
+        write: true,
         defaults: false,
         no_input: true,
         answers: AnswerOpts::default(),
@@ -1721,6 +2013,7 @@ fn init_and_adopt_resolve_relative_bootstrap_paths_from_invocation_cwd() {
         template_mode: None,
         vcs_ref: None,
         force: false,
+        write: true,
         defaults: true,
         no_input: true,
         answers: AnswerOpts::default(),
@@ -1966,6 +2259,7 @@ fn adopt_with_real_template_runs_destination_tasks() {
         template_mode: Some(TemplateMode::Committed),
         vcs_ref: None,
         force: false,
+        write: true,
         defaults: true,
         no_input: true,
         answers: AnswerOpts {
@@ -2006,6 +2300,7 @@ fn adopt_keeps_project_owned_makefile() {
         template_mode: Some(TemplateMode::Committed),
         vcs_ref: None,
         force: false,
+        write: true,
         defaults: true,
         no_input: true,
         answers: AnswerOpts {
@@ -2047,6 +2342,7 @@ fn adopt_appends_jig_block_to_existing_root_agents() {
         template_mode: Some(TemplateMode::Committed),
         vcs_ref: None,
         force: false,
+        write: true,
         defaults: true,
         no_input: true,
         answers: AnswerOpts {
@@ -2091,6 +2387,7 @@ fn adopt_refuses_to_replace_symlinked_root_agents_without_force() {
         template_mode: Some(TemplateMode::Committed),
         vcs_ref: None,
         force: false,
+        write: true,
         defaults: true,
         no_input: true,
         answers: AnswerOpts {
@@ -2121,6 +2418,7 @@ fn adopt_refuses_to_replace_symlinked_root_agents_without_force() {
         template_mode: Some(TemplateMode::Committed),
         vcs_ref: None,
         force: true,
+        write: true,
         defaults: true,
         no_input: true,
         answers: AnswerOpts {
@@ -2161,6 +2459,7 @@ fn adopt_rejects_malformed_existing_root_agents_jig_block() {
         template_mode: Some(TemplateMode::Committed),
         vcs_ref: None,
         force: false,
+        write: true,
         defaults: true,
         no_input: true,
         answers: AnswerOpts {
@@ -2190,6 +2489,7 @@ fn adopt_with_real_template_keeps_sqlx_files_when_enabled() {
         template_mode: Some(TemplateMode::Committed),
         vcs_ref: None,
         force: false,
+        write: true,
         defaults: true,
         no_input: true,
         answers: AnswerOpts {
@@ -2243,6 +2543,7 @@ fn adopt_with_sqlx_and_schema_dumps_disabled_hides_schema_dump_target() {
         template_mode: Some(TemplateMode::Committed),
         vcs_ref: None,
         force: false,
+        write: true,
         defaults: true,
         no_input: true,
         answers: AnswerOpts {

@@ -1,3 +1,4 @@
+use std::ffi::OsStr;
 use std::fs;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
@@ -5,6 +6,8 @@ use std::path::{Component, Path, PathBuf};
 use anyhow::{Context, Result};
 use serde_json::Value as JsonValue;
 use serde_yaml_ng::Value as YamlValue;
+
+use super::super::git::git_command;
 
 pub(super) const MAX_SCAN_FILE_BYTES: u64 = 512 * 1024;
 pub(super) const MAX_SCAN_DEPTH: usize = 5;
@@ -14,18 +17,70 @@ pub(super) const MAX_SCAN_WARNINGS: usize = 20;
 pub(super) struct RepoScan {
     files: Vec<PathBuf>,
     dirs: Vec<PathBuf>,
+    depth_limit_warning_emitted: bool,
 }
 
 impl RepoScan {
     pub(super) fn collect(root: &Path, warnings: &mut Vec<String>) -> Self {
-        let mut scan = Self {
-            files: Vec::new(),
-            dirs: Vec::new(),
-        };
+        if let Some(scan) = Self::collect_from_git(root) {
+            return scan;
+        }
+
+        let mut scan = Self::new();
         scan.collect_inner(root, root, 0, warnings);
         scan.files.sort();
         scan.dirs.sort();
         scan
+    }
+
+    fn new() -> Self {
+        Self {
+            files: Vec::new(),
+            dirs: Vec::new(),
+            depth_limit_warning_emitted: false,
+        }
+    }
+
+    fn collect_from_git(root: &Path) -> Option<Self> {
+        let output = git_command(
+            root,
+            [
+                "ls-files",
+                "--cached",
+                "--others",
+                "--exclude-standard",
+                "-z",
+            ],
+        )
+        .output()
+        .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+
+        let mut scan = Self::new();
+        for raw_path in output.stdout.split(|byte| *byte == b'\0') {
+            if raw_path.is_empty() {
+                continue;
+            }
+            let Ok(relative_path) = std::str::from_utf8(raw_path) else {
+                continue;
+            };
+            let relative_path = Path::new(relative_path);
+            if relative_path.is_absolute() || relative_path_has_skipped_component(relative_path) {
+                continue;
+            }
+
+            let path = root.join(relative_path);
+            if fs::symlink_metadata(&path).is_ok_and(|metadata| metadata.file_type().is_file()) {
+                scan.files.push(path.clone());
+                scan.push_parent_dirs(root, &path);
+            }
+        }
+        scan.files.sort();
+        scan.dirs.sort();
+        scan.dirs.dedup();
+        Some(scan)
     }
 
     pub(super) fn named_files<'a>(
@@ -72,11 +127,11 @@ impl RepoScan {
     }
 
     fn collect_inner(&mut self, root: &Path, dir: &Path, depth: usize, warnings: &mut Vec<String>) {
-        if depth > MAX_SCAN_DEPTH {
-            push_scan_warning(warnings, dir, "maximum inference scan depth reached");
+        if depth > 0 && should_skip_dir(dir) {
             return;
         }
-        if depth > 0 && should_skip_dir(dir) {
+        if depth > MAX_SCAN_DEPTH {
+            self.push_depth_limit_warning(warnings, dir);
             return;
         }
         for entry in read_dir_entries(dir, warnings) {
@@ -91,31 +146,80 @@ impl RepoScan {
             }
         }
     }
+
+    fn push_depth_limit_warning(&mut self, warnings: &mut Vec<String>, dir: &Path) {
+        if self.depth_limit_warning_emitted {
+            return;
+        }
+        self.depth_limit_warning_emitted = true;
+        push_scan_warning(
+            warnings,
+            dir,
+            "maximum inference scan depth reached; deeper paths ignored",
+        );
+    }
+
+    fn push_parent_dirs(&mut self, root: &Path, path: &Path) {
+        let mut parents = Vec::new();
+        let mut current = path.parent();
+        while let Some(dir) = current {
+            if dir == root {
+                break;
+            }
+            parents.push(dir.to_path_buf());
+            current = dir.parent();
+        }
+        self.dirs.extend(parents.into_iter().rev());
+    }
 }
 
 pub(super) fn should_skip_dir(path: &Path) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())
-        .is_some_and(|name| {
-            matches!(
-                name,
-                ".git"
-                    | ".jig"
-                    | ".idea"
-                    | ".next"
-                    | ".svelte-kit"
-                    | ".turbo"
-                    | ".venv"
-                    | "build"
-                    | "coverage"
-                    | "dist"
-                    | "node_modules"
-                    | "out"
-                    | "target"
-                    | "tmp"
-                    | "vendor"
-            )
-        })
+        .is_some_and(skipped_dir_name)
+}
+
+fn relative_path_has_skipped_component(path: &Path) -> bool {
+    path.components()
+        .any(|component| matches!(component, Component::Normal(name) if skipped_dir_os_name(name)))
+}
+
+fn skipped_dir_os_name(name: &OsStr) -> bool {
+    name.to_str().is_some_and(skipped_dir_name)
+}
+
+fn skipped_dir_name(name: &str) -> bool {
+    matches!(
+        name,
+        ".build"
+            | ".cache"
+            | ".dart_tool"
+            | ".git"
+            | ".gradle"
+            | ".jig"
+            | ".idea"
+            | ".next"
+            | ".parcel-cache"
+            | ".serverless"
+            | ".svelte-kit"
+            | ".swiftpm"
+            | ".terraform"
+            | ".turbo"
+            | ".tox"
+            | ".venv"
+            | "Carthage"
+            | "DerivedData"
+            | "Pods"
+            | "build"
+            | "coverage"
+            | "dist"
+            | "node_modules"
+            | "out"
+            | "target"
+            | "tmp"
+            | "vendor"
+    ) || name.ends_with(".xcworkspace")
+        || name.ends_with(".xcodeproj")
 }
 
 pub(super) fn read_dir_entries(dir: &Path, warnings: &mut Vec<String>) -> Vec<fs::DirEntry> {

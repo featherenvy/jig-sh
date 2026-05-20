@@ -33,25 +33,26 @@ pub(super) fn infer_package_manager_with_metadata(
     let root_matches = lockfiles
         .iter()
         .filter(|(lockfile, _)| root.join(lockfile).is_file())
-        .map(|(_, manager)| *manager)
+        .map(|(lockfile, manager)| ((*lockfile).to_string(), *manager))
         .collect::<Vec<_>>();
-    if let Some(manager) = root_matches.first() {
-        let managers = root_matches.iter().copied().collect::<BTreeSet<_>>();
+    if let Some((source, manager)) = root_matches.first() {
+        let managers = root_matches
+            .iter()
+            .map(|(_, manager)| *manager)
+            .collect::<BTreeSet<_>>();
         if managers.len() > 1 {
             push_scan_warning(
                 warnings,
                 root,
-                &format!("multiple root package manager lockfiles detected; using {manager}"),
+                &format!(
+                    "multiple root package manager lockfiles detected ({}); using {manager}. Remove stale lockfiles, or pass --web-package-manager when configuring frontend apps.",
+                    lockfile_summary(root_matches.iter().map(|(source, _)| source.clone()))
+                ),
             );
         }
-        let source = lockfiles
-            .iter()
-            .find(|(_, candidate)| candidate == manager)
-            .map(|(lockfile, _)| (*lockfile).to_string())
-            .unwrap_or_else(|| format!("{manager} lockfile"));
         return PackageManagerInference {
             value: Some((*manager).into()),
-            sources: vec![source],
+            sources: vec![source.clone()],
         };
     }
 
@@ -71,7 +72,10 @@ pub(super) fn infer_package_manager_with_metadata(
             warnings,
             root,
             &format!(
-                "multiple package manager lockfiles detected; using {}",
+                "multiple package manager lockfiles detected ({}); using {}. If these are tool caches or vendored examples, add them to .gitignore so adopt inference can skip them.",
+                lockfile_summary(matches.iter().map(|(_, path, _)| {
+                    relative_path_string(path.strip_prefix(root).unwrap_or(path))
+                })),
                 matches[0].2
             ),
         );
@@ -85,6 +89,25 @@ pub(super) fn infer_package_manager_with_metadata(
             )],
         })
         .unwrap_or_default()
+}
+
+fn lockfile_summary(sources: impl IntoIterator<Item = String>) -> String {
+    let mut sources = sources.into_iter().collect::<Vec<_>>();
+    sources.sort();
+    sources.dedup();
+    const MAX_DISPLAYED_LOCKFILES: usize = 5;
+    if sources.len() <= MAX_DISPLAYED_LOCKFILES {
+        return sources.join(", ");
+    }
+    let omitted = sources.len() - MAX_DISPLAYED_LOCKFILES;
+    format!(
+        "{}, and {omitted} more",
+        sources
+            .into_iter()
+            .take(MAX_DISPLAYED_LOCKFILES)
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
 }
 
 fn path_depth(root: &Path, path: &Path) -> usize {

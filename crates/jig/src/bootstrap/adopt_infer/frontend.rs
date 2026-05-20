@@ -46,7 +46,7 @@ pub(super) fn infer_frontend_apps_with_metadata(
             candidates.push(root.to_path_buf());
         }
         for glob in ["apps/*", "packages/*"] {
-            expand_workspace_glob(root, glob, &mut candidates, 0, warnings);
+            expand_optional_workspace_glob(root, glob, &mut candidates, warnings);
         }
         for dir in ["web", "frontend"] {
             let candidate = root.join(dir);
@@ -227,6 +227,9 @@ fn package_json_workspace_globs(root: &Path, warnings: &mut Vec<String>) -> Vec<
 
 fn pnpm_workspace_globs(root: &Path, warnings: &mut Vec<String>) -> Vec<String> {
     let path = root.join("pnpm-workspace.yaml");
+    if !path.is_file() {
+        return Vec::new();
+    }
     let Some(yaml) = read_yaml_for_inference(&path, warnings) else {
         return Vec::new();
     };
@@ -307,6 +310,18 @@ fn expand_workspace_glob(
     }
     let segments = glob.split('/').collect::<Vec<_>>();
     expand_segments(root, root, &segments, out, depth, warnings)
+}
+
+fn expand_optional_workspace_glob(
+    root: &Path,
+    glob: &str,
+    out: &mut Vec<PathBuf>,
+    warnings: &mut Vec<String>,
+) {
+    let first_segment = glob.split('/').next().unwrap_or_default();
+    if first_segment.is_empty() || root.join(first_segment).is_dir() {
+        expand_workspace_glob(root, glob, out, 0, warnings);
+    }
 }
 
 fn expand_segments(

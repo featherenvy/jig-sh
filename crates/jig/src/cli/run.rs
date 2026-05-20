@@ -1,4 +1,4 @@
-use std::io::Write;
+use std::io::{self, Write};
 use std::process;
 
 use anyhow::Result;
@@ -40,9 +40,18 @@ impl std::error::Error for VaultChildExitStatus {}
 
 pub(crate) fn run() -> Result<()> {
     let cli = parse_cli();
+    let json_output = cli.json;
     match cli.command {
         CommandKind::Init(opts) => print_json(&bootstrap::run_init(opts)?),
-        CommandKind::Adopt(opts) => print_json(&bootstrap::run_adopt(opts)?),
+        CommandKind::Adopt(opts) => {
+            let output = bootstrap::run_adopt(opts)?;
+            if json_output {
+                print_json(&output)?;
+            } else {
+                print_adopt_human_summary(&output)?;
+            }
+            Ok(())
+        }
         CommandKind::Update(opts) => print_json(&bootstrap::run_update(opts)?),
         CommandKind::Mcp => {
             let ctx = RepoContext::load()?;
@@ -265,6 +274,90 @@ fn require_vault_child_status_ok(output: &serde_json::Value) -> Result<()> {
     Ok(())
 }
 
+fn print_adopt_human_summary(output: &serde_json::Value) -> Result<()> {
+    let mut stdout = io::stdout().lock();
+    stdout.write_all(format_adopt_human_summary(output).as_bytes())?;
+    Ok(())
+}
+
+pub(super) fn format_adopt_human_summary(output: &serde_json::Value) -> String {
+    let mut summary = String::new();
+    summary.push_str("adopt summary\n");
+    push_summary_field(&mut summary, "mode", output["render_mode"].as_str());
+    push_summary_field(&mut summary, "target", output["destination"].as_str());
+
+    let report = &output["adoption_report"];
+    let created = array_len(&report["files_created"]);
+    let modified = array_len(&report["files_modified"]);
+    let removed = array_len(&report["files_removed"]);
+    summary.push_str(&format!(
+        "  managed files: {created} created, {modified} modified, {removed} removed\n"
+    ));
+
+    if let Some(review) = output["adoption_review"].as_array()
+        && !review.is_empty()
+    {
+        summary.push_str("  review:\n");
+        for item in review.iter().filter_map(serde_json::Value::as_str) {
+            summary.push_str(&format!("    - {item}\n"));
+        }
+    }
+
+    if let Some(conflicts) = report["conflicts"].as_array()
+        && !conflicts.is_empty()
+    {
+        summary.push_str(&format!("  conflicts: {}\n", conflicts.len()));
+        for conflict in conflicts.iter().take(10) {
+            if let Some(path) = conflict["path"].as_str() {
+                if let Some(detail) = conflict["detail"].as_str() {
+                    summary.push_str(&format!("    - {path}: {detail}\n"));
+                } else {
+                    summary.push_str(&format!("    - {path}\n"));
+                }
+            }
+        }
+        if conflicts.len() > 10 {
+            summary.push_str(&format!("    - and {} more\n", conflicts.len() - 10));
+        }
+    }
+
+    if let Some(warnings) = output["detection_report"]["warnings"].as_array()
+        && !warnings.is_empty()
+    {
+        summary.push_str(&format!("  warnings: {}\n", warnings.len()));
+        for warning in warnings
+            .iter()
+            .take(5)
+            .filter_map(serde_json::Value::as_str)
+        {
+            summary.push_str(&format!("    - {warning}\n"));
+        }
+        if warnings.len() > 5 {
+            summary.push_str(&format!("    - and {} more\n", warnings.len() - 5));
+        }
+    }
+
+    if let Some(steps) = output["next_steps"].as_array()
+        && !steps.is_empty()
+    {
+        summary.push_str("  next steps:\n");
+        for step in steps.iter().filter_map(serde_json::Value::as_str) {
+            summary.push_str(&format!("    - {step}\n"));
+        }
+    }
+    summary
+}
+
+fn push_summary_field(summary: &mut String, label: &str, value: Option<&str>) {
+    if let Some(value) = value {
+        summary.push_str(&format!("  {label}: {value}\n"));
+    }
+}
+
+fn array_len(value: &serde_json::Value) -> usize {
+    value.as_array().map(Vec::len).unwrap_or(0)
+}
+
 pub(super) fn require_json_ok(required: bool, output: &serde_json::Value) -> Result<()> {
     if required && output.get("ok").and_then(serde_json::Value::as_bool) == Some(false) {
         return Err(JsonOkFalse.into());
@@ -335,8 +428,10 @@ pub(super) fn moved_check_command_hint(error: &clap::Error) -> Option<String> {
     ];
 
     // Like the nested agent-map case below, this depends on Clap 4.6.1 formatted
-    // usage text and is only a best-effort migration hint. Recheck on Clap upgrades.
-    if message.contains("Usage: jig <COMMAND>") {
+    // usage text and is only a best-effort migration hint. Global options such as
+    // --json make the top-level usage line include [OPTIONS]; recheck this matcher
+    // on Clap upgrades or when adding more global flags.
+    if message.contains("Usage: jig [OPTIONS] <COMMAND>") {
         if let Some((_, replacement)) = moved
             .iter()
             .find(|(legacy, _)| message.contains(&format!("'{legacy}'")))
@@ -348,7 +443,7 @@ pub(super) fn moved_check_command_hint(error: &clap::Error) -> Option<String> {
     // Clap 4.6.1 reports nested invalid subcommands through formatted usage text;
     // this hint is best-effort and may disappear if that formatting changes.
     if message.contains("unrecognized subcommand 'check'")
-        && message.contains("Usage: jig agent-map <COMMAND>")
+        && message.contains("Usage: jig agent-map [OPTIONS] <COMMAND>")
     {
         return Some(moved_check_hint_for("jig check agent-map"));
     }

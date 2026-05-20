@@ -1,9 +1,8 @@
 use tempfile::{TempDir, tempdir};
 
-use crate::test_env::{EnvVarGuard, lock_env};
-
 use super::path;
 use super::*;
+use crate::test_env::{EnvVarGuard, lock_env};
 
 fn template_repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -91,6 +90,27 @@ fn write_test_crate_guide(repo: &Path) {
     fs::write(repo.join("crates/api/AGENTS.md"), "crate guide").unwrap();
 }
 
+fn with_test_build_template_pin_policy<T>(
+    policy: BuildTemplatePinPolicy,
+    run: impl FnOnce() -> T,
+) -> T {
+    struct Guard(Option<BuildTemplatePinPolicy>);
+
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            TEST_BUILD_TEMPLATE_PIN_POLICY.with(|slot| slot.set(self.0));
+        }
+    }
+
+    let previous = TEST_BUILD_TEMPLATE_PIN_POLICY.with(|slot| {
+        let previous = slot.get();
+        slot.set(Some(policy));
+        previous
+    });
+    let _guard = Guard(previous);
+    run()
+}
+
 fn adopt_repo_for_test(repo: &Path, template: &Path, template_mode: TemplateMode) {
     run_adopt(AdoptOpts {
         path: repo.to_path_buf(),
@@ -98,6 +118,7 @@ fn adopt_repo_for_test(repo: &Path, template: &Path, template_mode: TemplateMode
         template_mode: Some(template_mode),
         vcs_ref: None,
         force: false,
+        write: true,
         defaults: true,
         no_input: true,
         answers: AnswerOpts {

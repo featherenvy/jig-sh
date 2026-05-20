@@ -18,19 +18,46 @@ use crate::progress::CliProgress;
 
 pub(super) struct ApplyRenderOptions<'a> {
     pub(super) force: bool,
+    pub(super) dry_run: bool,
     pub(super) allow_answers_overwrite: bool,
+    pub(super) backup_root: Option<&'a Path>,
     pub(super) conflict_message: &'a str,
     pub(super) progress: CliProgress,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
 pub(super) struct ApplyRenderReport {
+    pub(super) dry_run: bool,
     pub(super) files_created: Vec<String>,
     pub(super) files_modified: Vec<String>,
     pub(super) files_removed: Vec<String>,
     pub(super) files_unchanged: Vec<String>,
     pub(super) managed_blocks_inserted: Vec<String>,
     pub(super) managed_blocks_rendered: Vec<String>,
+    pub(super) backups: Vec<ApplyRenderBackup>,
+    pub(super) conflicts: Vec<RenderConflict>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub(super) struct ApplyRenderBackup {
+    pub(super) path: String,
+    pub(super) backup_path: String,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub(super) struct RenderConflict {
+    pub(super) path: String,
+    pub(super) kind: RenderConflictKind,
+    pub(super) detail: String,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum RenderConflictKind {
+    BlockingAncestor,
+    NonRegularRootAgents,
+    ModifiedManagedPath,
+    RemovedManagedPath,
 }
 
 pub(super) fn apply_staged_render(
@@ -38,7 +65,13 @@ pub(super) fn apply_staged_render(
     destination: &Path,
     options: ApplyRenderOptions<'_>,
 ) -> Result<ApplyRenderReport> {
-    if !options.force {
+    let conflicts = if options.force {
+        options.progress.step(
+            "check conflicts",
+            "--force supplied; accepting rendered output",
+        );
+        staged_render_conflicts(staged, destination, options.allow_answers_overwrite)?
+    } else {
         options
             .progress
             .step("check conflicts", "compare rendered managed paths");
@@ -50,23 +83,37 @@ pub(super) fn apply_staged_render(
                 options.allow_answers_overwrite,
             ))?;
         if !conflicts.is_empty() {
-            options
-                .progress
-                .blocked(conflict_count_message(conflicts.len()));
-            bail!("{}\n{}", options.conflict_message, conflicts.join("\n"));
+            let message = conflict_count_message(conflicts.len());
+            if options.dry_run {
+                options.progress.info("conflicts", message);
+                for line in conflict_lines(&conflicts) {
+                    options.progress.info("conflict", line);
+                }
+            } else {
+                options.progress.blocked(message);
+                bail!(
+                    "{}\n{}",
+                    options.conflict_message,
+                    conflict_lines(&conflicts).join("\n")
+                );
+            }
         }
-    } else {
-        options.progress.step(
-            "check conflicts",
-            "--force supplied; accepting rendered output",
-        );
-    }
+        conflicts
+    };
 
     options.progress.step(
-        "apply managed paths",
+        if options.dry_run {
+            "preview managed paths"
+        } else {
+            "apply managed paths"
+        },
         format!("{} path(s)", staged.managed_paths.len()),
     );
-    let mut report = ApplyRenderReport::default();
+    let mut report = ApplyRenderReport {
+        dry_run: options.dry_run,
+        conflicts,
+        ..ApplyRenderReport::default()
+    };
     for relative in &staged.managed_paths {
         let rendered_path = staged.destination.join(relative);
         let destination_path = destination.join(relative);
@@ -90,14 +137,34 @@ pub(super) fn apply_staged_render(
                     report.managed_blocks_rendered.push(relative_text.clone());
                 }
             }
-            options
-                .progress
-                .log_blocked_on_err(copy_rendered_path(&rendered_path, &destination_path))?;
+            if !options.dry_run {
+                if path_exists(&destination_path)
+                    && !files_match(&rendered_path, &destination_path)?
+                {
+                    backup_destination_path(
+                        &destination_path,
+                        relative,
+                        options.backup_root,
+                        &mut report,
+                    )?;
+                }
+                options
+                    .progress
+                    .log_blocked_on_err(copy_rendered_path(&rendered_path, &destination_path))?;
+            }
         } else if path_exists(&destination_path) {
-            report.files_removed.push(relative_text);
-            options
-                .progress
-                .log_blocked_on_err(remove_destination_path(&destination_path))?;
+            report.files_removed.push(relative_text.clone());
+            if !options.dry_run {
+                backup_destination_path(
+                    &destination_path,
+                    relative,
+                    options.backup_root,
+                    &mut report,
+                )?;
+                options
+                    .progress
+                    .log_blocked_on_err(remove_destination_path(&destination_path))?;
+            }
         }
     }
     Ok(report)
@@ -107,7 +174,7 @@ fn staged_render_conflicts(
     staged: &StagedRender,
     destination: &Path,
     allow_answers_overwrite: bool,
-) -> Result<Vec<String>> {
+) -> Result<Vec<RenderConflict>> {
     let mut conflicts = BTreeSet::new();
     for relative in &staged.managed_paths {
         if allow_answers_overwrite && relative == Path::new(ANSWERS_FILE) {
@@ -117,7 +184,15 @@ fn staged_render_conflicts(
         let rendered_path = staged.destination.join(relative);
         let destination_path = destination.join(relative);
         if let Some(blocking_ancestor) = blocking_ancestor(destination, &destination_path) {
-            conflicts.insert(relative_to_string(destination, &blocking_ancestor));
+            let path = relative_to_string(destination, &blocking_ancestor);
+            conflicts.insert(RenderConflict {
+                detail: format!(
+                    "blocking ancestor file prevents writing {}",
+                    relative.display()
+                ),
+                path,
+                kind: RenderConflictKind::BlockingAncestor,
+            });
             continue;
         }
 
@@ -127,18 +202,39 @@ fn staged_render_conflicts(
                     continue;
                 }
                 if path_exists(&destination_path) {
-                    conflicts.insert(relative.display().to_string());
+                    conflicts.insert(RenderConflict {
+                        path: relative.display().to_string(),
+                        kind: RenderConflictKind::NonRegularRootAgents,
+                        detail:
+                            "root AGENTS.md exists but is not a regular file; managed block merge cannot apply safely"
+                                .into(),
+                    });
                     continue;
                 }
             }
             if path_exists(&destination_path) && !files_match(&rendered_path, &destination_path)? {
-                conflicts.insert(relative.display().to_string());
+                conflicts.insert(RenderConflict {
+                    path: relative.display().to_string(),
+                    kind: RenderConflictKind::ModifiedManagedPath,
+                    detail: "destination differs from the rendered template-managed path".into(),
+                });
             }
         } else if path_exists(&destination_path) {
-            conflicts.insert(relative.display().to_string());
+            conflicts.insert(RenderConflict {
+                path: relative.display().to_string(),
+                kind: RenderConflictKind::RemovedManagedPath,
+                detail: "template no longer renders this managed path".into(),
+            });
         }
     }
     Ok(conflicts.into_iter().collect())
+}
+
+fn conflict_lines(conflicts: &[RenderConflict]) -> Vec<String> {
+    conflicts
+        .iter()
+        .map(|conflict| format!("{} ({})", conflict.path, conflict.detail))
+        .collect()
 }
 
 fn conflict_count_message(count: usize) -> String {
@@ -200,6 +296,31 @@ fn copy_rendered_path(rendered_path: &Path, destination_path: &Path) -> Result<(
         remove_destination_path(destination_path)?;
     }
     copy_file_or_symlink_with_permissions(rendered_path, destination_path, &metadata)
+}
+
+fn backup_destination_path(
+    destination_path: &Path,
+    relative: &Path,
+    backup_root: Option<&Path>,
+    report: &mut ApplyRenderReport,
+) -> Result<()> {
+    let Some(backup_root) = backup_root else {
+        return Ok(());
+    };
+    let backup_path = backup_root.join(relative);
+    let metadata = prepare_copy_destination_and_read_metadata(destination_path, &backup_path)?;
+    if metadata.is_dir() && !metadata.file_type().is_symlink() {
+        bail!(
+            "Cannot back up directory managed path {}; expected file or symlink",
+            destination_path.display()
+        );
+    }
+    copy_file_or_symlink_with_permissions(destination_path, &backup_path, &metadata)?;
+    report.backups.push(ApplyRenderBackup {
+        path: relative.display().to_string(),
+        backup_path: backup_path.display().to_string(),
+    });
+    Ok(())
 }
 
 fn remove_destination_path(path: &Path) -> Result<()> {

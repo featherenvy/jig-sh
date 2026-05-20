@@ -65,7 +65,6 @@ pub(super) fn check_guides(ctx: &RepoContext) -> Result<Value> {
         "## Invariants",
         "## Common commands",
     ];
-    let mut missing_guides = Vec::new();
     let mut missing_sections = Vec::new();
     let mut missing_entry_ref = Vec::new();
     let mut guide_count = 0usize;
@@ -80,7 +79,6 @@ pub(super) fn check_guides(ctx: &RepoContext) -> Result<Value> {
             let guide = entry.join("AGENTS.md");
             let rel = relative_string(ctx.root(), &guide)?;
             if !guide.exists() {
-                missing_guides.push(rel);
                 continue;
             }
             guide_count += 1;
@@ -98,9 +96,10 @@ pub(super) fn check_guides(ctx: &RepoContext) -> Result<Value> {
         }
     }
     Ok(json!({
-        "ok": missing_guides.is_empty() && missing_sections.is_empty() && missing_entry_ref.is_empty(),
+        "ok": missing_sections.is_empty() && missing_entry_ref.is_empty(),
         "guide_count": guide_count,
-        "missing_guides": missing_guides,
+        "missing_guides": [],
+        "missing_guides_note": "placeholder crate-level AGENTS.md files are no longer required; existing guides are validated when present",
         "missing_sections": missing_sections,
         "missing_entry_ref": missing_entry_ref,
     }))
@@ -385,7 +384,7 @@ mod tests {
     }
 
     #[test]
-    fn check_guides_reports_missing_sections_and_entrypoints() {
+    fn check_guides_validates_existing_guides_only() {
         let temp = tempdir().unwrap();
         fs::create_dir_all(temp.path().join(".agent")).unwrap();
         fs::create_dir_all(temp.path().join("crates/api")).unwrap();
@@ -425,12 +424,12 @@ rust_test_command = "cargo test"
 
         assert_eq!(output["ok"], false);
         assert_eq!(output["guide_count"], 1);
+        assert!(output["missing_guides"].as_array().unwrap().is_empty());
         assert!(
-            output["missing_guides"]
-                .as_array()
+            output["missing_guides_note"]
+                .as_str()
                 .unwrap()
-                .iter()
-                .any(|path| path == "crates/worker/AGENTS.md")
+                .contains("no longer required")
         );
         assert!(
             output["missing_sections"]

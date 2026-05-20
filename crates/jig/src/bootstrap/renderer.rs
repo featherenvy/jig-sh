@@ -10,11 +10,11 @@ use tempfile::TempDir;
 
 use super::ANSWERS_FILE;
 use super::answers::RenderAnswers;
-use super::crate_guide::crate_guide_skip_reason;
+use super::embedded_templates::EMBEDDED_TEMPLATE_FILES;
 use super::managed_paths;
 use super::preview_seed::seed_preview_workspace;
 use super::staged_render::StagedRender;
-use super::template_source::PreparedTemplateSource;
+use super::template_source::{PreparedTemplateSource, TemplateRenderSource};
 use crate::progress::CliProgress;
 
 const TEMPLATE_SUBDIRECTORY: &str = "templates/project";
@@ -49,20 +49,6 @@ pub(super) fn stage_render(request: RenderStageRequest<'_>) -> Result<StagedRend
         request.answers,
         &destination,
     ))?;
-    if let Some(seed_repo_path) = request.seed_repo_path {
-        request.progress.step(
-            "scaffold crate guides",
-            "starter AGENTS.md for missing crates",
-        );
-        managed_paths.extend(request.progress.log_blocked_on_err(
-            scaffold_missing_crate_guides(
-                seed_repo_path,
-                &destination,
-                request.answers,
-                request.progress,
-            ),
-        )?);
-    }
     request
         .progress
         .step("generate agent map", "native renderer");
@@ -96,15 +82,6 @@ fn render_template_files(
     answers: &RenderAnswers,
     destination: &Path,
 ) -> Result<BTreeSet<PathBuf>> {
-    let template_root = template.render_root().join(TEMPLATE_SUBDIRECTORY);
-    if !template_root.is_dir() {
-        bail!(
-            "Template source does not contain {}: {}",
-            TEMPLATE_SUBDIRECTORY,
-            template.render_root().display()
-        );
-    }
-
     let context = render_context(template, answers)?;
     let mut environment = Environment::new();
     environment.set_syntax(
@@ -116,129 +93,79 @@ fn render_template_files(
     );
     environment.set_undefined_behavior(UndefinedBehavior::Strict);
 
-    let mut managed_paths = BTreeSet::new();
-    for template_path in collect_template_paths(&template_root)? {
-        let relative_template = template_path
-            .strip_prefix(&template_root)
-            .with_context(|| {
-                format!(
-                    "{} is not under {}",
-                    template_path.display(),
-                    template_root.display()
-                )
-            })?;
-        let relative = output_relative_path(relative_template)?;
-        if managed_paths::should_omit_unmanaged_rendered_path(&relative, answers) {
-            continue;
-        }
-        managed_paths.insert(relative.clone());
-
-        let source = fs::read_to_string(&template_path)
-            .with_context(|| format!("Failed to read {}", template_path.display()))?;
-        let rendered = environment
-            .render_str(&source, &context)
-            .with_context(|| format!("Failed to render {}", template_path.display()))?;
-        write_rendered_file(destination, &relative, rendered.as_bytes())?;
-    }
-
-    Ok(managed_paths)
-}
-
-fn scaffold_missing_crate_guides(
-    seed_repo_path: &Path,
-    destination: &Path,
-    answers: &RenderAnswers,
-    progress: CliProgress,
-) -> Result<BTreeSet<PathBuf>> {
-    let mut scaffolded = BTreeSet::new();
-    for root in answers.rust_crate_roots() {
-        let crate_root = seed_repo_path.join(root);
-        if !crate_root.is_dir() {
-            continue;
-        }
-        // Crate roots are expected to contain direct child crates. Configure
-        // additional roots for nested crate groups that need starter guides.
-        for entry in fs::read_dir(&crate_root)
-            .with_context(|| format!("Failed to read {}", crate_root.display()))?
-        {
-            let entry = entry?;
-            if !entry.file_type()?.is_dir() {
-                continue;
-            }
-            let crate_dir = entry.path();
-            if !crate_dir.join("Cargo.toml").is_file() {
-                continue;
-            }
-            let relative_crate_dir = crate_dir.strip_prefix(seed_repo_path).with_context(|| {
-                format!(
-                    "{} is not under {}",
-                    crate_dir.display(),
-                    seed_repo_path.display()
-                )
-            })?;
-            let relative_guide = relative_crate_dir.join("AGENTS.md");
-            let destination_guide = destination.join(&relative_guide);
-            // Existing crate guides were copied into the staging directory by
-            // seed_preview_workspace before this runs; only scaffold gaps.
-            if destination_guide.exists() {
-                continue;
-            }
-            let crate_name = crate_package_name(&crate_dir)?;
-            if let Some(reason) = crate_guide_skip_reason(relative_crate_dir, Some(&crate_name)) {
-                progress.info(
-                    "skipped crate guide",
-                    format!("{}: {reason}", relative_crate_dir.display()),
+    let mut render = TemplateRender {
+        environment: &mut environment,
+        context: &context,
+        answers,
+        destination,
+        managed_paths: BTreeSet::new(),
+    };
+    match template.render_source() {
+        TemplateRenderSource::Filesystem(render_root) => {
+            let template_root = render_root.join(TEMPLATE_SUBDIRECTORY);
+            if !template_root.is_dir() {
+                bail!(
+                    "Template source does not contain {}: {}",
+                    TEMPLATE_SUBDIRECTORY,
+                    render_root.display()
                 );
-                continue;
             }
-            write_rendered_file(
-                destination,
-                &relative_guide,
-                starter_crate_guide(&crate_name).as_bytes(),
-            )?;
-            scaffolded.insert(relative_guide);
+            for template_path in collect_template_paths(&template_root)? {
+                let relative_template =
+                    template_path
+                        .strip_prefix(&template_root)
+                        .with_context(|| {
+                            format!(
+                                "{} is not under {}",
+                                template_path.display(),
+                                template_root.display()
+                            )
+                        })?;
+                let source = fs::read_to_string(&template_path)
+                    .with_context(|| format!("Failed to read {}", template_path.display()))?;
+                render.entry(
+                    relative_template,
+                    &template_path.display().to_string(),
+                    &source,
+                )?;
+            }
+        }
+        TemplateRenderSource::Embedded => {
+            for template_file in EMBEDDED_TEMPLATE_FILES {
+                render.entry(
+                    Path::new(template_file.relative_path),
+                    template_file.relative_path,
+                    template_file.contents,
+                )?;
+            }
         }
     }
-    Ok(scaffolded)
+
+    Ok(render.managed_paths)
 }
 
-fn crate_package_name(crate_dir: &Path) -> Result<String> {
-    let fallback = crate_dir
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("crate")
-        .to_string();
-    let cargo_toml_path = crate_dir.join("Cargo.toml");
-    let cargo_toml = fs::read_to_string(&cargo_toml_path)
-        .with_context(|| format!("Failed to read {}", cargo_toml_path.display()))?;
-    let parsed = toml::from_str::<toml::Value>(&cargo_toml)
-        .with_context(|| format!("Failed to parse {}", cargo_toml_path.display()))?;
-    Ok(parsed
-        .get("package")
-        .and_then(|package| package.get("name"))
-        .and_then(toml::Value::as_str)
-        .filter(|name| !name.trim().is_empty())
-        .map(str::to_string)
-        .unwrap_or(fallback))
+struct TemplateRender<'a, 'env> {
+    environment: &'a mut Environment<'env>,
+    context: &'a JsonValue,
+    answers: &'a RenderAnswers,
+    destination: &'a Path,
+    managed_paths: BTreeSet<PathBuf>,
 }
 
-fn starter_crate_guide(crate_name: &str) -> String {
-    format!(
-        "# {crate_name} crate guide\n\n\
-## Purpose\n\n\
-Document what this crate owns before adding substantial behavior.\n\n\
-## Key entrypoints\n\n\
-- `src/lib.rs`: library entrypoint when present.\n\
-- `src/main.rs`: binary entrypoint when present.\n\n\
-## Edit here for X\n\n\
-- Update this section with the crate's main responsibilities.\n\n\
-## Invariants\n\n\
-- Keep crate-specific rules here instead of in the root `AGENTS.md`.\n\n\
-## Common commands\n\n\
-- `cargo test -p {crate_name}`\n\
-\n\
-Adjust the package name in commands if this starter guide could not infer it from `Cargo.toml`.\n"
-    )
+impl TemplateRender<'_, '_> {
+    fn entry(&mut self, relative_template: &Path, source_label: &str, source: &str) -> Result<()> {
+        let relative = output_relative_path(relative_template)?;
+        if managed_paths::should_omit_unmanaged_rendered_path(&relative, self.answers) {
+            return Ok(());
+        }
+        self.managed_paths.insert(relative.clone());
+
+        let rendered = self
+            .environment
+            .render_str(source, self.context)
+            .with_context(|| format!("Failed to render {source_label}"))?;
+        write_rendered_file(self.destination, &relative, rendered.as_bytes())
+    }
 }
 
 fn merge_existing_root_agents(

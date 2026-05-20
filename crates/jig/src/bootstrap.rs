@@ -3,18 +3,20 @@ use std::borrow::Cow;
 use std::cell::Cell;
 use std::env;
 use std::fs;
+use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use clap::{Args, ValueEnum};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use time::OffsetDateTime;
 use toml::Table;
 #[cfg(test)]
 use toml::Value as TomlValue;
+use ulid::Ulid;
 
 use crate::progress::CliProgress;
-
 use answers::{AnswerInput, RenderAnswers};
 #[cfg(test)]
 use file_copy::create_symlink;
@@ -31,6 +33,7 @@ use renderer::{RenderStageRequest, stage_render};
 #[cfg(test)]
 use sync::rendered_conflicts;
 use sync::{ApplyRenderOptions, apply_staged_render};
+use template_source::EMBEDDED_TEMPLATE_SOURCE;
 #[cfg(test)]
 use template_source::PrivateAnswerOverrides;
 use template_source::{prepare_update_template_source, read_stored_template_state};
@@ -38,6 +41,7 @@ use template_source::{prepare_update_template_source, read_stored_template_state
 mod adopt_infer;
 mod answers;
 mod crate_guide;
+mod embedded_templates;
 mod file_copy;
 mod gate_preview;
 mod git;
@@ -130,11 +134,11 @@ pub struct AnswerOpts {
 #[derive(Args, Clone, Debug)]
 #[command(after_help = "\
 Templates:
-  Jig currently defaults to the official jig-sh harness template:
+  Release builds default to the official jig-sh harness template:
   https://github.com/bpcakes/jig-sh.git
 
   Release builds pin omitted --template to this jig version's release tag.
-  Unreleased or dirty local builds require --template /path/to/jig-sh or --vcs-ref.
+  Unreleased or dirty local builds use templates embedded in the jig binary unless --vcs-ref is supplied.
 
 Examples:
   jig init /path/to/new-repo --repo-name new-repo --sqlx-enabled false
@@ -146,7 +150,7 @@ pub struct InitOpts {
         long,
         value_name = "PATH_OR_GIT_URL",
         help = "Template source to render; defaults to the official jig-sh template",
-        long_help = "Template source to render. Release builds default to the official jig-sh template at https://github.com/bpcakes/jig-sh.git pinned to the release tag for this jig version; passing that canonical HTTPS URL explicitly, with or without .git, has the same pinned behavior unless --vcs-ref is also provided. Unreleased or dirty local builds refuse that implicit release pin because the matching tag may describe older template code. For local head development, pass the path to your jig-sh checkout, for example /Users/you/src/jig-sh. For remote forks, SSH URLs, or private harnesses, pass a git URL. The source must contain templates/project."
+        long_help = "Template source to render. Release builds default to the official jig-sh template at https://github.com/bpcakes/jig-sh.git pinned to the release tag for this jig version; passing that canonical HTTPS URL explicitly, with or without .git, has the same pinned behavior unless --vcs-ref is also provided. Unreleased or dirty local builds use templates embedded in the jig binary for omitted --template, avoiding a stale release-tag lookup during local development. For checkout-driven template development, pass the path to your jig-sh checkout, for example /Users/you/src/jig-sh. For remote forks, SSH URLs, or private harnesses, pass a git URL. The source must contain templates/project."
     )]
     pub template: Option<String>,
     #[arg(
@@ -171,11 +175,11 @@ pub struct InitOpts {
 #[derive(Args, Clone, Debug)]
 #[command(after_help = "\
 Templates:
-  Jig currently defaults to the official jig-sh harness template:
+  Release builds default to the official jig-sh harness template:
   https://github.com/bpcakes/jig-sh.git
 
   Release builds pin omitted --template to this jig version's release tag.
-  Unreleased or dirty local builds require --template /path/to/jig-sh or --vcs-ref.
+  Unreleased or dirty local builds use templates embedded in the jig binary unless --vcs-ref is supplied.
 
 Adoption scans the existing repository before resolving answers. If SQLx is detected,
 omitted SQLx answers resolve to migration defaults; if it is not detected, omitted SQLx
@@ -184,7 +188,8 @@ answers resolve to a tooling-only profile. Pass --sqlx-enabled true and --rust-m
 
 Examples:
   jig adopt .
-  jig adopt . --template /path/to/jig-sh --template-mode committed")]
+  jig adopt . --write
+  jig adopt . --write --template /path/to/jig-sh --template-mode committed")]
 pub struct AdoptOpts {
     #[arg(default_value = ".", help = "Existing repository directory to adopt")]
     pub path: PathBuf,
@@ -192,7 +197,7 @@ pub struct AdoptOpts {
         long,
         value_name = "PATH_OR_GIT_URL",
         help = "Template source to render; defaults to the official jig-sh template",
-        long_help = "Template source to render. Release builds default to the official jig-sh template at https://github.com/bpcakes/jig-sh.git pinned to the release tag for this jig version; passing that canonical HTTPS URL explicitly, with or without .git, has the same pinned behavior unless --vcs-ref is also provided. Unreleased or dirty local builds refuse that implicit release pin because the matching tag may describe older template code. For local head development, pass the path to your jig-sh checkout, for example /Users/you/src/jig-sh. For remote forks, SSH URLs, or private harnesses, pass a git URL. The source must contain templates/project."
+        long_help = "Template source to render. Release builds default to the official jig-sh template at https://github.com/bpcakes/jig-sh.git pinned to the release tag for this jig version; passing that canonical HTTPS URL explicitly, with or without .git, has the same pinned behavior unless --vcs-ref is also provided. Unreleased or dirty local builds use templates embedded in the jig binary for omitted --template, avoiding a stale release-tag lookup during local development. For checkout-driven template development, pass the path to your jig-sh checkout, for example /Users/you/src/jig-sh. For remote forks, SSH URLs, or private harnesses, pass a git URL. The source must contain templates/project."
     )]
     pub template: Option<String>,
     #[arg(
@@ -206,9 +211,17 @@ pub struct AdoptOpts {
     pub vcs_ref: Option<String>,
     #[arg(long, help = "Overwrite conflicting template-managed paths")]
     pub force: bool,
-    #[arg(long, help = "Use default answers for omitted configuration prompts")]
+    #[arg(long, help = "Write rendered managed files; omit to preview only")]
+    pub write: bool,
+    #[arg(
+        long,
+        help = "Use default answers for omitted configuration prompts and adopt write confirmation"
+    )]
     pub defaults: bool,
-    #[arg(long, help = "Fail instead of prompting for missing answers")]
+    #[arg(
+        long,
+        help = "Fail instead of prompting for missing answers and skip adopt write confirmation"
+    )]
     pub no_input: bool,
     #[command(flatten)]
     pub answers: AnswerOpts,
@@ -298,6 +311,8 @@ pub fn run_init(opts: InitOpts) -> Result<Value> {
         answer_input: None,
         use_defaults: opts.defaults,
         force: opts.force,
+        dry_run: false,
+        backup_root: None,
         seed_repo_path: None,
         progress,
     })?;
@@ -355,6 +370,19 @@ pub fn run_adopt(opts: AdoptOpts) -> Result<Value> {
         progress.info("warning", warning);
     }
     inference.apply_to_answers(&mut answers, &answer_shape);
+    let review = inference.adoption_review(&answers, &opts.answers, &answer_shape);
+    for item in &review.items {
+        progress.info("review", item);
+    }
+    if opts.write {
+        confirm_adopt_write(&opts)?;
+    } else {
+        progress.info(
+            "mode",
+            "preview only; re-run with --write to apply managed files",
+        );
+    }
+    let backup_root = opts.write.then(|| adopt_backup_root(&destination));
 
     let copy_result = render_and_copy_bootstrap_template(BootstrapCopyRequest {
         destination: &destination,
@@ -363,19 +391,34 @@ pub fn run_adopt(opts: AdoptOpts) -> Result<Value> {
         answer_input: Some(answer_input),
         use_defaults: opts.defaults,
         force: opts.force,
+        dry_run: !opts.write,
+        backup_root: backup_root.clone(),
         seed_repo_path: Some(&destination),
         progress,
     })?;
-    progress.done("adopt complete");
+    if opts.write {
+        if let Err(error) =
+            write_adopt_last_receipt(&destination, backup_root.as_deref(), &copy_result)
+        {
+            progress.info(
+                "warning",
+                format!("adopt write completed but undo receipt could not be recorded: {error:#}"),
+            );
+        }
+        progress.done("adopt complete");
+    } else {
+        progress.done("adopt preview complete");
+    }
 
     Ok(json!({
         "ok": true,
         "command": "adopt",
-        "render_mode": "copy",
+        "render_mode": if opts.write { "copy" } else { "preview" },
         "template": template.source(),
         "destination": destination.display().to_string(),
         "answers_file": ANSWERS_FILE,
         "git_initialized": false,
+        "write": opts.write,
         "detection_report": inference.report(),
         "adoption_profile": inference.adoption_profile_report(
             &copy_result.render_preview.generated_gates,
@@ -383,6 +426,7 @@ pub fn run_adopt(opts: AdoptOpts) -> Result<Value> {
             &opts.answers,
             &answer_shape,
         ),
+        "adoption_review": review.items,
         "adoption_report": adoption_report(&copy_result),
         "next_steps": initial_next_steps(InitialCommand::Adopt, &destination, &copy_result),
         "notes": initial_notes(copy_result.notes),
@@ -426,7 +470,7 @@ fn resolve_initial_template_request_with_policy<'a>(
 ) -> Result<InitialTemplateRequest<'a>> {
     match template {
         Some(template) if is_official_template_source(template) => {
-            default_initial_template_request(vcs_ref, pin_policy)
+            official_initial_template_request(vcs_ref, pin_policy)
         }
         Some(template) => Ok(InitialTemplateRequest {
             template,
@@ -438,6 +482,23 @@ fn resolve_initial_template_request_with_policy<'a>(
 }
 
 fn default_initial_template_request<'a>(
+    vcs_ref: &'a Option<String>,
+    pin_policy: BuildTemplatePinPolicy,
+) -> Result<InitialTemplateRequest<'a>> {
+    if vcs_ref.is_none() && pin_policy == BuildTemplatePinPolicy::Unreleased {
+        // Omitted template on local builds is offline-friendly; explicitly naming
+        // the official URL still means "use remote official template code".
+        return Ok(InitialTemplateRequest {
+            template: EMBEDDED_TEMPLATE_SOURCE,
+            vcs_ref: None,
+            used_default: true,
+        });
+    }
+
+    official_initial_template_request(vcs_ref, pin_policy)
+}
+
+fn official_initial_template_request<'a>(
     vcs_ref: &'a Option<String>,
     pin_policy: BuildTemplatePinPolicy,
 ) -> Result<InitialTemplateRequest<'a>> {
@@ -582,7 +643,9 @@ pub fn run_update(opts: UpdateOpts) -> Result<Value> {
         &destination,
         ApplyRenderOptions {
             force: opts.force,
+            dry_run: false,
             allow_answers_overwrite: true,
+            backup_root: None,
             conflict_message: "Update would overwrite or remove template-managed paths. No files were changed. Re-run with --force to accept the rendered output:",
             progress,
         },
@@ -601,7 +664,7 @@ pub fn run_update(opts: UpdateOpts) -> Result<Value> {
 }
 
 fn template_progress_label(template: Option<&str>) -> String {
-    template.unwrap_or(OFFICIAL_TEMPLATE_SOURCE).to_string()
+    template.unwrap_or("default jig-sh template").to_string()
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -623,9 +686,13 @@ fn initial_next_steps(
             "cd {}",
             crate::shell::quote(&destination_for_cd.display().to_string())
         ),
-        "Review .jig.toml, AGENTS.md, agent-map.md, and any generated crate-level AGENTS.md starters."
-            .into(),
+        "Review .jig.toml, AGENTS.md, agent-map.md, and generated checks.".into(),
     ];
+    if command == InitialCommand::Adopt && result.apply_report.dry_run {
+        steps.push("Re-run jig adopt --write after reviewing the preview.".into());
+        steps.push("No files were changed by this preview.".into());
+        return steps;
+    }
     if result.bootstrap_command_configured {
         steps.push("scripts/jig bootstrap".into());
     }
@@ -656,7 +723,11 @@ fn initial_next_steps(
     steps.push("scripts/jig check agent-guides".into());
     steps.push("scripts/jig check test".into());
     if command == InitialCommand::Adopt {
-        steps.push("Commit the adoption diff after the generated checks pass.".into());
+        if result.apply_report.dry_run {
+            steps.push("No files were changed by this preview.".into());
+        } else {
+            steps.push("Commit the adoption diff after the generated checks pass.".into());
+        }
     }
     steps
 }
@@ -671,14 +742,74 @@ fn initial_notes(extra_notes: Vec<String>) -> Vec<String> {
     notes
 }
 
+fn adopt_backup_root(destination: &Path) -> PathBuf {
+    destination
+        .join(".agent/state/adopt-backups")
+        .join(Ulid::new().to_string())
+}
+
+fn confirm_adopt_write(opts: &AdoptOpts) -> Result<()> {
+    if opts.defaults || opts.no_input {
+        return Ok(());
+    }
+    let stdin = io::stdin();
+    let mut stderr = io::stderr();
+    if !stdin.is_terminal() || !stderr.is_terminal() {
+        bail!(
+            "Adopt write needs confirmation but stdin or stderr is not a terminal. Re-run interactively, or pass --defaults or --no-input for noninteractive execution."
+        );
+    }
+
+    write!(stderr, "Proceed with adopt --write? [y/N] ")
+        .context("Failed to write adopt confirmation prompt")?;
+    stderr
+        .flush()
+        .context("Failed to flush adopt confirmation prompt")?;
+    let mut answer = String::new();
+    stdin
+        .read_line(&mut answer)
+        .context("Failed to read adopt confirmation")?;
+    if matches!(answer.trim(), "y" | "Y" | "yes" | "YES" | "Yes") {
+        return Ok(());
+    }
+    bail!("Adopt write cancelled; re-run with --defaults or --no-input to skip confirmation.");
+}
+
+fn write_adopt_last_receipt(
+    destination: &Path,
+    backup_root: Option<&Path>,
+    result: &initial_copy::BootstrapCopyResult,
+) -> Result<()> {
+    let state_dir = destination.join(".agent/state");
+    fs::create_dir_all(&state_dir)
+        .with_context(|| format!("Failed to create {}", state_dir.display()))?;
+    let receipt_path = state_dir.join("adopt-last.json");
+    let receipt = json!({
+        "command": "adopt",
+        "created_at_unix": OffsetDateTime::now_utc().unix_timestamp(),
+        "destination": destination.display().to_string(),
+        "backup_root": backup_root.map(|path| path.display().to_string()),
+        "apply_report": &result.apply_report,
+        "undo_hint": "Use apply_report.backups to restore modified or removed files, then delete paths listed in apply_report.files_created if you want to undo this adopt write. Delete backup_root when those backups are no longer needed.",
+    });
+    let text =
+        serde_json::to_string_pretty(&receipt).context("Failed to serialize adopt receipt")?;
+    fs::write(&receipt_path, format!("{text}\n"))
+        .with_context(|| format!("Failed to write {}", receipt_path.display()))?;
+    Ok(())
+}
+
 fn adoption_report(result: &initial_copy::BootstrapCopyResult) -> Value {
     json!({
+        "dry_run": result.apply_report.dry_run,
         "files_created": &result.apply_report.files_created,
         "files_modified": &result.apply_report.files_modified,
         "files_removed": &result.apply_report.files_removed,
         "files_unchanged": &result.apply_report.files_unchanged,
         "managed_blocks_inserted": &result.apply_report.managed_blocks_inserted,
         "managed_blocks_rendered": &result.apply_report.managed_blocks_rendered,
+        "backups": &result.apply_report.backups,
+        "conflicts": &result.apply_report.conflicts,
         "commands_detected_or_skipped": initial_command_report(result),
         "todos": initial_todos(result),
         "suggested_jig_toml_edits": initial_suggested_jig_toml_edits(result),

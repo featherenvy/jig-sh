@@ -222,6 +222,7 @@ fn adopt_accepts_npm_frontend_app_and_renders_current_web_and_dev_config() {
         template_mode: Some(TemplateMode::Committed),
         vcs_ref: None,
         force: false,
+        write: true,
         defaults: true,
         no_input: true,
         answers: AnswerOpts {
@@ -273,10 +274,7 @@ fn adopt_accepts_npm_frontend_app_and_renders_current_web_and_dev_config() {
             .iter()
             .any(|todo| todo.as_str().unwrap().contains("frontend app"))
     );
-    assert!(repo.join("crates/api/AGENTS.md").exists());
-    let crate_guide = fs::read_to_string(repo.join("crates/api/AGENTS.md")).unwrap();
-    assert!(crate_guide.contains("## Purpose"));
-    assert!(crate_guide.contains("`src/lib.rs`"));
+    assert!(!repo.join("crates/api/AGENTS.md").exists());
 
     let answers = fs::read_to_string(repo.join(".jig.toml")).unwrap();
     assert!(answers.contains("web_package_manager = \"npm\""));
@@ -361,6 +359,7 @@ fn adopt_with_project_owned_makefile_keeps_file_and_emits_direct_typescript_gate
         template_mode: Some(TemplateMode::Committed),
         vcs_ref: None,
         force: false,
+        write: true,
         defaults: true,
         no_input: true,
         answers: AnswerOpts {
@@ -498,6 +497,7 @@ fn adopt_rejects_frontend_app_missing_required_ci_scripts() {
         template_mode: Some(TemplateMode::Committed),
         vcs_ref: None,
         force: false,
+        write: true,
         defaults: true,
         no_input: true,
         answers: AnswerOpts {
@@ -549,6 +549,7 @@ fn adopt_rejects_frontend_app_without_repo_or_app_lockfile() {
         template_mode: Some(TemplateMode::Committed),
         vcs_ref: None,
         force: false,
+        write: true,
         defaults: true,
         no_input: true,
         answers: AnswerOpts {

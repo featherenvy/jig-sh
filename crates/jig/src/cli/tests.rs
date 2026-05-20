@@ -1,4 +1,5 @@
 use super::*;
+use crate::cli::run::format_adopt_human_summary;
 #[test]
 fn template_errors_get_hint() {
     let missing_template_value =
@@ -84,7 +85,7 @@ fn parses_check_namespace_commands() {
         assert_eq!(error.kind(), clap::error::ErrorKind::InvalidSubcommand);
         let message = error.to_string();
         assert!(
-            message.contains("Usage: jig <COMMAND>"),
+            message.contains("Usage: jig [OPTIONS] <COMMAND>"),
             "legacy top-level hint depends on Clap usage text for {legacy}: {message}"
         );
         assert!(
@@ -106,7 +107,7 @@ fn parses_check_namespace_commands() {
         "agent-map hint depends on Clap quoting the nested invalid command: {message}"
     );
     assert!(
-        message.contains("Usage: jig agent-map <COMMAND>"),
+        message.contains("Usage: jig agent-map [OPTIONS] <COMMAND>"),
         "agent-map hint depends on Clap nested usage text: {message}"
     );
     assert_eq!(
@@ -140,6 +141,45 @@ fn parses_hidden_sqlx_todo_generator_for_compatibility() {
 }
 
 #[test]
+fn adopt_human_summary_includes_reviewable_next_steps() {
+    let output = serde_json::json!({
+        "render_mode": "preview",
+        "destination": "/tmp/repo",
+        "adoption_report": {
+            "files_created": ["scripts/jig"],
+            "files_modified": [],
+            "files_removed": [],
+            "conflicts": [
+                {
+                    "path": ".agent/PLANS.md",
+                    "detail": "destination differs from the rendered template-managed path"
+                }
+            ]
+        },
+        "detection_report": {
+            "warnings": ["SQLx metadata directory was not detected"]
+        },
+        "adoption_review": [
+            "stack: Rust workspace, SQLx",
+            "SQLx: enabled with migrations at migrations"
+        ],
+        "next_steps": [
+            "Re-run jig adopt --write after reviewing the preview.",
+            "No files were changed by this preview."
+        ]
+    });
+
+    let summary = format_adopt_human_summary(&output);
+
+    assert!(summary.contains("mode: preview"));
+    assert!(summary.contains("managed files: 1 created, 0 modified, 0 removed"));
+    assert!(summary.contains("stack: Rust workspace, SQLx"));
+    assert!(summary.contains(".agent/PLANS.md"));
+    assert!(summary.contains("SQLx metadata directory was not detected"));
+    assert!(summary.contains("Re-run jig adopt --write"));
+}
+
+#[test]
 fn adopt_and_init_default_to_official_template() {
     let adopt = Cli::try_parse_from(["jig", "adopt", ".", "--repo-name", "demo"]).unwrap();
     match adopt.command {
@@ -156,6 +196,14 @@ fn adopt_and_init_default_to_official_template() {
         }
         other => panic!("expected init command, got {other:?}"),
     }
+}
+
+#[test]
+fn adopt_accepts_json_after_subcommand() {
+    let adopt = Cli::try_parse_from(["jig", "adopt", ".", "--json"]).unwrap();
+
+    assert!(adopt.json);
+    assert!(matches!(adopt.command, CommandKind::Adopt(_)));
 }
 
 #[test]

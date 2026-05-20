@@ -43,7 +43,7 @@ Runtime memory tools are intentionally not part of `.agent/jig-contract.json`. T
 
 The root `AGENTS.md` is block-managed during adoption and update. Existing repo-specific content outside the Jig managed block is preserved.
 
-Crate-level `AGENTS.md` files are project-owned. `jig.sh` validates their presence and required sections, but it does not generate business-specific crate ownership guidance.
+Crate-level `AGENTS.md` files are project-owned. `jig.sh` validates required sections for crate guides that exist, but it does not require or generate placeholder crate guides.
 
 The template deliberately avoids generating application code, crate guides, or schema dump implementations. Those remain owned by the consumer repository.
 
