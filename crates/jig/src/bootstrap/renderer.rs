@@ -10,6 +10,7 @@ use tempfile::TempDir;
 
 use super::ANSWERS_FILE;
 use super::answers::RenderAnswers;
+use super::crate_guide::crate_guide_skip_reason;
 use super::managed_paths;
 use super::preview_seed::seed_preview_workspace;
 use super::staged_render::StagedRender;
@@ -54,7 +55,12 @@ pub(super) fn stage_render(request: RenderStageRequest<'_>) -> Result<StagedRend
             "starter AGENTS.md for missing crates",
         );
         managed_paths.extend(request.progress.log_blocked_on_err(
-            scaffold_missing_crate_guides(seed_repo_path, &destination, request.answers),
+            scaffold_missing_crate_guides(
+                seed_repo_path,
+                &destination,
+                request.answers,
+                request.progress,
+            ),
         )?);
     }
     request
@@ -142,6 +148,7 @@ fn scaffold_missing_crate_guides(
     seed_repo_path: &Path,
     destination: &Path,
     answers: &RenderAnswers,
+    progress: CliProgress,
 ) -> Result<BTreeSet<PathBuf>> {
     let mut scaffolded = BTreeSet::new();
     for root in answers.rust_crate_roots() {
@@ -176,7 +183,14 @@ fn scaffold_missing_crate_guides(
             if destination_guide.exists() {
                 continue;
             }
-            let crate_name = crate_package_name(&crate_dir);
+            let crate_name = crate_package_name(&crate_dir)?;
+            if let Some(reason) = crate_guide_skip_reason(relative_crate_dir, Some(&crate_name)) {
+                progress.info(
+                    "skipped crate guide",
+                    format!("{}: {reason}", relative_crate_dir.display()),
+                );
+                continue;
+            }
             write_rendered_file(
                 destination,
                 &relative_guide,
@@ -188,25 +202,24 @@ fn scaffold_missing_crate_guides(
     Ok(scaffolded)
 }
 
-fn crate_package_name(crate_dir: &Path) -> String {
+fn crate_package_name(crate_dir: &Path) -> Result<String> {
     let fallback = crate_dir
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("crate")
         .to_string();
-    let Ok(cargo_toml) = fs::read_to_string(crate_dir.join("Cargo.toml")) else {
-        return fallback;
-    };
-    let Ok(parsed) = toml::from_str::<toml::Value>(&cargo_toml) else {
-        return fallback;
-    };
-    parsed
+    let cargo_toml_path = crate_dir.join("Cargo.toml");
+    let cargo_toml = fs::read_to_string(&cargo_toml_path)
+        .with_context(|| format!("Failed to read {}", cargo_toml_path.display()))?;
+    let parsed = toml::from_str::<toml::Value>(&cargo_toml)
+        .with_context(|| format!("Failed to parse {}", cargo_toml_path.display()))?;
+    Ok(parsed
         .get("package")
         .and_then(|package| package.get("name"))
         .and_then(toml::Value::as_str)
         .filter(|name| !name.trim().is_empty())
         .map(str::to_string)
-        .unwrap_or(fallback)
+        .unwrap_or(fallback))
 }
 
 fn starter_crate_guide(crate_name: &str) -> String {

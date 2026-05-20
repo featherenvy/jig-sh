@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
 
+use serde::Serialize;
 use serde_json::Value as JsonValue;
 use serde_yaml_ng::Value as YamlValue;
 
@@ -15,11 +16,28 @@ use super::scan::{
 const FRONTEND_COVERAGE_THRESHOLD: u32 = 80;
 const REQUIRED_FRONTEND_SCRIPTS: &[&str] = &["lint", "typecheck", "build:bundle", "test:coverage"];
 
-pub(super) fn infer_frontend_apps(
+#[derive(Clone, Debug, Default)]
+pub(super) struct FrontendAppsInference {
+    pub(super) apps: Vec<FrontendApp>,
+    pub(super) profiles: Vec<FrontendAppProfile>,
+    pub(super) sources: Vec<String>,
+    pub(super) warnings: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub(super) struct FrontendAppProfile {
+    pub(super) name: String,
+    pub(super) dir: String,
+    pub(super) kind: String,
+    pub(super) preferred_dev_port: Option<u16>,
+    pub(super) sources: Vec<String>,
+}
+
+pub(super) fn infer_frontend_apps_with_metadata(
     root: &Path,
     inferred_repo_name: Option<&str>,
     warnings: &mut Vec<String>,
-) -> Vec<FrontendApp> {
+) -> FrontendAppsInference {
     let workspace_declared = workspace_declaration_present(root, warnings);
     let workspace_candidates = workspace_package_dirs(root, warnings);
     let mut candidates = Vec::new();
@@ -43,6 +61,9 @@ pub(super) fn infer_frontend_apps(
     candidates.dedup();
 
     let mut apps = Vec::new();
+    let mut profiles = Vec::new();
+    let mut sources = Vec::new();
+    let mut metadata_warnings = Vec::new();
     let mut names = BTreeSet::new();
     for dir in candidates {
         let package_path = dir.join("package.json");
@@ -91,15 +112,47 @@ pub(super) fn infer_frontend_apps(
         } else {
             "env-port"
         };
+        let source = format!(
+            "{} scripts: dev, {}",
+            relative_path_string(package_path.strip_prefix(root).unwrap_or(&package_path)),
+            REQUIRED_FRONTEND_SCRIPTS.join(", ")
+        );
+        let port_source = format!(
+            "{} scripts.dev",
+            relative_path_string(package_path.strip_prefix(root).unwrap_or(&package_path))
+        );
+        let mut profile_warnings = Vec::new();
+        let preferred_dev_port =
+            infer_dev_port(dev_script, &package_path, warnings, &mut profile_warnings);
+        metadata_warnings.extend(profile_warnings);
+        let mut profile_sources = vec![source.clone()];
+        if preferred_dev_port.is_some() {
+            profile_sources.push(port_source);
+        }
         apps.push(FrontendApp {
-            name,
-            dir: dir_value,
+            name: name.clone(),
+            dir: dir_value.clone(),
             coverage_threshold: FRONTEND_COVERAGE_THRESHOLD,
             kind: kind.into(),
         });
+        profiles.push(FrontendAppProfile {
+            name,
+            dir: dir_value,
+            kind: kind.into(),
+            preferred_dev_port,
+            sources: profile_sources,
+        });
+        sources.push(source);
     }
     apps.sort_by(|left, right| left.dir.cmp(&right.dir));
-    apps
+    profiles.sort_by(|left, right| left.dir.cmp(&right.dir));
+    sources.sort();
+    FrontendAppsInference {
+        apps,
+        profiles,
+        sources,
+        warnings: metadata_warnings,
+    }
 }
 
 fn workspace_package_dirs(root: &Path, warnings: &mut Vec<String>) -> Vec<PathBuf> {
@@ -332,6 +385,95 @@ pub(super) fn script_looks_like_vite(value: &str) -> bool {
     !tokens[vite_index + 1..]
         .iter()
         .any(|token| matches!(*token, "build" | "preview" | "optimize"))
+}
+
+fn infer_dev_port(
+    script: &str,
+    source: &Path,
+    warnings: &mut Vec<String>,
+    metadata_warnings: &mut Vec<String>,
+) -> Option<u16> {
+    // Supported conventions are Vite-style flags and common PORT env assignments.
+    let tokens = script_tokens(script);
+    for (index, token) in tokens.iter().enumerate() {
+        let Some(value) = port_candidate_value(token, tokens.get(index + 1).copied()) else {
+            continue;
+        };
+        if let Some(port) = valid_port_or_warn(value, source, warnings, metadata_warnings) {
+            return Some(port);
+        }
+    }
+    None
+}
+
+fn port_candidate_value<'a>(token: &'a str, next: Option<&'a str>) -> Option<&'a str> {
+    if matches!(token, "--port" | "-p") {
+        next
+    } else if let Some(value) = token.strip_prefix("--port=") {
+        Some(value)
+    } else if let Some(value) = token.strip_prefix("-p") {
+        Some(value)
+    } else {
+        let (name, value) = token.split_once('=')?;
+        matches!(name, "PORT" | "VITE_PORT" | "APP_PORT").then_some(value)
+    }
+}
+
+fn valid_port_or_warn(
+    value: &str,
+    source: &Path,
+    warnings: &mut Vec<String>,
+    metadata_warnings: &mut Vec<String>,
+) -> Option<u16> {
+    match parse_port(value) {
+        PortParse::Valid(port) => Some(port),
+        PortParse::Invalid(message) => {
+            push_profile_warning(warnings, metadata_warnings, source, &message);
+            None
+        }
+        PortParse::NotNumeric => None,
+    }
+}
+
+fn push_profile_warning(
+    warnings: &mut Vec<String>,
+    metadata_warnings: &mut Vec<String>,
+    source: &Path,
+    message: &str,
+) {
+    metadata_warnings.push(format!("{}: {message}", source.display()));
+    push_scan_warning(warnings, source, message);
+}
+
+fn script_tokens(script: &str) -> Vec<&str> {
+    script
+        .split(|ch: char| ch.is_whitespace() || matches!(ch, '&' | '|' | ';' | '(' | ')'))
+        .map(|token| token.trim_matches(['"', '\'']))
+        .filter(|token| !token.is_empty())
+        .collect()
+}
+
+enum PortParse {
+    Valid(u16),
+    Invalid(String),
+    NotNumeric,
+}
+
+fn parse_port(value: &str) -> PortParse {
+    let value = value.trim_matches(['"', '\'']);
+    if value.is_empty() || !value.chars().all(|ch| ch.is_ascii_digit()) {
+        return PortParse::NotNumeric;
+    }
+    match value.parse::<u16>() {
+        Ok(port) if port > 0 => PortParse::Valid(port),
+        Ok(_) => PortParse::Invalid(
+            "frontend dev port literal 0 is invalid; preferred_dev_port was not inferred from it"
+                .into(),
+        ),
+        Err(error) => PortParse::Invalid(format!(
+            "frontend dev port literal {value} is invalid; preferred_dev_port was not inferred from it: {error}"
+        )),
+    }
 }
 
 fn safe_frontend_name(value: &str) -> String {

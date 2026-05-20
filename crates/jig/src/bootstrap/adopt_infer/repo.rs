@@ -3,16 +3,35 @@ use std::path::Path;
 use super::super::git::{git_stdout, is_git_work_tree};
 use super::scan::push_scan_warning;
 
+#[derive(Clone, Debug)]
+pub(super) struct RepoValueInference {
+    pub(super) value: Option<String>,
+    pub(super) source: Option<String>,
+}
+
+#[cfg(test)]
 pub(super) fn infer_repo_name(root: &Path) -> Option<String> {
-    git_remote_repo_name(root)
-        .map(|value| safe_remote_repo_name(&value))
-        .or_else(|| {
-            root.file_name()
-                .and_then(|name| name.to_str())
-                .map(str::to_string)
-                .filter(|value| !value.is_empty())
-                .map(|value| safe_repo_name(&value))
-        })
+    infer_repo_name_with_metadata(root).value
+}
+
+pub(super) fn infer_repo_name_with_metadata(root: &Path) -> RepoValueInference {
+    if let Some(value) = git_remote_repo_name(root) {
+        return RepoValueInference {
+            value: Some(safe_remote_repo_name(&value)),
+            source: Some("git remote origin URL".into()),
+        };
+    }
+
+    let value = root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(str::to_string)
+        .filter(|value| !value.is_empty())
+        .map(|value| safe_repo_name(&value));
+    let source = value
+        .as_ref()
+        .map(|_| "repository directory name".to_string());
+    RepoValueInference { value, source }
 }
 
 fn git_remote_repo_name(root: &Path) -> Option<String> {
@@ -27,9 +46,20 @@ pub(super) fn repo_name_from_remote_url(remote: &str) -> Option<String> {
     Some(name.to_string()).filter(|value| !value.is_empty())
 }
 
+#[cfg(test)]
 pub(super) fn infer_default_branch(root: &Path, warnings: &mut Vec<String>) -> Option<String> {
+    infer_default_branch_with_metadata(root, warnings).value
+}
+
+pub(super) fn infer_default_branch_with_metadata(
+    root: &Path,
+    warnings: &mut Vec<String>,
+) -> RepoValueInference {
     if !is_git_work_tree(root) {
-        return None;
+        return RepoValueInference {
+            value: None,
+            source: None,
+        };
     }
     let origin_head = git_stdout(
         root,
@@ -39,11 +69,24 @@ pub(super) fn infer_default_branch(root: &Path, warnings: &mut Vec<String>) -> O
     // to explicit origin branch refs and then a known local branch name.
     .ok()
     .and_then(|value| value.strip_prefix("origin/").map(str::to_string));
-    origin_head
-        .filter(|value| !value.is_empty())
-        .or_else(|| infer_default_branch_from_remote_refs(root, warnings))
-        .or_else(|| infer_default_branch_from_local_head(root, warnings))
-        .filter(|value| !value.is_empty())
+    if let Some(value) = origin_head.filter(|value| !value.is_empty()) {
+        return RepoValueInference {
+            value: Some(value),
+            source: Some("git refs/remotes/origin/HEAD".into()),
+        };
+    }
+    if let Some(value) = infer_default_branch_from_remote_refs(root, warnings) {
+        return RepoValueInference {
+            value: Some(value),
+            source: Some("git refs/remotes/origin/{main,master,trunk}".into()),
+        };
+    }
+    let value =
+        infer_default_branch_from_local_head(root, warnings).filter(|value| !value.is_empty());
+    let source = value
+        .as_ref()
+        .map(|_| "git symbolic-ref --short HEAD".to_string());
+    RepoValueInference { value, source }
 }
 
 fn infer_default_branch_from_remote_refs(

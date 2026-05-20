@@ -1,0 +1,1 @@
+Add frontend profile metadata for inferred app dev ports from package scripts so adoption preview covers multiple frontend apps and their preferred local ports.

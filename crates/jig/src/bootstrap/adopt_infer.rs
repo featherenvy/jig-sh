@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde_json::{Value as JsonValue, json};
@@ -5,28 +6,37 @@ use serde_json::{Value as JsonValue, json};
 use super::answers::AnswerInputShape;
 use super::{AnswerOpts, FrontendApp};
 
+mod commands;
 mod frontend;
 mod github;
+mod metadata;
 mod package_manager;
+mod profile;
 mod repo;
 mod rust_sqlx;
 mod scan;
+mod topology;
 
-use self::frontend::infer_frontend_apps;
-use self::github::infer_ci_github_runner;
-use self::package_manager::infer_package_manager;
-use self::repo::{infer_default_branch, infer_repo_name};
-use self::rust_sqlx::{infer_rust_crate_roots, infer_sqlx};
+use self::commands::{CommandCandidate, CommandInference, infer_commands};
+use self::frontend::{FrontendAppProfile, infer_frontend_apps_with_metadata};
+use self::github::{GithubCiShapeInference, infer_ci_github_runner_with_metadata};
+use self::metadata::{Confidence, InferenceMetadata};
+use self::package_manager::infer_package_manager_with_metadata;
+use self::repo::{infer_default_branch_with_metadata, infer_repo_name_with_metadata};
+use self::rust_sqlx::{RustCrateRootSourceKind, infer_rust_crate_roots_with_metadata, infer_sqlx};
 use self::scan::{RepoScan, push_scan_warning};
+use self::topology::{RepoTopology, infer_repo_topology};
 
 #[cfg(test)]
 use self::frontend::segment_matches;
 #[cfg(test)]
 use self::github::select_github_runner;
 #[cfg(test)]
-use self::repo::{repo_name_from_remote_url, safe_repo_name};
+use self::repo::{
+    infer_default_branch, infer_repo_name, repo_name_from_remote_url, safe_repo_name,
+};
 #[cfg(test)]
-use self::rust_sqlx::crate_root_from_workspace_member;
+use self::rust_sqlx::{crate_root_from_workspace_member, infer_rust_crate_roots};
 #[cfg(test)]
 use self::scan::MAX_SCAN_FILE_BYTES;
 
@@ -35,41 +45,257 @@ pub(super) struct AdoptInference {
     repo_name: Option<String>,
     default_branch: Option<String>,
     rust_crate_roots: Vec<String>,
+    rust_crate_root_source_kind: RustCrateRootSourceKind,
     sqlx_enabled: Option<bool>,
     rust_migration_dir: Option<String>,
     rust_migration_dirs: Vec<String>,
     rust_sqlx_metadata_dir: Option<String>,
     sqlx_check_command: Option<String>,
+    rust_fmt_check_command: Option<String>,
+    rust_clippy_command: Option<String>,
+    rust_test_command: Option<String>,
+    rust_test_locked_command: Option<String>,
+    command_profile: CommandInference,
     web_package_manager: Option<String>,
     frontend_apps: Vec<FrontendApp>,
+    frontend_profiles: Vec<FrontendAppProfile>,
     ci_github_runner: Option<String>,
+    ci_shape: GithubCiShapeInference,
+    repo_topology: RepoTopology,
     signals: Vec<String>,
     warnings: Vec<String>,
+    metadata: BTreeMap<String, InferenceMetadata>,
 }
 
 pub(super) fn infer_adopt_answers(root: &Path) -> AdoptInference {
     let mut warnings = Vec::new();
     let scan = RepoScan::collect(root, &mut warnings);
-    let repo_name = infer_repo_name(root);
-    let default_branch = infer_default_branch(root, &mut warnings);
+    let repo_name = infer_repo_name_with_metadata(root);
+    let default_branch = infer_default_branch_with_metadata(root, &mut warnings);
+    let rust_crate_roots = infer_rust_crate_roots_with_metadata(root, &mut warnings);
+    let repo_topology = infer_repo_topology(root, &scan, &rust_crate_roots.roots, &mut warnings);
+    let package_manager = infer_package_manager_with_metadata(root, &scan, &mut warnings);
+    let commands = infer_commands(root, &scan, &mut warnings);
+    let frontend_apps =
+        infer_frontend_apps_with_metadata(root, repo_name.value.as_deref(), &mut warnings);
+    let github_ci = infer_ci_github_runner_with_metadata(root, &scan, &mut warnings);
     let mut inference = AdoptInference {
-        repo_name: repo_name.clone(),
-        default_branch,
-        rust_crate_roots: infer_rust_crate_roots(root, &mut warnings),
-        web_package_manager: infer_package_manager(root, &scan, &mut warnings),
-        frontend_apps: infer_frontend_apps(root, repo_name.as_deref(), &mut warnings),
-        ci_github_runner: infer_ci_github_runner(root, &scan, &mut warnings),
+        repo_name: repo_name.value.clone(),
+        default_branch: default_branch.value.clone(),
+        rust_crate_roots: rust_crate_roots.roots.clone(),
+        rust_crate_root_source_kind: rust_crate_roots.source_kind,
+        rust_fmt_check_command: commands
+            .rust_fmt_check_command
+            .as_ref()
+            .map(CommandCandidate::command),
+        rust_clippy_command: commands
+            .rust_clippy_command
+            .as_ref()
+            .map(CommandCandidate::command),
+        rust_test_command: commands
+            .rust_test_command
+            .as_ref()
+            .map(CommandCandidate::command),
+        rust_test_locked_command: commands
+            .rust_test_locked_command
+            .as_ref()
+            .map(CommandCandidate::command),
+        command_profile: commands.clone(),
+        web_package_manager: package_manager.value.clone(),
+        frontend_apps: frontend_apps.apps.clone(),
+        frontend_profiles: frontend_apps.profiles.clone(),
+        ci_github_runner: github_ci.runner.clone(),
+        ci_shape: github_ci.shape.clone(),
+        repo_topology,
         warnings,
         ..AdoptInference::default()
     };
 
+    if let Some(value) = inference.repo_name.clone() {
+        let confidence = if repo_name
+            .source
+            .as_deref()
+            .is_some_and(|source| source.starts_with("git "))
+        {
+            Confidence::High
+        } else {
+            Confidence::Medium
+        };
+        inference.record_metadata(
+            "repo_name",
+            json!(value),
+            option_source(repo_name.source),
+            confidence,
+            Vec::new(),
+        );
+    }
+    if let Some(value) = inference.default_branch.clone() {
+        let confidence = if default_branch
+            .source
+            .as_deref()
+            .is_some_and(|source| source.contains("origin"))
+        {
+            Confidence::High
+        } else {
+            Confidence::Medium
+        };
+        inference.record_metadata(
+            "default_branch",
+            json!(value),
+            option_source(default_branch.source),
+            confidence,
+            Vec::new(),
+        );
+    }
+    if !inference.rust_crate_roots.is_empty() {
+        let confidence = match rust_crate_roots.source_kind {
+            RustCrateRootSourceKind::WorkspaceFallback => Confidence::Low,
+            _ => Confidence::High,
+        };
+        inference.record_metadata(
+            "rust_crate_roots",
+            json!(inference.rust_crate_roots.clone()),
+            rust_crate_roots.sources,
+            confidence,
+            Vec::new(),
+        );
+    }
+    for (key, candidate) in [
+        (
+            "rust_fmt_check_command",
+            commands.rust_fmt_check_command.as_ref(),
+        ),
+        ("rust_clippy_command", commands.rust_clippy_command.as_ref()),
+        ("rust_test_command", commands.rust_test_command.as_ref()),
+        (
+            "rust_test_locked_command",
+            commands.rust_test_locked_command.as_ref(),
+        ),
+    ] {
+        if let Some(candidate) = candidate {
+            inference.record_command_metadata(key, candidate);
+        }
+    }
+    if let Some(value) = inference.web_package_manager.clone() {
+        inference.record_metadata(
+            "web_package_manager",
+            json!(value),
+            package_manager.sources,
+            Confidence::High,
+            Vec::new(),
+        );
+    }
+    if !inference.frontend_apps.is_empty() {
+        inference.record_metadata(
+            "frontend_apps",
+            json!(inference.frontend_apps.clone()),
+            frontend_apps.sources,
+            Confidence::High,
+            Vec::new(),
+        );
+    }
+    if !inference.frontend_profiles.is_empty() {
+        let frontend_profile_sources = inference
+            .frontend_profiles
+            .iter()
+            .flat_map(|profile| profile.sources.iter().cloned())
+            .collect::<Vec<_>>();
+        inference.record_metadata(
+            "frontend_profiles",
+            json!(inference.frontend_profiles.clone()),
+            frontend_profile_sources,
+            Confidence::Medium,
+            frontend_apps.warnings,
+        );
+    }
+    if let Some(value) = inference.ci_github_runner.clone() {
+        inference.record_metadata(
+            "ci_github_runner",
+            json!(value),
+            github_ci.sources,
+            Confidence::High,
+            Vec::new(),
+        );
+    }
+    if inference.ci_shape.has_workflows() {
+        inference.record_metadata(
+            "ci_shape",
+            inference.ci_shape.report(),
+            inference.ci_shape.sources(),
+            Confidence::Medium,
+            vec![
+                "required checks are inferred from workflow job names; GitHub branch protection settings are not available locally"
+                    .into(),
+            ],
+        );
+    }
+
     let sqlx = infer_sqlx(root, &scan, &mut inference.warnings);
-    inference.sqlx_enabled = Some(sqlx.enabled);
-    inference.rust_migration_dir = sqlx.migration_dir;
-    inference.rust_migration_dirs = sqlx.migration_dirs;
-    inference.rust_sqlx_metadata_dir = sqlx.metadata_dir;
-    inference.sqlx_check_command = sqlx.check_command;
+    inference.sqlx_enabled = Some(sqlx.enabled.value);
+    inference.rust_migration_dirs = sqlx.migration_dirs.value.clone();
     inference.signals.extend(sqlx.signals);
+    inference.record_metadata(
+        "sqlx_enabled",
+        json!(sqlx.enabled.value),
+        sqlx.enabled.sources,
+        if sqlx.enabled.value {
+            Confidence::High
+        } else {
+            Confidence::Medium
+        },
+        Vec::new(),
+    );
+    if let Some(migration_dir) = &sqlx.migration_dir {
+        inference.rust_migration_dir = Some(migration_dir.value.clone());
+        inference.record_metadata(
+            "rust_migration_dir",
+            json!(migration_dir.value.clone()),
+            migration_dir.sources.clone(),
+            if sqlx.enabled.value && inference.rust_migration_dirs.is_empty() {
+                Confidence::Low
+            } else {
+                Confidence::High
+            },
+            migration_dir.warnings.clone(),
+        );
+    }
+    if !inference.rust_migration_dirs.is_empty() {
+        inference.record_metadata(
+            "rust_migration_dirs",
+            json!(inference.rust_migration_dirs.clone()),
+            sqlx.migration_dirs.sources,
+            Confidence::High,
+            sqlx.migration_dirs.warnings,
+        );
+    }
+    if let Some(metadata_dir) = &sqlx.metadata_dir {
+        inference.rust_sqlx_metadata_dir = Some(metadata_dir.value.clone());
+        let synthesized = metadata_dir
+            .sources
+            .iter()
+            .any(|source| source.starts_with("SQLx default"));
+        inference.record_metadata(
+            "rust_sqlx_metadata_dir",
+            json!(metadata_dir.value.clone()),
+            metadata_dir.sources.clone(),
+            if synthesized {
+                Confidence::Low
+            } else {
+                Confidence::High
+            },
+            metadata_dir.warnings.clone(),
+        );
+    }
+    if let Some(check_command) = &sqlx.check_command {
+        inference.sqlx_check_command = Some(check_command.value.clone());
+        inference.record_metadata(
+            "sqlx_check_command",
+            json!(check_command.value.clone()),
+            check_command.sources.clone(),
+            Confidence::Medium,
+            vec!["assumes online `cargo sqlx prepare --check` in a POSIX-like shell".into()],
+        );
+    }
     if inference.sqlx_enabled == Some(true)
         && inference
             .ci_github_runner
@@ -107,6 +333,13 @@ pub(super) fn infer_adopt_answers(root: &Path) -> AdoptInference {
     }
     if let Some(runner) = inference.ci_github_runner.as_deref() {
         inference.signals.push(format!("GitHub runner: {runner}"));
+    }
+    if inference.ci_shape.has_workflows() {
+        inference.signals.push(format!(
+            "GitHub workflows: {} file(s); generated Jig checks role: {}",
+            inference.ci_shape.workflow_file_count(),
+            inference.ci_shape.generated_jig_checks_role()
+        ));
     }
 
     inference
@@ -153,6 +386,30 @@ impl AdoptInference {
             &self.frontend_apps,
             answer_shape,
         );
+        fill_string(
+            &mut answers.rust_fmt_check_command,
+            self.rust_fmt_check_command.as_deref(),
+            answer_shape,
+            "rust_fmt_check_command",
+        );
+        fill_string(
+            &mut answers.rust_clippy_command,
+            self.rust_clippy_command.as_deref(),
+            answer_shape,
+            "rust_clippy_command",
+        );
+        fill_string(
+            &mut answers.rust_test_command,
+            self.rust_test_command.as_deref(),
+            answer_shape,
+            "rust_test_command",
+        );
+        fill_string(
+            &mut answers.rust_test_locked_command,
+            self.rust_test_locked_command.as_deref(),
+            answer_shape,
+            "rust_test_locked_command",
+        );
 
         let explicit_sqlx_enabled = answer_shape.explicit_sqlx_enabled(answers);
         if answer_shape.should_apply_inferred_sqlx_enabled(answers) {
@@ -184,7 +441,11 @@ impl AdoptInference {
         let rust = if self.rust_crate_roots.is_empty() {
             "no Rust workspace".to_string()
         } else {
-            format!("Rust workspace ({})", self.rust_crate_roots.join(", "))
+            format!(
+                "{} ({})",
+                self.rust_stack_label(),
+                self.rust_crate_roots.join(", ")
+            )
         };
         let sqlx = if self.sqlx_enabled == Some(true) {
             match self.rust_migration_dir.as_deref() {
@@ -218,17 +479,63 @@ impl AdoptInference {
             "rust_migration_dir": self.rust_migration_dir,
             "rust_migration_dirs": self.rust_migration_dirs,
             "rust_sqlx_metadata_dir": self.rust_sqlx_metadata_dir,
+            "rust_fmt_check_command": self.rust_fmt_check_command,
+            "rust_clippy_command": self.rust_clippy_command,
+            "rust_test_command": self.rust_test_command,
+            "rust_test_locked_command": self.rust_test_locked_command,
             "web_package_manager": self.web_package_manager,
             "frontend_apps": self.frontend_apps,
+            "frontend_profiles": self.frontend_profiles,
             "ci_github_runner": self.ci_github_runner,
+            "ci_shape": self.ci_shape.report(),
+            "repo_topology": self.repo_topology.report(),
+            "command_profile": self.command_profile.report(),
             "signals": self.signals,
             "warnings": self.warnings,
+            "metadata": metadata::report(&self.metadata),
         })
     }
 
     pub(super) fn warnings(&self) -> &[String] {
         &self.warnings
     }
+
+    fn record_metadata(
+        &mut self,
+        key: &str,
+        value: JsonValue,
+        sources: Vec<String>,
+        confidence: Confidence,
+        warnings: Vec<String>,
+    ) {
+        let previous = self.metadata.insert(
+            key.into(),
+            InferenceMetadata {
+                value,
+                sources,
+                confidence,
+                warnings,
+            },
+        );
+        debug_assert!(
+            previous.is_none(),
+            "duplicate inference metadata key recorded: {key}"
+        );
+    }
+
+    fn record_command_metadata(&mut self, key: &str, candidate: &CommandCandidate) {
+        self.record_metadata(
+            key,
+            json!(candidate.command),
+            vec![candidate.source.clone()],
+            Confidence::from_str(candidate.confidence),
+            candidate.warnings.clone(),
+        );
+    }
+}
+
+fn option_source(source: Option<String>) -> Vec<String> {
+    source.into_iter().collect()
 }
 
 fn fill_string(
@@ -281,6 +588,15 @@ mod tests {
     fn infer_package_manager(root: &Path, warnings: &mut Vec<String>) -> Option<String> {
         let scan = RepoScan::collect(root, warnings);
         super::package_manager::infer_package_manager(root, &scan, warnings)
+    }
+
+    fn signal_values(value: &JsonValue) -> Vec<&str> {
+        value
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry["value"].as_str().unwrap())
+            .collect()
     }
 
     #[test]
@@ -419,6 +735,55 @@ edition = "2024"
     }
 
     #[test]
+    fn workspace_without_usable_members_reports_workspace_source() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::write(temp.path().join("Cargo.toml"), "[workspace]\n").unwrap();
+        let mut warnings = Vec::new();
+
+        let inference = infer_rust_crate_roots_with_metadata(temp.path(), &mut warnings);
+
+        assert_eq!(inference.roots, vec!["."]);
+        assert_eq!(
+            inference.sources,
+            vec!["Cargo.toml [workspace] (no usable workspace members)"]
+        );
+
+        let inference = infer_adopt_answers(temp.path());
+        assert_eq!(
+            inference
+                .metadata
+                .get("rust_crate_roots")
+                .unwrap()
+                .confidence
+                .as_str(),
+            "low"
+        );
+    }
+
+    #[test]
+    fn single_crate_repo_uses_crate_stack_label() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::write(
+            temp.path().join("Cargo.toml"),
+            r#"[package]
+name = "demo"
+version = "0.1.0"
+edition = "2024"
+"#,
+        )
+        .unwrap();
+
+        let inference = infer_adopt_answers(temp.path());
+
+        assert_eq!(inference.detected_stack_label(), "Rust crate");
+        assert!(inference.summary().contains("Rust crate (.)"));
+        assert_eq!(
+            inference.report()["metadata"]["rust_crate_roots"]["sources"][0],
+            "Cargo.toml [package]"
+        );
+    }
+
+    #[test]
     fn workspace_glob_segment_match_supports_multiple_stars() {
         assert!(segment_matches("*-app-*", "demo-app-web"));
         assert!(segment_matches("app-*-web", "app-demo-web"));
@@ -438,10 +803,17 @@ edition = "2024"
         let mut warnings = Vec::new();
         let sqlx = infer_sqlx(temp.path(), &mut warnings);
 
-        assert!(sqlx.enabled);
-        assert_eq!(sqlx.migration_dir.as_deref(), Some("migrations"));
+        assert!(sqlx.enabled.value);
         assert_eq!(
-            sqlx.check_command.as_deref(),
+            sqlx.migration_dir
+                .as_ref()
+                .map(|value| value.value.as_str()),
+            Some("migrations")
+        );
+        assert_eq!(
+            sqlx.check_command
+                .as_ref()
+                .map(|value| value.value.as_str()),
             Some(
                 "SQLX_OFFLINE=false SQLX_OFFLINE_DIR='.sqlx' cargo sqlx prepare --check -- --all-targets"
             )
@@ -471,7 +843,9 @@ sqlx = "0.8"
         let sqlx = infer_sqlx(temp.path(), &mut warnings);
 
         assert_eq!(
-            sqlx.check_command.as_deref(),
+            sqlx.check_command
+                .as_ref()
+                .map(|value| value.value.as_str()),
             Some(
                 "SQLX_OFFLINE=false SQLX_OFFLINE_DIR='.sqlx' cargo sqlx prepare --check --workspace -- --all-targets"
             )
@@ -507,7 +881,7 @@ sqlx = "0.8"
         let mut warnings = Vec::new();
         let sqlx = infer_sqlx(temp.path(), &mut warnings);
 
-        assert!(!sqlx.enabled);
+        assert!(!sqlx.enabled.value);
         assert!(
             sqlx.signals
                 .iter()
@@ -723,15 +1097,20 @@ edition = "2024"
         let mut warnings = Vec::new();
         let sqlx = infer_sqlx(temp.path(), &mut warnings);
 
-        assert!(sqlx.enabled);
+        assert!(sqlx.enabled.value);
         assert_eq!(
-            sqlx.migration_dirs,
+            sqlx.migration_dirs.value,
             vec![
                 "crates/api/migrations".to_string(),
                 "services/billing/migrations".to_string(),
             ]
         );
-        assert_eq!(sqlx.migration_dir.as_deref(), Some("crates/api/migrations"));
+        assert_eq!(
+            sqlx.migration_dir
+                .as_ref()
+                .map(|value| value.value.as_str()),
+            Some("crates/api/migrations")
+        );
         assert!(sqlx.signals.iter().any(|signal| {
             signal
                 == "migration directories detected: crates/api/migrations, services/billing/migrations"
@@ -756,8 +1135,8 @@ edition = "2024"
         let mut warnings = Vec::new();
         let sqlx = infer_sqlx(temp.path(), &mut warnings);
 
-        assert!(!sqlx.enabled);
-        assert!(sqlx.migration_dirs.is_empty());
+        assert!(!sqlx.enabled.value);
+        assert!(sqlx.migration_dirs.value.is_empty());
     }
 
     #[test]
@@ -820,6 +1199,130 @@ edition = "2024"
 
         assert_eq!(inference.frontend_apps.len(), 1);
         assert_eq!(inference.frontend_apps[0].dir, "apps/web");
+    }
+
+    #[test]
+    fn frontend_profiles_include_preferred_dev_ports_from_scripts() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(temp.path().join("apps/admin")).unwrap();
+        fs::create_dir_all(temp.path().join("apps/web")).unwrap();
+        fs::write(
+            temp.path().join("pnpm-workspace.yaml"),
+            "packages:\n  - apps/*\n",
+        )
+        .unwrap();
+        fs::write(
+            temp.path().join("apps/admin/package.json"),
+            r#"{
+  "scripts": {
+    "dev": "cross-env PORT=3001 vite",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "build:bundle": "vite build",
+    "test:coverage": "vitest run --coverage"
+  }
+}"#,
+        )
+        .unwrap();
+        fs::write(
+            temp.path().join("apps/web/package.json"),
+            r#"{
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port=5174",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "build:bundle": "vite build",
+    "test:coverage": "vitest run --coverage"
+  }
+}"#,
+        )
+        .unwrap();
+
+        let report = infer_adopt_answers(temp.path()).report();
+        let profiles = report["frontend_profiles"].as_array().unwrap();
+
+        assert_eq!(profiles.len(), 2);
+        assert_eq!(profiles[0]["dir"], "apps/admin");
+        assert_eq!(profiles[0]["preferred_dev_port"], 3001);
+        assert_eq!(profiles[1]["dir"], "apps/web");
+        assert_eq!(profiles[1]["preferred_dev_port"], 5174);
+        assert_eq!(
+            report["metadata"]["frontend_profiles"]["confidence"],
+            "medium"
+        );
+    }
+
+    #[test]
+    fn invalid_numeric_frontend_dev_ports_are_reported_as_warnings() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(temp.path().join("web")).unwrap();
+        fs::write(
+            temp.path().join("web/package.json"),
+            r#"{
+  "scripts": {
+    "dev": "vite --port=999999",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "build:bundle": "vite build",
+    "test:coverage": "vitest run --coverage"
+  }
+}"#,
+        )
+        .unwrap();
+
+        let inference = infer_adopt_answers(temp.path());
+
+        assert!(
+            inference
+                .warnings()
+                .iter()
+                .any(|warning| warning.contains("preferred_dev_port was not inferred")),
+            "expected invalid frontend dev-port warning, got {:?}",
+            inference.warnings()
+        );
+        assert_eq!(inference.frontend_profiles[0].preferred_dev_port, None);
+        assert!(
+            inference.report()["metadata"]["frontend_profiles"]["warnings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|warning| warning
+                    .as_str()
+                    .unwrap()
+                    .contains("preferred_dev_port was not inferred"))
+        );
+    }
+
+    #[test]
+    fn frontend_dev_port_scan_continues_after_invalid_literal() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(temp.path().join("web")).unwrap();
+        fs::write(
+            temp.path().join("web/package.json"),
+            r#"{
+  "scripts": {
+    "dev": "vite --port 999999 --port 5174",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "build:bundle": "vite build",
+    "test:coverage": "vitest run --coverage"
+  }
+}"#,
+        )
+        .unwrap();
+
+        let inference = infer_adopt_answers(temp.path());
+
+        assert_eq!(
+            inference.frontend_profiles[0].preferred_dev_port,
+            Some(5174)
+        );
+        assert!(
+            inference
+                .warnings()
+                .iter()
+                .any(|warning| warning.contains("preferred_dev_port was not inferred"))
+        );
     }
 
     #[test]
@@ -1159,6 +1662,47 @@ sqlx = "0.8"
         }));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn unreadable_src_bin_reports_crate_target_warning() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::path::PathBuf;
+
+        struct PermissionGuard(PathBuf);
+
+        impl Drop for PermissionGuard {
+            fn drop(&mut self) {
+                let _ = fs::set_permissions(&self.0, fs::Permissions::from_mode(0o755));
+            }
+        }
+
+        let temp = tempfile::tempdir().unwrap();
+        let src_bin = temp.path().join("src/bin");
+        fs::create_dir_all(&src_bin).unwrap();
+        fs::write(
+            temp.path().join("Cargo.toml"),
+            r#"[package]
+name = "demo"
+version = "0.1.0"
+edition = "2024"
+"#,
+        )
+        .unwrap();
+        fs::set_permissions(&src_bin, fs::Permissions::from_mode(0o000)).unwrap();
+        let _permission_guard = PermissionGuard(src_bin);
+
+        let inference = infer_adopt_answers(temp.path());
+
+        assert!(
+            inference
+                .warnings()
+                .iter()
+                .any(|warning| warning.contains("could not read src/bin")),
+            "expected src/bin read warning, got {:?}",
+            inference.warnings()
+        );
+    }
+
     #[test]
     fn github_runner_is_inferred_from_workflows() {
         let temp = tempfile::tempdir().unwrap();
@@ -1172,6 +1716,89 @@ sqlx = "0.8"
         let inference = infer_adopt_answers(temp.path());
 
         assert_eq!(inference.ci_github_runner.as_deref(), Some("ubuntu-24.04"));
+    }
+
+    #[test]
+    fn github_ci_shape_reports_checks_lockfiles_cache_and_matrix() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(temp.path().join(".github/workflows")).unwrap();
+        fs::write(
+            temp.path().join(".github/workflows/ci.yml"),
+            r#"jobs:
+  rust:
+    name: cargo locked
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+        toolchain: [stable, nightly]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: ${{ matrix.toolchain }}
+          cache: false
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace --locked
+  web:
+    name: web checks
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/setup-node@v5
+        with:
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+"#,
+        )
+        .unwrap();
+
+        let inference = infer_adopt_answers(temp.path());
+        let report = inference.report();
+        let shape = &report["ci_shape"];
+
+        assert_eq!(inference.ci_github_runner.as_deref(), Some("ubuntu-24.04"));
+        assert_eq!(shape["workflow_files"][0], ".github/workflows/ci.yml");
+        assert_eq!(shape["generated_jig_checks_role"], "supplement_existing_ci");
+        assert!(signal_values(&shape["required_checks"]).contains(&"cargo locked"));
+        assert!(signal_values(&shape["required_checks"]).contains(&"web checks"));
+        assert!(
+            signal_values(&shape["lockfile_behavior"])
+                .contains(&"Cargo lockfile enforced with --locked")
+        );
+        assert!(
+            signal_values(&shape["lockfile_behavior"]).contains(&"pnpm frozen lockfile install")
+        );
+        assert!(signal_values(&shape["cache_strategy"]).contains(&"Swatinem/rust-cache"));
+        assert!(
+            signal_values(&shape["cache_strategy"]).contains(&"setup-node dependency cache: pnpm")
+        );
+        assert!(
+            signal_values(&shape["cache_strategy"])
+                .contains(&"setup-rust-toolchain cache disabled")
+        );
+        assert!(signal_values(&shape["matrix"]["os"]).contains(&"windows-latest"));
+        assert!(signal_values(&shape["matrix"]["toolchain"]).contains(&"nightly"));
+        assert_eq!(report["metadata"]["ci_shape"]["confidence"], "medium");
+    }
+
+    #[test]
+    fn github_ci_shape_marks_existing_jig_checks_as_replace_role() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(temp.path().join(".github/workflows")).unwrap();
+        fs::write(
+            temp.path().join(".github/workflows/jig.yml"),
+            "jobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: scripts/jig check test\n",
+        )
+        .unwrap();
+
+        let report = infer_adopt_answers(temp.path()).report();
+        let shape = &report["ci_shape"];
+
+        assert_eq!(
+            shape["generated_jig_checks_role"],
+            "replace_existing_jig_ci"
+        );
+        assert!(signal_values(&shape["existing_jig_checks"]).contains(&"scripts/jig check test"));
     }
 
     #[test]

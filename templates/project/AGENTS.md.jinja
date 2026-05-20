@@ -25,7 +25,7 @@ This repository uses the shared `jig.sh` workflow. Keep repo-local business rule
 ## Backend Defaults
 
 - Treat [% for root in rust_crate_roots %]`<<[ root ]>>`[% if not loop.last %], [% endif %][% endfor %] as Rust crate roots.
-- Adoption scaffolds crate guides for direct child crates of each configured root; add more `rust_crate_roots` entries for nested crate groups.
+- Adoption scaffolds crate guides for direct child crates of each configured root, skipping obvious examples/fixtures/tests crates; add more `rust_crate_roots` entries for nested crate groups.
 [% if sqlx_enabled %]
 - SQL migrations live under `<<[ rust_migration_dir ]>>`.
 - SQLx metadata is committed in `<<[ rust_sqlx_metadata_dir ]>>`.

@@ -1,5 +1,6 @@
+use std::collections::BTreeSet;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use serde_json::Value as JsonValue;
@@ -8,6 +9,7 @@ use toml::{Table, Value as TomlValue};
 
 use super::AnswerOpts;
 use super::answers::{AnswerInput, AnswerResolution, RenderAnswers};
+use super::gate_preview::generated_gates;
 use super::renderer::{RenderStageRequest, stage_render};
 use super::sync::ApplyRenderReport;
 use super::sync::{ApplyRenderOptions, apply_staged_render};
@@ -39,8 +41,15 @@ pub(super) struct BootstrapCopyResult {
     pub(super) codex_skills_configured: bool,
     pub(super) sqlx_enabled: bool,
     pub(super) schema_dump_enabled: bool,
+    pub(super) render_preview: AdoptionRenderPreview,
     pub(super) apply_report: ApplyRenderReport,
     pub(super) notes: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(super) struct AdoptionRenderPreview {
+    pub(super) generated_gates: Vec<String>,
+    pub(super) managed_files: Vec<String>,
 }
 
 pub(super) fn render_and_copy_bootstrap_template(
@@ -77,6 +86,15 @@ pub(super) fn render_and_copy_bootstrap_template(
         seed_repo_path: request.seed_repo_path,
         progress: request.progress,
     })?;
+    let render_preview =
+        AdoptionRenderPreview::from_answers_and_managed_paths(&answers, &staged.managed_paths);
+    request
+        .progress
+        .info("generated gates", render_preview.generated_gates.join(", "));
+    request.progress.info(
+        "managed files",
+        format!("{} path(s)", render_preview.managed_files.len()),
+    );
 
     let apply_report = apply_staged_render(
         &staged,
@@ -103,9 +121,25 @@ pub(super) fn render_and_copy_bootstrap_template(
         codex_skills_configured: answers.codex_skills_configured(),
         sqlx_enabled: answers.sqlx_enabled(),
         schema_dump_enabled: answers.schema_dump_enabled(),
+        render_preview,
         apply_report,
         notes,
     })
+}
+
+impl AdoptionRenderPreview {
+    fn from_answers_and_managed_paths(
+        answers: &RenderAnswers,
+        managed_paths: &BTreeSet<PathBuf>,
+    ) -> Self {
+        Self {
+            generated_gates: generated_gates(answers),
+            managed_files: managed_paths
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect(),
+        }
+    }
 }
 
 fn validate_frontend_app_scripts(destination: &Path, answers: &RenderAnswers) -> Result<()> {

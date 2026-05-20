@@ -1,13 +1,28 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use super::scan::{RepoScan, push_scan_warning};
+use super::scan::{RepoScan, push_scan_warning, relative_path_string};
 
+#[derive(Clone, Debug, Default)]
+pub(super) struct PackageManagerInference {
+    pub(super) value: Option<String>,
+    pub(super) sources: Vec<String>,
+}
+
+#[cfg(test)]
 pub(super) fn infer_package_manager(
     root: &Path,
     scan: &RepoScan,
     warnings: &mut Vec<String>,
 ) -> Option<String> {
+    infer_package_manager_with_metadata(root, scan, warnings).value
+}
+
+pub(super) fn infer_package_manager_with_metadata(
+    root: &Path,
+    scan: &RepoScan,
+    warnings: &mut Vec<String>,
+) -> PackageManagerInference {
     let lockfiles = [
         ("pnpm-lock.yaml", "pnpm"),
         ("bun.lock", "bun"),
@@ -29,7 +44,15 @@ pub(super) fn infer_package_manager(
                 &format!("multiple root package manager lockfiles detected; using {manager}"),
             );
         }
-        return Some((*manager).into());
+        let source = lockfiles
+            .iter()
+            .find(|(_, candidate)| candidate == manager)
+            .map(|(lockfile, _)| (*lockfile).to_string())
+            .unwrap_or_else(|| format!("{manager} lockfile"));
+        return PackageManagerInference {
+            value: Some((*manager).into()),
+            sources: vec![source],
+        };
     }
 
     let mut matches = Vec::new();
@@ -53,7 +76,15 @@ pub(super) fn infer_package_manager(
             ),
         );
     }
-    matches.first().map(|(_, _, manager)| (*manager).into())
+    matches
+        .first()
+        .map(|(_, path, manager)| PackageManagerInference {
+            value: Some((*manager).into()),
+            sources: vec![relative_path_string(
+                path.strip_prefix(root).unwrap_or(path),
+            )],
+        })
+        .unwrap_or_default()
 }
 
 fn path_depth(root: &Path, path: &Path) -> usize {

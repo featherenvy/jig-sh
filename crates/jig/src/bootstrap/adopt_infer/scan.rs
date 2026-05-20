@@ -64,29 +64,6 @@ impl RepoScan {
         })
     }
 
-    pub(super) fn any_text_file<F>(
-        &self,
-        extensions: &[&str],
-        warnings: &mut Vec<String>,
-        mut predicate: F,
-    ) -> bool
-    where
-        F: FnMut(&str) -> bool,
-    {
-        self.files_with_extensions(extensions)
-            .any(|path| match read_limited_text(path) {
-                Ok(text) => predicate(&text),
-                Err(error) => {
-                    push_scan_warning(
-                        warnings,
-                        path,
-                        &format!("could not read text for inference: {error}"),
-                    );
-                    false
-                }
-            })
-    }
-
     pub(super) fn files_under<'a>(
         &'a self,
         dir: &'a Path,
@@ -220,7 +197,7 @@ pub(super) fn read_toml_for_inference(
             push_scan_warning(
                 warnings,
                 path,
-                &format!("could not read TOML for inference: {error}"),
+                &format!("could not read TOML for inference: {error:#}"),
             );
             None
         }
@@ -242,7 +219,7 @@ pub(super) fn read_json_for_inference(
             push_scan_warning(
                 warnings,
                 path,
-                &format!("could not read JSON for inference: {error}"),
+                &format!("could not read JSON for inference: {error:#}"),
             );
             None
         }
@@ -259,7 +236,7 @@ pub(super) fn read_yaml_for_inference(
             push_scan_warning(
                 warnings,
                 path,
-                &format!("could not read YAML for inference: {error}"),
+                &format!("could not read YAML for inference: {error:#}"),
             );
             return None;
         }

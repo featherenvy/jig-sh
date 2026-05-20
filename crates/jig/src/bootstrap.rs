@@ -37,7 +37,9 @@ use template_source::{prepare_update_template_source, read_stored_template_state
 
 mod adopt_infer;
 mod answers;
+mod crate_guide;
 mod file_copy;
+mod gate_preview;
 mod git;
 mod initial_copy;
 mod managed_paths;
@@ -348,6 +350,7 @@ pub fn run_adopt(opts: AdoptOpts) -> Result<Value> {
     let answer_input = progress.log_blocked_on_err(AnswerInput::from_opts(&answers))?;
     let answer_shape = answer_input.shape().clone();
     progress.info("detected", inference.summary());
+    progress.info("detected stack", inference.detected_stack_label());
     for warning in inference.warnings() {
         progress.info("warning", warning);
     }
@@ -374,6 +377,12 @@ pub fn run_adopt(opts: AdoptOpts) -> Result<Value> {
         "answers_file": ANSWERS_FILE,
         "git_initialized": false,
         "detection_report": inference.report(),
+        "adoption_profile": inference.adoption_profile_report(
+            &copy_result.render_preview.generated_gates,
+            &copy_result.render_preview.managed_files,
+            &opts.answers,
+            &answer_shape,
+        ),
         "adoption_report": adoption_report(&copy_result),
         "next_steps": initial_next_steps(InitialCommand::Adopt, &destination, &copy_result),
         "notes": initial_notes(copy_result.notes),
