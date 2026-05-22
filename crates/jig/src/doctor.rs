@@ -161,6 +161,13 @@ pub(crate) fn format_summary(value: &Value) -> String {
         lines.push(format!(
             "  - {label}: {marker} ({status}, {required_label})"
         ));
+        if !ok
+            && required
+            && let Some(detail) = check["detail"].as_str()
+            && !detail.trim().is_empty()
+        {
+            lines.push(format!("    Detail: {detail}"));
+        }
     }
 
     match value["next_step"].as_str() {
@@ -721,11 +728,11 @@ fn command_program(command: &str) -> Option<String> {
 fn command_programs_for_shell(command: &str) -> Vec<String> {
     shell_simple_commands(command)
         .iter()
-        .filter_map(|words| command_program_for_words(words))
+        .flat_map(|words| command_programs_for_words(words))
         .collect()
 }
 
-fn command_program_for_words(words: &[String]) -> Option<String> {
+fn command_programs_for_words(words: &[String]) -> Vec<String> {
     let mut index = 0;
     while let Some(word) = words.get(index) {
         let word = trim_shell_quotes(word);
@@ -738,15 +745,45 @@ fn command_program_for_words(words: &[String]) -> Option<String> {
             continue;
         }
         if word == "env" {
-            index = env_program_index(words, index + 1)?;
+            let Some(program_index) = env_program_index(words, index + 1) else {
+                return Vec::new();
+            };
+            index = program_index;
             continue;
         }
         if shell_builtin_or_keyword(&word) {
-            return None;
+            return Vec::new();
+        }
+        let mut programs = vec![word.clone()];
+        if word == "cargo" && cargo_subcommand(words, index + 1).as_deref() == Some("sqlx") {
+            programs.push("cargo-sqlx".into());
+        }
+        return programs;
+    }
+    Vec::new()
+}
+
+fn cargo_subcommand(words: &[String], mut index: usize) -> Option<String> {
+    while let Some(word) = words.get(index).map(|value| trim_shell_quotes(value)) {
+        if word.is_empty() || word.starts_with('+') {
+            index += 1;
+            continue;
+        }
+        if word.starts_with('-') {
+            index += if cargo_global_option_takes_value(&word) {
+                2
+            } else {
+                1
+            };
+            continue;
         }
         return Some(word);
     }
     None
+}
+
+fn cargo_global_option_takes_value(option: &str) -> bool {
+    matches!(option, "--color" | "--config" | "-C" | "-Z")
 }
 
 fn env_program_index(words: &[String], mut index: usize) -> Option<usize> {
@@ -1100,6 +1137,22 @@ mod tests {
     }
 
     #[test]
+    fn command_programs_require_cargo_sqlx_subcommand() {
+        assert_eq!(
+            command_programs_for_shell(
+                "SQLX_OFFLINE=false SQLX_OFFLINE_DIR=.sqlx cargo sqlx prepare --check"
+            ),
+            vec!["cargo", "cargo-sqlx"]
+        );
+        assert_eq!(
+            command_programs_for_shell(
+                "cargo +nightly --config net.git-fetch-with-cli=true sqlx prepare --check"
+            ),
+            vec!["cargo", "cargo-sqlx"]
+        );
+    }
+
+    #[test]
     fn runtime_check_accepts_launcher_without_readable_pin_when_config_matches() {
         let temp = tempdir().unwrap();
         fs::create_dir_all(temp.path().join("scripts")).unwrap();
@@ -1161,6 +1214,33 @@ mod tests {
 
         assert!(summary.contains("Jig doctor: ready"));
         assert!(summary.contains("Agent skills: optional setup (missing, optional)"));
+    }
+
+    #[test]
+    fn summary_surfaces_required_tool_missing_detail() {
+        let output = json!({
+            "ok": false,
+            "repo": {
+                "root": "/tmp/demo",
+            },
+            "checks": [
+                {
+                    "label": "Required tools",
+                    "status": "missing",
+                    "required": true,
+                    "ok": false,
+                    "detail": "Missing command executable(s): schema_dump_command: scripts/dump-schema.sh",
+                },
+            ],
+            "next_step": "Install the missing executable.",
+        });
+
+        let summary = format_summary(&output);
+
+        assert!(summary.contains("Required tools: needs setup (missing, required)"));
+        assert!(summary.contains(
+            "Detail: Missing command executable(s): schema_dump_command: scripts/dump-schema.sh"
+        ));
     }
 
     #[test]

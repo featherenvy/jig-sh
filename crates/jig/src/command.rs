@@ -248,7 +248,7 @@ pub(crate) struct WorkCheckRequest {
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct WorkGatesRequest {
-    pub(crate) plan_id: String,
+    pub(crate) plan_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

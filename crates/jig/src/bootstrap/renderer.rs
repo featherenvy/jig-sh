@@ -56,7 +56,7 @@ pub(super) fn stage_render(request: RenderStageRequest<'_>) -> Result<StagedRend
         .progress
         .log_blocked_on_err(run_post_render_tasks(&destination))?;
     merge_existing_managed_blocks(request.seed_repo_path, &destination, request.progress)?;
-    managed_paths.extend(managed_paths::removed_managed_paths());
+    managed_paths.extend(managed_paths::retired_managed_paths(request.answers));
 
     let answers_path = destination.join(ANSWERS_FILE);
     if !answers_path.exists() {

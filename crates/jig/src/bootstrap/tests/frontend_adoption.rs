@@ -268,6 +268,20 @@ fn adopt_accepts_npm_frontend_app_and_renders_current_web_and_dev_config() {
             .any(|path| path == "scripts/jig")
     );
     assert!(
+        output["adoption_profile"]["managed_files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|path| path == ".github/workflows/webapp-checks.yml")
+    );
+    assert!(
+        !output["adoption_profile"]["retired_managed_files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|path| path == ".github/workflows/webapp-checks.yml")
+    );
+    assert!(
         output["adoption_report"]["todos"]
             .as_array()
             .unwrap()

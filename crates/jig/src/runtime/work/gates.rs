@@ -16,12 +16,12 @@ use super::tools::validate_check_tool;
 const MAX_GATE_CHANGED_PATHS: usize = 100;
 
 pub(super) fn gates(ctx: &RepoContext, opts: WorkGatesRequest) -> Result<Value> {
-    ensure_plan_exists(ctx, &opts.plan_id)?;
-    gate_status(ctx, &opts.plan_id)
+    let plan_id = resolve_work_plan_id(ctx, opts.plan_id)?;
+    gate_status(ctx, &plan_id)
 }
 
 pub(super) fn evidence(ctx: &RepoContext, opts: WorkEvidenceRequest) -> Result<Value> {
-    let plan_id = resolve_evidence_plan_id(ctx, opts.plan_id)?;
+    let plan_id = resolve_work_plan_id(ctx, opts.plan_id)?;
     let mut status = gate_status(ctx, &plan_id)?;
     let latest = latest_passing_gates(&status);
     let object = status
@@ -112,7 +112,7 @@ fn gate_status(ctx: &RepoContext, plan_id: &str) -> Result<Value> {
     }))
 }
 
-fn resolve_evidence_plan_id(ctx: &RepoContext, requested: Option<String>) -> Result<String> {
+fn resolve_work_plan_id(ctx: &RepoContext, requested: Option<String>) -> Result<String> {
     if let Some(plan_id) = requested {
         ensure_plan_exists(ctx, &plan_id)?;
         return Ok(plan_id);

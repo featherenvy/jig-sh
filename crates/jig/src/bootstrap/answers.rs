@@ -421,8 +421,10 @@ impl RawAnswers {
         validate_web_package_manager(&web_package_manager)?;
         let web_install_command = web_install_command(&web_package_manager).to_string();
         let web_run_command = web_run_command(&web_package_manager).to_string();
+        let schema_dump_command_configured = self.schema_dump_command.is_some();
         let schema_dump_enabled = if sqlx_enabled {
-            self.schema_dump_enabled.unwrap_or(true)
+            self.schema_dump_enabled
+                .unwrap_or(schema_dump_command_configured)
         } else {
             false
         };

@@ -423,6 +423,7 @@ pub fn run_adopt(opts: AdoptOpts) -> Result<Value> {
         "adoption_profile": inference.adoption_profile_report(
             &copy_result.render_preview.generated_gates,
             &copy_result.render_preview.managed_files,
+            &copy_result.render_preview.retired_managed_files,
             &opts.answers,
             &answer_shape,
         ),
@@ -710,7 +711,7 @@ fn initial_next_steps(
     }
     if result.sqlx_enabled {
         steps.push(
-            "Install cargo-sqlx and configure database access, then run scripts/jig check sqlx."
+            "Run scripts/jig doctor --summary to confirm cargo-sqlx is installed; configure database access, then run scripts/jig check sqlx."
                 .into(),
         );
     }

@@ -17,7 +17,7 @@ pub(super) struct ManagedBlockSpec {
     pub(super) progress_label: &'static str,
 }
 
-const REMOVED_MANAGED_PATHS: &[&str] = &[
+const RETIRED_MANAGED_PATHS: &[&str] = &[
     "scripts/add-migration.sh",
     "scripts/check-agent-guides.sh",
     "scripts/check-agent-map.sh",
@@ -33,15 +33,46 @@ const REMOVED_MANAGED_PATHS: &[&str] = &[
     "scripts/normalize-template-source.sh",
 ];
 
-pub(super) fn removed_managed_paths() -> impl Iterator<Item = PathBuf> {
-    REMOVED_MANAGED_PATHS.iter().map(PathBuf::from)
+const WEB_MANAGED_PATHS: &[&str] = &[
+    ".github/workflows/webapp-checks.yml",
+    "scripts/check-webapp-scripts.mjs",
+    "scripts/check-webapps.sh",
+    "scripts/enforce-coverage.js",
+];
+
+pub(super) fn retired_managed_paths(answers: &RenderAnswers) -> impl Iterator<Item = PathBuf> + '_ {
+    RETIRED_MANAGED_PATHS
+        .iter()
+        .copied()
+        .chain(web_managed_paths_retired_for_answers(answers))
+        .map(PathBuf::from)
+}
+
+pub(super) fn is_retired_managed_path(relative: &Path, answers: &RenderAnswers) -> bool {
+    retired_managed_paths(answers).any(|retired| relative == retired)
 }
 
 pub(super) fn should_omit_unmanaged_rendered_path(
     relative: &Path,
-    _answers: &RenderAnswers,
+    answers: &RenderAnswers,
 ) -> bool {
     relative == Path::new("Makefile")
+        || (answers.frontend_apps().is_empty() && is_web_managed_path(relative))
+}
+
+fn web_managed_paths_retired_for_answers(answers: &RenderAnswers) -> impl Iterator<Item = &str> {
+    let paths: &[&str] = if answers.frontend_apps().is_empty() {
+        WEB_MANAGED_PATHS
+    } else {
+        &[]
+    };
+    paths.iter().copied()
+}
+
+fn is_web_managed_path(relative: &Path) -> bool {
+    WEB_MANAGED_PATHS
+        .iter()
+        .any(|web_path| relative == Path::new(web_path))
 }
 
 pub(super) fn managed_block_spec(relative: &Path) -> Option<ManagedBlockSpec> {

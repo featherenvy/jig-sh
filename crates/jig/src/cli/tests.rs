@@ -981,7 +981,17 @@ fn parses_work_gates_command() {
 
     match cli.command {
         CommandKind::Work(WorkCommand::Gates(opts)) => {
-            assert_eq!(opts.plan_id, "plan_1");
+            assert_eq!(opts.plan_id.as_deref(), Some("plan_1"));
+            assert!(opts.summary);
+        }
+        other => panic!("expected work gates command, got {other:?}"),
+    }
+
+    let inferred_plan = Cli::try_parse_from(["jig", "work", "gates", "--summary"]).unwrap();
+
+    match inferred_plan.command {
+        CommandKind::Work(WorkCommand::Gates(opts)) => {
+            assert_eq!(opts.plan_id, None);
             assert!(opts.summary);
         }
         other => panic!("expected work gates command, got {other:?}"),

@@ -10,6 +10,7 @@ use toml::{Table, Value as TomlValue};
 use super::AnswerOpts;
 use super::answers::{AnswerInput, AnswerResolution, RenderAnswers};
 use super::gate_preview::generated_gates;
+use super::managed_paths;
 use super::renderer::{RenderStageRequest, stage_render};
 use super::sync::ApplyRenderReport;
 use super::sync::{ApplyRenderOptions, apply_staged_render};
@@ -52,6 +53,7 @@ pub(super) struct BootstrapCopyResult {
 pub(super) struct AdoptionRenderPreview {
     pub(super) generated_gates: Vec<String>,
     pub(super) managed_files: Vec<String>,
+    pub(super) retired_managed_files: Vec<String>,
 }
 
 pub(super) fn render_and_copy_bootstrap_template(
@@ -136,10 +138,17 @@ impl AdoptionRenderPreview {
         answers: &RenderAnswers,
         managed_paths: &BTreeSet<PathBuf>,
     ) -> Self {
+        let (retired_paths, active_paths): (Vec<_>, Vec<_>) = managed_paths
+            .iter()
+            .partition(|path| managed_paths::is_retired_managed_path(path, answers));
         Self {
             generated_gates: generated_gates(answers),
-            managed_files: managed_paths
-                .iter()
+            managed_files: active_paths
+                .into_iter()
+                .map(|path| path.display().to_string())
+                .collect(),
+            retired_managed_files: retired_paths
+                .into_iter()
                 .map(|path| path.display().to_string())
                 .collect(),
         }

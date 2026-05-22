@@ -197,8 +197,8 @@ pub(crate) struct WorkCheckOpts {
 
 #[derive(Args, Debug)]
 pub(crate) struct WorkGatesOpts {
-    #[arg(long, help = "Plan id to inspect")]
-    pub(crate) plan_id: String,
+    #[arg(long, help = "Plan id to inspect; defaults to the single open plan")]
+    pub(crate) plan_id: Option<String>,
 
     #[arg(long, help = "Print a concise human-readable gate summary")]
     pub(crate) summary: bool,

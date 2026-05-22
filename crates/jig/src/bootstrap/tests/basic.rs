@@ -231,7 +231,7 @@ fn rendered_conflicts_marks_task_mutated_outputs() {
 }
 
 #[test]
-fn rendered_conflicts_marks_removed_managed_paths() {
+fn rendered_conflicts_marks_retired_managed_paths() {
     let rendered = tempdir().unwrap();
     let destination = tempdir().unwrap();
     write_answers_fixture(rendered.path(), Some(false));
@@ -636,6 +636,24 @@ fn adopt_defaults_to_tooling_only_when_sqlx_answers_are_omitted() {
     assert!(answers.contains("repo_name = \"repo\""));
     assert!(answers.contains("sqlx_enabled = false"));
     assert!(answers.contains("schema_dump_enabled = false"));
+    assert!(!repo.join(".github/workflows/webapp-checks.yml").exists());
+    assert!(!repo.join("scripts/check-webapps.sh").exists());
+    assert!(!repo.join("scripts/check-webapp-scripts.mjs").exists());
+    assert!(!repo.join("scripts/enforce-coverage.js").exists());
+    assert!(
+        !output["adoption_profile"]["managed_files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|path| path == ".github/workflows/webapp-checks.yml")
+    );
+    assert!(
+        output["adoption_profile"]["retired_managed_files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|path| path == ".github/workflows/webapp-checks.yml")
+    );
 }
 
 #[test]
@@ -1010,7 +1028,7 @@ sqlx = { workspace = true }
             .any(|gate| gate == "scripts/jig check sqlx")
     );
     assert!(
-        output["adoption_profile"]["generated_gates"]
+        !output["adoption_profile"]["generated_gates"]
             .as_array()
             .unwrap()
             .iter()
@@ -1025,6 +1043,27 @@ sqlx = { workspace = true }
     );
     assert!(
         output["adoption_profile"]["managed_files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|path| path == ".jig.toml")
+    );
+    assert!(
+        !output["adoption_profile"]["managed_files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|path| path == "scripts/check-agent-guides.sh")
+    );
+    assert!(
+        output["adoption_profile"]["retired_managed_files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|path| path == "scripts/check-agent-guides.sh")
+    );
+    assert!(
+        !output["adoption_profile"]["retired_managed_files"]
             .as_array()
             .unwrap()
             .iter()
@@ -1048,6 +1087,8 @@ sqlx = { workspace = true }
     assert!(answers.contains("rust_crate_roots = [\"crates\"]"));
     assert!(answers.contains("rust_migration_dir = \"migrations\""));
     assert!(answers.contains("rust_sqlx_metadata_dir = \".sqlx\""));
+    assert!(answers.contains("schema_dump_enabled = false"));
+    assert!(!answers.contains("schema_dump_command"));
     assert!(answers.contains("sqlx_check_command = "));
     assert!(answers.contains("cargo sqlx prepare --check"));
     assert!(answers.contains("web_package_manager = \"pnpm\""));
@@ -1740,6 +1781,8 @@ rust_migration_dir = "migrations"
     let answers = fs::read_to_string(repo.join(".jig.toml")).unwrap();
     assert!(answers.contains("sqlx_enabled = true"));
     assert!(answers.contains("rust_migration_dir = \"migrations\""));
+    assert!(answers.contains("schema_dump_enabled = false"));
+    assert!(!answers.contains("schema_dump_command"));
 }
 
 #[test]
@@ -1957,6 +2000,39 @@ fn adopt_defaults_with_migration_dir_keeps_sqlx_enabled() {
     let answers = fs::read_to_string(repo.join(".jig.toml")).unwrap();
     assert!(answers.contains("sqlx_enabled = true"));
     assert!(answers.contains("rust_migration_dir = \"migrations\""));
+    assert!(answers.contains("schema_dump_enabled = false"));
+    assert!(!answers.contains("schema_dump_command"));
+}
+
+#[test]
+fn adopt_schema_dump_command_opts_into_schema_dumps() {
+    let _guard = lock_env();
+    let temp = tempdir().unwrap();
+    let template = materialize_template_worktree();
+    let repo = temp.path().join("repo");
+    fs::create_dir_all(&repo).unwrap();
+
+    run_adopt(AdoptOpts {
+        path: repo.clone(),
+        template: Some(template.path().display().to_string()),
+        template_mode: None,
+        vcs_ref: None,
+        force: false,
+        write: true,
+        defaults: true,
+        no_input: true,
+        answers: AnswerOpts {
+            rust_migration_dir: Some("migrations".into()),
+            schema_dump_command: Some("scripts/custom-dump-schema.sh".into()),
+            ..AnswerOpts::default()
+        },
+    })
+    .unwrap();
+
+    let answers = fs::read_to_string(repo.join(".jig.toml")).unwrap();
+    assert!(answers.contains("sqlx_enabled = true"));
+    assert!(answers.contains("schema_dump_enabled = true"));
+    assert!(answers.contains("schema_dump_command = \"scripts/custom-dump-schema.sh\""));
 }
 
 #[test]

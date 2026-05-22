@@ -62,6 +62,11 @@
 - MCP/contract-only consumers can build with `default-features = false`; in that profile, `dev` and `proxy` still parse but return clear unsupported-feature errors instead of linking the proxy stack.
 - Keep `web_package_manager = "bun"` as the default for legacy `[[frontend_apps]]`; configure `dev.apps` or set explicit commands when legacy apps should launch with another package manager.
 - `jig init` and `jig adopt --defaults` now default omitted SQLx answers to a tooling-only profile unless a migration directory is supplied, emit a note about that inference, and keep noninteractive adoption usable without extra SQLx flags.
+- Behavior change: SQLx adoption now leaves schema dumps disabled unless `schema_dump_enabled = true` or an explicit `schema_dump_command` is supplied, so first-run `scripts/jig doctor --summary` does not require a repo-owned `scripts/dump-schema.sh` before the repo has implemented one.
+- `jig adopt --json` now reports retired cleanup paths separately as `adoption_profile.retired_managed_files` instead of mixing them into active `managed_files`.
+- Backend-only adoption no longer writes disabled web workflow/scripts; previously generated backend-only web scaffolding is now treated as retired managed output during refresh.
+- `scripts/jig doctor --summary` now includes the detail for required failing checks, and required-tool probing recognizes `cargo sqlx` as needing the `cargo-sqlx` subcommand.
+- `scripts/jig work gates --summary` now defaults to the single open work plan, matching `scripts/jig work evidence --summary`; pass `--plan-id` when multiple plans are open or to inspect a closed plan.
 - `scripts/jig doctor --summary` now reports missing Codex Jig skills as optional setup instead of blocking overall repo readiness.
 - Behavior change: repo-local `scripts/jig` launchers now run the Jig binary from the owning repository root even when invoked by absolute path from another current directory. This makes check/dev/proxy/agent commands consistently operate on the owning repo; `jig init`, `jig adopt`, and `jig update` still resolve relative destination/template paths against the caller's original directory.
 - Require `--accept-trust-scope` before installing the Jig Dev Proxy local CA through the platform trust tooling.

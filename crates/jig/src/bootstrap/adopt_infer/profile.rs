@@ -12,6 +12,7 @@ impl AdoptInference {
         &self,
         generated_gates: &[String],
         managed_files: &[String],
+        retired_managed_files: &[String],
         explicit_answers: &AnswerOpts,
         answer_shape: &AnswerInputShape,
     ) -> JsonValue {
@@ -19,6 +20,7 @@ impl AdoptInference {
             "detected_stack": self.detected_stack(),
             "generated_gates": generated_gates,
             "managed_files": managed_files,
+            "retired_managed_files": retired_managed_files,
             "frontend_profiles": self.frontend_profiles,
             "repo_topology": self.repo_topology.report(),
             "command_profile": self.command_profile.report(),

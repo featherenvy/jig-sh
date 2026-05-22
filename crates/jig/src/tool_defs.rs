@@ -245,7 +245,7 @@ impl MemoryTool {
                 ],
                 &[args::OBJECTIVE, args::SUCCESS, args::VALIDATIONS],
             ),
-            Self::Gates => object_schema(&[(args::PLAN_ID, string_schema())], &[args::PLAN_ID]),
+            Self::Gates => object_schema(&[(args::PLAN_ID, string_schema())], &[]),
             Self::Evidence => object_schema(&[(args::PLAN_ID, string_schema())], &[]),
             Self::Review => object_schema(
                 &[

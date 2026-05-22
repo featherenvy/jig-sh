@@ -477,7 +477,7 @@ fn work_check_marks_batch_fingerprint_unknown_when_checks_mutate_worktree() {
     let gates = dispatch(
         &ctx,
         CommandKind::Work(crate::cli::WorkCommand::Gates(crate::cli::WorkGatesOpts {
-            plan_id: "plan_1".into(),
+            plan_id: Some("plan_1".into()),
             summary: false,
         })),
     )
@@ -516,7 +516,7 @@ fn work_gates_reports_missing_and_passing_required_gates() {
     let missing = dispatch(
         &ctx,
         CommandKind::Work(crate::cli::WorkCommand::Gates(crate::cli::WorkGatesOpts {
-            plan_id: "plan_1".into(),
+            plan_id: Some("plan_1".into()),
             summary: false,
         })),
     )
@@ -541,7 +541,7 @@ fn work_gates_reports_missing_and_passing_required_gates() {
     let passed = dispatch(
         &ctx,
         CommandKind::Work(crate::cli::WorkCommand::Gates(crate::cli::WorkGatesOpts {
-            plan_id: "plan_1".into(),
+            plan_id: Some("plan_1".into()),
             summary: false,
         })),
     )
@@ -739,6 +739,26 @@ fn work_evidence_without_open_plan_points_to_work_status() {
 }
 
 #[test]
+fn work_gates_defaults_to_single_open_plan() {
+    let temp = tempdir().unwrap();
+    write_fixture_repo(temp.path());
+    let ctx = RepoContext::load_from(temp.path()).unwrap();
+
+    let gates = dispatch(
+        &ctx,
+        CommandKind::Work(crate::cli::WorkCommand::Gates(crate::cli::WorkGatesOpts {
+            plan_id: None,
+            summary: false,
+        })),
+    )
+    .unwrap();
+
+    assert_eq!(gates["plan_id"], "plan_1");
+    assert_eq!(gates["overall"], "blocked");
+    assert_eq!(gates["missing_required"][0], "custom");
+}
+
+#[test]
 fn work_gates_rejects_unknown_plan() {
     let temp = tempdir().unwrap();
     write_fixture_repo(temp.path());
@@ -747,7 +767,7 @@ fn work_gates_rejects_unknown_plan() {
     let error = dispatch(
         &ctx,
         CommandKind::Work(crate::cli::WorkCommand::Gates(crate::cli::WorkGatesOpts {
-            plan_id: "plan_missing".into(),
+            plan_id: Some("plan_missing".into()),
             summary: false,
         })),
     )
@@ -860,7 +880,7 @@ fn work_gates_reject_stale_required_gate_receipts() {
     let gates = dispatch(
         &ctx,
         CommandKind::Work(crate::cli::WorkCommand::Gates(crate::cli::WorkGatesOpts {
-            plan_id: plan_id.clone(),
+            plan_id: Some(plan_id.clone()),
             summary: false,
         })),
     )
@@ -907,7 +927,7 @@ fn work_gates_reject_unknown_required_gate_freshness() {
     let gates = dispatch(
         &ctx,
         CommandKind::Work(crate::cli::WorkCommand::Gates(crate::cli::WorkGatesOpts {
-            plan_id: plan_id.clone(),
+            plan_id: Some(plan_id.clone()),
             summary: false,
         })),
     )
@@ -992,7 +1012,7 @@ fn work_review_records_structured_codex_review_findings() {
     let gates = dispatch(
         &ctx,
         CommandKind::Work(crate::cli::WorkCommand::Gates(crate::cli::WorkGatesOpts {
-            plan_id: "plan_1".into(),
+            plan_id: Some("plan_1".into()),
             summary: false,
         })),
     )
@@ -1040,7 +1060,7 @@ fn work_review_surfaces_raw_counts_when_findings_are_truncated() {
     let gates = dispatch(
         &ctx,
         CommandKind::Work(crate::cli::WorkCommand::Gates(crate::cli::WorkGatesOpts {
-            plan_id: "plan_1".into(),
+            plan_id: Some("plan_1".into()),
             summary: false,
         })),
     )
@@ -1085,7 +1105,7 @@ fn work_review_fails_when_codex_exits_nonzero_with_below_threshold_findings() {
     let gates = dispatch(
         &ctx,
         CommandKind::Work(crate::cli::WorkCommand::Gates(crate::cli::WorkGatesOpts {
-            plan_id: "plan_1".into(),
+            plan_id: Some("plan_1".into()),
             summary: false,
         })),
     )
@@ -1168,7 +1188,7 @@ fn work_refine_runs_fixer_then_review_and_check_gates() {
     let gates = dispatch(
         &ctx,
         CommandKind::Work(crate::cli::WorkCommand::Gates(crate::cli::WorkGatesOpts {
-            plan_id: "plan_1".into(),
+            plan_id: Some("plan_1".into()),
             summary: false,
         })),
     )
@@ -1216,7 +1236,7 @@ fn work_refine_fails_when_review_gate_returns_invalid_output() {
     let gates = dispatch(
         &ctx,
         CommandKind::Work(crate::cli::WorkCommand::Gates(crate::cli::WorkGatesOpts {
-            plan_id: "plan_1".into(),
+            plan_id: Some("plan_1".into()),
             summary: false,
         })),
     )
@@ -1597,7 +1617,7 @@ fn work_gates_use_direct_receipt_when_prior_batch_ended_in_same_millisecond() {
     let gates = dispatch(
         &ctx,
         CommandKind::Work(crate::cli::WorkCommand::Gates(crate::cli::WorkGatesOpts {
-            plan_id: "plan_1".into(),
+            plan_id: Some("plan_1".into()),
             summary: false,
         })),
     )
@@ -1645,7 +1665,7 @@ fn work_gates_use_legacy_batch_receipt_without_receipt_ids() {
     let gates = dispatch(
         &ctx,
         CommandKind::Work(crate::cli::WorkCommand::Gates(crate::cli::WorkGatesOpts {
-            plan_id: "plan_1".into(),
+            plan_id: Some("plan_1".into()),
             summary: false,
         })),
     )
@@ -1715,7 +1735,7 @@ fn work_gates_use_exact_batch_receipt_id_when_batches_interleave() {
     let gates = dispatch(
         &ctx,
         CommandKind::Work(crate::cli::WorkCommand::Gates(crate::cli::WorkGatesOpts {
-            plan_id: "plan_1".into(),
+            plan_id: Some("plan_1".into()),
             summary: false,
         })),
     )
@@ -1748,7 +1768,7 @@ fn work_gates_keep_failed_checks_failed_when_freshness_is_unknown() {
     let gates = dispatch(
         &ctx,
         CommandKind::Work(crate::cli::WorkCommand::Gates(crate::cli::WorkGatesOpts {
-            plan_id: "plan_1".into(),
+            plan_id: Some("plan_1".into()),
             summary: false,
         })),
     )
