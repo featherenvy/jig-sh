@@ -1,5 +1,7 @@
 use serde_json::json;
 
+use crate::cli::output::format_work_review_summary;
+
 use super::*;
 
 #[test]
@@ -746,7 +748,7 @@ fn work_evidence_summary_reports_latest_gate_freshness_and_paths() {
     }));
 
     assert!(summary.contains("Work evidence: blocked"));
-    assert!(summary.contains("Latest gate evidence per tool:"));
+    assert!(summary.contains("Latest gate evidence per gate:"));
     assert!(
         summary.contains(
             "jig.test: tests, receipt receipt_batch, matches current worktree no (stale)"
@@ -804,6 +806,29 @@ fn work_evidence_summary_does_not_offer_check_for_closed_blocked_plan() {
     assert!(summary.contains("Plan: plan_1 (closed)"));
     assert!(summary.contains("Next step: start a new work plan for follow-up changes"));
     assert!(!summary.contains("work check --plan-id plan_1"));
+}
+
+#[test]
+fn work_review_summary_reports_truncated_counts() {
+    let summary = format_work_review_summary(&json!({
+        "ok": true,
+        "plan_id": "plan_1",
+        "status": "failed",
+        "reviews": [{
+            "gate_id": "rust-error-handling",
+            "status": "failed",
+            "skill": "jig-rust:rust-error-handling-review",
+            "finding_count": 105,
+            "actionable_count": 105,
+            "retained_finding_count": 100,
+            "retained_actionable_count": 100,
+            "findings_truncated": true,
+            "actionable_findings_truncated": true
+        }]
+    }));
+
+    assert!(summary.contains("105/105 actionable, showing 100/100"));
+    assert!(summary.contains("Next step: scripts/jig work refine --plan-id plan_1 --summary"));
 }
 
 #[test]

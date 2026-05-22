@@ -16,10 +16,12 @@ pub(crate) use plans::{
     ensure_plan_is_open, open_plan_summaries, plan_status, plans_append, plans_close, plans_open,
 };
 pub(crate) use receipts::{
-    CurrentWorktreeFingerprint, ToolReceiptStatus, current_worktree_fingerprint,
-    latest_plan_tool_receipt, latest_plan_work_check_receipt_for_tool,
+    CurrentWorktreeFingerprint, ToolReceiptStatus, WorkReviewReceiptStatus,
+    current_worktree_fingerprint, latest_plan_tool_receipt,
+    latest_plan_work_check_receipt_for_tool, latest_plan_work_review_receipt_for_gate,
 };
 pub(crate) use receipts::{ReceiptInput, ReceiptListFilter, receipts_list, record_receipt};
+pub(crate) use receipts::{StateArchiveRequest, receipts_archive};
 use receipts::{StateToolReceipt, record_successful_state_tool};
 #[cfg(test)]
 use sessions::build_summary;

@@ -2,7 +2,7 @@ use anyhow::{Result, anyhow, bail};
 use serde_json::{Value, json};
 
 use crate::command::WorkGoalRequest;
-use crate::context::RepoContext;
+use crate::context::{RepoContext, WorkGate};
 use crate::state::PlanOpenRequest;
 
 use super::start;
@@ -114,9 +114,12 @@ fn goal_body(ctx: &RepoContext, goal: &GoalHarness) -> String {
     let configured_gates = ctx
         .work_gates()
         .into_iter()
-        .map(|gate| match gate.tool {
-            Some(tool) => format!("{}: {} ({})", gate.id, gate.kind, tool),
-            None => format!("{}: {}", gate.id, gate.kind),
+        .map(|gate| match gate {
+            WorkGate::Check(gate) => format!("{}: check ({})", gate.id, gate.tool),
+            WorkGate::CodexReview(gate) => {
+                format!("{}: codex_review ({})", gate.id, gate.skill)
+            }
+            WorkGate::Unsupported(gate) => format!("{}: {}", gate.id, gate.kind),
         })
         .collect::<Vec<_>>();
 

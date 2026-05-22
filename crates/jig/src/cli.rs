@@ -9,6 +9,7 @@ use crate::{bootstrap, context::RepoContext, doctor, info, mcp, runtime, tool_de
 mod agent;
 mod check;
 mod proxy;
+mod state;
 mod vault;
 mod work;
 
@@ -22,6 +23,7 @@ pub(crate) use proxy::{
     ProxyRunOpts, ProxyRuntimeOpts, ProxyServiceCommand, ProxyServiceInstallOpts,
     ProxyServiceRuntimeOpts, ProxyStartOpts, ProxyStopOpts,
 };
+pub(crate) use state::{StateArchiveOpts, StateCommand};
 pub(crate) use vault::{
     VaultAuditCommand, VaultAuditVerifyOpts, VaultCommand, VaultInitOpts, VaultRunOpts,
     VaultRuntimeOpts, VaultSecretCommand, VaultSecretListOpts, VaultSecretRemoveOpts,
@@ -29,7 +31,8 @@ pub(crate) use vault::{
 };
 pub(crate) use work::{
     WorkAppendOpts, WorkCheckOpts, WorkCommand, WorkDecisionAddOpts, WorkEvidenceOpts,
-    WorkFinishOpts, WorkGatesOpts, WorkGoalOpts, WorkReceiptsOpts, WorkStartOpts,
+    WorkFinishOpts, WorkGatesOpts, WorkGoalOpts, WorkReceiptsOpts, WorkRefineOpts, WorkReviewOpts,
+    WorkStartOpts,
 };
 
 #[derive(Debug, Parser)]
@@ -171,6 +174,9 @@ pub(crate) enum CommandKind {
     /// Manage structured work plans, receipts, gates, and decisions.
     #[command(name = tool_defs::cli_command::WORK, subcommand)]
     Work(WorkCommand),
+    /// Inspect and archive runtime-owned Jig state.
+    #[command(name = tool_defs::cli_command::STATE, subcommand)]
+    State(StateCommand),
     /// Serve the Jig MCP server over stdio.
     #[command(name = tool_defs::cli_command::MCP)]
     Mcp,

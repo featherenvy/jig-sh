@@ -32,7 +32,7 @@ Adoption is optimized for low surprise:
 
 - Repo-specific guidance remains outside the managed block in `AGENTS.md`.
 - Application code, crate ownership, schema dump implementation, and app-specific orchestration stay project-owned.
-- `jig adopt` previews by default; `--write` applies the reviewed render after confirmation unless `--defaults` or `--no-input` is supplied, and records an undo-oriented receipt with backups for overwritten managed files.
+- `jig adopt` previews by default; `--write` applies the reviewed render after confirmation unless `--defaults` or `--no-input` is supplied, and records an undo-oriented cache receipt with backups for overwritten managed files.
 - Template-managed files are not overwritten during `jig update` unless the caller passes `--force`.
 - `.jig.toml` rejects unknown keys so stale answers and typos fail early.
 - Local template dogfooding can use embedded templates from an unreleased binary by default, an explicit committed template source for checkout metadata, or an explicit VCS ref for remote template code. Template edits must refresh the checked-in embedded snapshot with `JIG_REFRESH_EMBEDDED_TEMPLATE_SNAPSHOT=1 cargo check -p jig-sh`.
@@ -64,11 +64,11 @@ The daily developer loop is built around a few stable verbs:
 - `scripts/jig bootstrap` prepares local dependencies.
 - `scripts/jig doctor --summary` checks runtime, config, contract, required tools, agent skills, proxy status, vault status, and the next setup command.
 - `scripts/jig check ...` runs configured repo checks and records receipts by default.
-- `scripts/jig work ...` opens work, runs configured gates, reports receipt status, and refuses to finish work without fresh required evidence.
+- `scripts/jig work ...` opens work, runs configured check and review gates, can refine actionable review findings, reports receipt status, and refuses to finish work without fresh required evidence.
 - `scripts/jig mcp` exposes the same command contract to MCP clients.
 - `scripts/jig agent doctor --summary` remains the focused local agent tooling check.
 
-This is where Jig is most agent-friendly: checks are not just shell commands, they are named tools with structured results and append-only evidence under `.agent/state/`. A reviewer can inspect what was run, against which worktree fingerprint, and whether the required gates are still fresh.
+This is where Jig is most agent-friendly: checks and review skills become named gates with structured results and append-only evidence under `.agent/state/`. A reviewer can inspect what was run, which skill produced findings, against which worktree fingerprint, and whether the required gates are still fresh.
 
 ## Dev Proxy
 

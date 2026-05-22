@@ -325,6 +325,37 @@ fn parses_work_receipts_filters() {
 }
 
 #[test]
+fn parses_state_archive_command() {
+    let cli = Cli::try_parse_from([
+        "jig",
+        "state",
+        "archive",
+        "--before",
+        "2026-01-01",
+        "--dry-run",
+    ])
+    .unwrap();
+
+    match cli.command {
+        CommandKind::State(StateCommand::Archive(opts)) => {
+            assert_eq!(opts.before, "2026-01-01");
+            assert!(opts.dry_run);
+        }
+        other => panic!("expected state archive command, got {other:?}"),
+    }
+}
+
+#[test]
+fn parses_state_summary_command() {
+    let cli = Cli::try_parse_from(["jig", "state", "summary"]).unwrap();
+
+    match cli.command {
+        CommandKind::State(StateCommand::Summary) => {}
+        other => panic!("expected state summary command, got {other:?}"),
+    }
+}
+
+#[test]
 fn parses_tool_no_receipt_flag() {
     let cli = Cli::try_parse_from(["jig", "check", "contract", "--no-receipt"]).unwrap();
 
@@ -985,5 +1016,56 @@ fn parses_work_evidence_command() {
             assert!(opts.summary);
         }
         other => panic!("expected work evidence command, got {other:?}"),
+    }
+}
+
+#[test]
+fn parses_work_review_command() {
+    let cli = Cli::try_parse_from([
+        "jig",
+        "work",
+        "review",
+        "--plan-id",
+        "plan_1",
+        "--gate",
+        "rust-error-handling",
+        "--summary",
+    ])
+    .unwrap();
+
+    match cli.command {
+        CommandKind::Work(WorkCommand::Review(opts)) => {
+            assert_eq!(opts.plan_id, "plan_1");
+            assert_eq!(opts.gates, vec!["rust-error-handling"]);
+            assert!(opts.summary);
+        }
+        other => panic!("expected work review command, got {other:?}"),
+    }
+}
+
+#[test]
+fn parses_work_refine_command() {
+    let cli = Cli::try_parse_from([
+        "jig",
+        "work",
+        "refine",
+        "--plan-id",
+        "plan_1",
+        "--gate",
+        "rust-error-handling",
+        "--max-iterations",
+        "2",
+        "--summary",
+    ])
+    .unwrap();
+
+    match cli.command {
+        CommandKind::Work(WorkCommand::Refine(opts)) => {
+            assert_eq!(opts.plan_id, "plan_1");
+            assert_eq!(opts.gates, vec!["rust-error-handling"]);
+            assert_eq!(opts.max_iterations, 2);
+            assert!(opts.summary);
+        }
+        other => panic!("expected work refine command, got {other:?}"),
     }
 }

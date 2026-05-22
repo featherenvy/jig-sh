@@ -744,7 +744,7 @@ fn initial_notes(extra_notes: Vec<String>) -> Vec<String> {
 
 fn adopt_backup_root(destination: &Path) -> PathBuf {
     destination
-        .join(".agent/state/adopt-backups")
+        .join(".agent/.cache/adopt/backups")
         .join(Ulid::new().to_string())
 }
 
@@ -780,15 +780,18 @@ fn write_adopt_last_receipt(
     backup_root: Option<&Path>,
     result: &initial_copy::BootstrapCopyResult,
 ) -> Result<()> {
-    let state_dir = destination.join(".agent/state");
-    fs::create_dir_all(&state_dir)
-        .with_context(|| format!("Failed to create {}", state_dir.display()))?;
-    let receipt_path = state_dir.join("adopt-last.json");
+    let adopt_cache_dir = destination.join(".agent/.cache/adopt");
+    fs::create_dir_all(&adopt_cache_dir)
+        .with_context(|| format!("Failed to create {}", adopt_cache_dir.display()))?;
+    let receipt_path = adopt_cache_dir.join("adopt-last.json");
     let receipt = json!({
         "command": "adopt",
         "created_at_unix": OffsetDateTime::now_utc().unix_timestamp(),
         "destination": destination.display().to_string(),
         "backup_root": backup_root.map(|path| path.display().to_string()),
+        "canonical_receipt_path": ".agent/.cache/adopt/adopt-last.json",
+        "legacy_receipt_path": ".agent/state/adopt-last.json",
+        "legacy_receipt_deprecated": true,
         "apply_report": &result.apply_report,
         "undo_hint": "Use apply_report.backups to restore modified or removed files, then delete paths listed in apply_report.files_created if you want to undo this adopt write. Delete backup_root when those backups are no longer needed.",
     });
@@ -796,6 +799,15 @@ fn write_adopt_last_receipt(
         serde_json::to_string_pretty(&receipt).context("Failed to serialize adopt receipt")?;
     fs::write(&receipt_path, format!("{text}\n"))
         .with_context(|| format!("Failed to write {}", receipt_path.display()))?;
+    // TODO(jig-0.4): remove the legacy receipt copy after adopted repos have
+    // had a release window to migrate readers to the canonical cache path.
+    let legacy_receipt_path = destination.join(".agent/state/adopt-last.json");
+    if let Some(parent) = legacy_receipt_path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("Failed to create {}", parent.display()))?;
+    }
+    fs::write(&legacy_receipt_path, format!("{text}\n"))
+        .with_context(|| format!("Failed to write {}", legacy_receipt_path.display()))?;
     Ok(())
 }
 

@@ -4,7 +4,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use jig_contract::{ManifestTool, NativeToolKind};
 use serde_json::{Value, json};
 
-use crate::command::{AgentMapCommand, CheckCommand, RuntimeCommand, ToolRequest};
+use crate::command::{AgentMapCommand, CheckCommand, RuntimeCommand, StateCommand, ToolRequest};
 use crate::context::RepoContext;
 use crate::policy::{
     AgentMapInput, MigrationImmutabilityInput, NativeToolOutput, PolicyCheckCommand,
@@ -62,6 +62,20 @@ pub(crate) fn dispatch(ctx: &RepoContext, command: RuntimeCommand) -> Result<Val
         RuntimeCommand::Proxy(command) => crate::dev_proxy::commands::proxy(ctx, command),
         RuntimeCommand::Agent(command) => agent::dispatch(ctx, command),
         RuntimeCommand::Work(command) => work::dispatch(ctx, command),
+        RuntimeCommand::State(command) => dispatch_state(ctx, command),
+    }
+}
+
+fn dispatch_state(ctx: &RepoContext, command: StateCommand) -> Result<Value> {
+    match command {
+        StateCommand::Summary => crate::state::state_summary(ctx),
+        StateCommand::Archive(request) => crate::state::receipts_archive(
+            ctx,
+            crate::state::StateArchiveRequest {
+                before: request.before,
+                dry_run: request.dry_run,
+            },
+        ),
     }
 }
 
@@ -173,6 +187,8 @@ pub(crate) fn call_tool(ctx: &RepoContext, name: &str, args: Value) -> Result<Va
         Some(MemoryTool::Check) => work::check_from_args(ctx, args),
         Some(MemoryTool::Gates) => work::gates_from_args(ctx, args),
         Some(MemoryTool::Evidence) => work::evidence_from_args(ctx, args),
+        Some(MemoryTool::Review) => work::review_from_args(ctx, args),
+        Some(MemoryTool::Refine) => work::refine_from_args(ctx, args),
         Some(MemoryTool::Decide) => work::decide_from_args(ctx, args),
         Some(MemoryTool::Receipts) => work::receipts_from_args(ctx, args),
         Some(MemoryTool::Status) => crate::state::state_summary(ctx),
@@ -201,7 +217,13 @@ fn execute_manifest_tool(
     plan_id: Option<String>,
     record_receipt: bool,
 ) -> Result<Value> {
-    execute_manifest_tool_with_options(ctx, tool_name, args, plan_id, record_receipt, true)
+    execute_manifest_tool_with_options(
+        ctx,
+        tool_name,
+        args,
+        plan_id,
+        ManifestToolExecutionOptions::fail_fast(record_receipt, true),
+    )
 }
 
 fn execute_manifest_tool_without_worktree_fingerprint(
@@ -210,7 +232,59 @@ fn execute_manifest_tool_without_worktree_fingerprint(
     args: Value,
     plan_id: Option<String>,
 ) -> Result<Value> {
-    execute_manifest_tool_with_options(ctx, tool_name, args, plan_id, true, false)
+    execute_manifest_tool_with_options(
+        ctx,
+        tool_name,
+        args,
+        plan_id,
+        ManifestToolExecutionOptions::fail_fast(true, false),
+    )
+}
+
+fn execute_manifest_tool_result_without_worktree_fingerprint(
+    ctx: &RepoContext,
+    tool_name: &str,
+    args: Value,
+    plan_id: Option<String>,
+) -> Result<Value> {
+    execute_manifest_tool_with_options(
+        ctx,
+        tool_name,
+        args,
+        plan_id,
+        ManifestToolExecutionOptions::collect_result(true, false),
+    )
+}
+
+#[derive(Clone, Copy)]
+enum ToolFailureMode {
+    FailFast,
+    CollectResult,
+}
+
+#[derive(Clone, Copy)]
+struct ManifestToolExecutionOptions {
+    record_receipt: bool,
+    collect_worktree_fingerprint: bool,
+    failure_mode: ToolFailureMode,
+}
+
+impl ManifestToolExecutionOptions {
+    fn fail_fast(record_receipt: bool, collect_worktree_fingerprint: bool) -> Self {
+        Self {
+            record_receipt,
+            collect_worktree_fingerprint,
+            failure_mode: ToolFailureMode::FailFast,
+        }
+    }
+
+    fn collect_result(record_receipt: bool, collect_worktree_fingerprint: bool) -> Self {
+        Self {
+            record_receipt,
+            collect_worktree_fingerprint,
+            failure_mode: ToolFailureMode::CollectResult,
+        }
+    }
 }
 
 fn execute_manifest_tool_with_options(
@@ -218,21 +292,13 @@ fn execute_manifest_tool_with_options(
     tool_name: &str,
     args: Value,
     plan_id: Option<String>,
-    record_receipt: bool,
-    collect_worktree_fingerprint: bool,
+    options: ManifestToolExecutionOptions,
 ) -> Result<Value> {
     let tool = ctx
         .tool_spec(tool_name)
         .ok_or_else(|| anyhow!("{}", undeclared_tool_message(ctx, tool_name)))?;
     match tool.kind.as_str() {
-        kind::NATIVE => execute_native_tool(
-            ctx,
-            &tool.name,
-            args,
-            plan_id,
-            record_receipt,
-            collect_worktree_fingerprint,
-        ),
+        kind::NATIVE => execute_native_tool(ctx, &tool.name, args, plan_id, options),
         kind::COMMAND => {
             let command_key = tool
                 .command
@@ -248,8 +314,7 @@ fn execute_manifest_tool_with_options(
                 },
                 args,
                 plan_id,
-                record_receipt,
-                collect_worktree_fingerprint,
+                options,
             )
         }
         _ => bail!("Unsupported tool kind '{}' for {tool_name}", tool.kind),
@@ -290,8 +355,7 @@ fn execute_native_tool(
     tool_name: &str,
     args: Value,
     plan_id: Option<String>,
-    record_receipt: bool,
-    collect_worktree_fingerprint: bool,
+    options: ManifestToolExecutionOptions,
 ) -> Result<Value> {
     let started = now_ms();
     let output = run_native_tool(ctx, tool_name, &args)?;
@@ -299,7 +363,7 @@ fn execute_native_tool(
 
     let receipt_result = maybe_record_receipt(
         ctx,
-        record_receipt,
+        options.record_receipt,
         ReceiptInput {
             tool_name,
             args: args.clone(),
@@ -310,22 +374,22 @@ fn execute_native_tool(
             exit_status: output.exit_status,
             stdout: &output.stdout,
             stderr: &output.stderr,
+            evidence: None,
             session_override: None,
             collect_git_metadata: true,
-            collect_worktree_fingerprint,
+            collect_worktree_fingerprint: options.collect_worktree_fingerprint,
             worktree_fingerprint_override: None,
         },
     );
 
-    let receipt_id = receipt_id_or_preserve_tool_error(
-        (output.exit_status != 0).then(|| {
-            format!(
-                "{tool_name} failed with status {}\nstdout:\n{}\nstderr:\n{}",
-                output.exit_status, output.stdout, output.stderr
-            )
-        }),
-        receipt_result,
-    )?;
+    let tool_failure = (output.exit_status != 0).then(|| {
+        format!(
+            "{tool_name} failed with status {}\nstdout:\n{}\nstderr:\n{}",
+            output.exit_status, output.stdout, output.stderr
+        )
+    });
+    let receipt_id =
+        receipt_id_for_failure_mode(options.failure_mode, tool_failure, receipt_result)?;
 
     Ok(json!({
         "ok": true,
@@ -356,6 +420,19 @@ fn receipt_id_or_preserve_tool_error(
     }
 }
 
+fn receipt_id_for_failure_mode(
+    failure_mode: ToolFailureMode,
+    tool_failure: Option<String>,
+    receipt_result: Result<Option<String>>,
+) -> Result<Option<String>> {
+    match failure_mode {
+        ToolFailureMode::FailFast => {
+            receipt_id_or_preserve_tool_error(tool_failure, receipt_result)
+        }
+        ToolFailureMode::CollectResult => receipt_result,
+    }
+}
+
 struct CommandToolInvocation<'a> {
     tool_name: &'a str,
     command_key: &'a str,
@@ -367,8 +444,7 @@ fn execute_command_tool(
     invocation: CommandToolInvocation<'_>,
     args: Value,
     plan_id: Option<String>,
-    record_receipt: bool,
-    collect_worktree_fingerprint: bool,
+    options: ManifestToolExecutionOptions,
 ) -> Result<Value> {
     let started = now_ms();
     let output = run_configured_command(ctx, invocation.tool_name, invocation.command_text, &args)?;
@@ -379,7 +455,7 @@ fn execute_command_tool(
 
     let receipt_result = maybe_record_receipt(
         ctx,
-        record_receipt,
+        options.record_receipt,
         ReceiptInput {
             tool_name: invocation.tool_name,
             args: args.clone(),
@@ -390,23 +466,23 @@ fn execute_command_tool(
             exit_status,
             stdout: &stdout,
             stderr: &stderr,
+            evidence: None,
             session_override: None,
             collect_git_metadata: true,
-            collect_worktree_fingerprint,
+            collect_worktree_fingerprint: options.collect_worktree_fingerprint,
             worktree_fingerprint_override: None,
         },
     );
 
-    let receipt_id = receipt_id_or_preserve_tool_error(
-        (!output.status.success()).then(|| {
-            let tool_name = invocation.tool_name;
-            let command_key = invocation.command_key;
-            format!(
-                "{tool_name} failed with status {exit_status}\ncommand key: {command_key}\nstdout:\n{stdout}\nstderr:\n{stderr}"
-            )
-        }),
-        receipt_result,
-    )?;
+    let tool_failure = (!output.status.success()).then(|| {
+        let tool_name = invocation.tool_name;
+        let command_key = invocation.command_key;
+        format!(
+            "{tool_name} failed with status {exit_status}\ncommand key: {command_key}\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        )
+    });
+    let receipt_id =
+        receipt_id_for_failure_mode(options.failure_mode, tool_failure, receipt_result)?;
 
     Ok(json!({
         "ok": true,

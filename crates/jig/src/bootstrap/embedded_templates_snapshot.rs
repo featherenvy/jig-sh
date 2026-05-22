@@ -163,6 +163,11 @@ When revising an ExecPlan, update every affected section so the file remains res
 "# },
     EmbeddedTemplateFile { relative_path: ".agent/state/.gitkeep.jinja", contents: r#"
 "# },
+    EmbeddedTemplateFile { relative_path: ".gitattributes.jinja", contents: r#"# BEGIN JIG MANAGED BLOCK
+.agent/plans/*.md merge=union
+.agent/state/*.jsonl merge=union
+# END JIG MANAGED BLOCK
+"# },
     EmbeddedTemplateFile { relative_path: ".github/workflows/agent-map-check.yml.jinja", contents: r#"name: Agent Map Check
 
 on:

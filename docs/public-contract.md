@@ -8,7 +8,7 @@
 
 Generated repositories may rely on the contract described here when they pin a `jig_version` in `.jig.toml` and keep `scripts/jig`, `.mcp.json`, and `.agent/jig-contract.json` in sync with that version.
 
-Structured work commands, the unified doctor, and agent tooling checks are runtime-owned conveniences. They are available through commands such as `scripts/jig doctor`, `scripts/jig work ...`, and `scripts/jig agent doctor`, and MCP tools named `jig.work_*` and `jig.agent_doctor`, but they are not part of the generated command contract and are not declared in `.agent/jig-contract.json`.
+Structured work commands, state hygiene commands, the unified doctor, and agent tooling checks are runtime-owned conveniences. They are available through commands such as `scripts/jig doctor`, `scripts/jig work ...`, `scripts/jig state ...`, and `scripts/jig agent doctor`, and MCP tools named `jig.work_*` and `jig.agent_doctor`, but they are not part of the generated command contract and are not declared in `.agent/jig-contract.json`.
 
 Some runtime-owned CLI commands expose explicit human-output flags, such as `scripts/jig doctor --summary`, `scripts/jig agent doctor --summary`, `scripts/jig work status --summary`, `scripts/jig work evidence --summary`, `scripts/jig work receipts --summary`, and `scripts/jig work start --print-plan-id`. These outputs are for terminal scanning or shell integration and are not stable machine-readable contract output; automation should use the default JSON output or MCP tools.
 
@@ -129,7 +129,7 @@ Command-backed tools return the same common fields plus `command_key`, which ide
 
 ## Runtime State
 
-`.agent/state/*.jsonl` is runtime-owned append-only memory. Generated repos may back up, inspect, or remove these files intentionally, but application code should not edit individual records in place.
+`.agent/state/*.jsonl` is runtime-owned append-only memory. Generated repos may back up, inspect, or remove these files intentionally, but application code should not edit individual records in place. Generated `.gitattributes` marks those JSONL files with `merge=union` to reduce avoidable merge conflicts between independent append-only records.
 
 Current JSONL state files:
 
@@ -140,7 +140,11 @@ Current JSONL state files:
 
 State readers should tolerate missing files by treating them as empty. JSONL readers should ignore blank lines and fail loudly on malformed nonblank records.
 
+Receipt records may include an `evidence` object for structured runtime-owned evidence that does not fit safely in truncated stdout or stderr previews. Codex review receipts use `evidence.kind = "codex_review"` and store normalized findings there, capped to the first 100 findings with long finding fields shortened; raw finding and actionable counts remain available so truncation does not hide a failing gate. Their receipt `exit_status` is the gate verdict, while `evidence.codex_exit_status` is the underlying Codex process status. They also include short stdout/stderr previews for failed review debugging. Codex refinement receipts use `evidence.kind = "codex_refine"` and store the refinement iteration, optional refinement profile metadata, reviewed gate ids, finding fingerprints, and finding count.
+
 The active-session pointer is cache state, currently resolved through git as `jig-current-session.txt` and falling back under `.agent/.cache/`. Generated repos should not treat that path as a durable JSONL record.
+
+`scripts/jig state summary` reports the same runtime-owned state counts as `scripts/jig work status`. `scripts/jig state archive --before <YYYY-MM-DD|unix-ms>` moves old receipt records into `.agent/state/archive/` and rewrites `receipts.jsonl` while preserving the latest gate evidence and supporting receipts needed by `work gates`, `work evidence`, and `work finish`. Use `--dry-run` to inspect counts before rewriting state.
 
 Structured work commands use the `jig.work_*` CLI and MCP namespace, but state-operation receipts keep their historical tool names for compatibility with existing receipt history and filters:
 
@@ -153,7 +157,7 @@ Structured work commands use the `jig.work_*` CLI and MCP namespace, but state-o
 
 ## Work Gates
 
-`work.gates` in `.jig.toml` declares required evidence before structured work can finish. `kind: check` gates reference execution tools from `.agent/jig-contract.json`; `scripts/jig work check --plan-id ...` runs them and records normal receipts for an open plan. `scripts/jig work gates --plan-id ...` reports gate status from the latest fresh receipt for each gate tool on any existing plan, including a closed plan. `scripts/jig work evidence --summary` presents the same gate evidence as a human inspection report with the latest gate evidence per tool, current-worktree match status, changed paths, and stale reasons. For `work gates` and `work evidence`, top-level `ok: true` means the inspection command completed; callers must read `overall`, `gates_ok`, and each gate `status` to detect blocked work. Receipt `changed_paths` are repo-relative names collected from `git status --short`; they can include `.agent/` state paths and untracked filenames. These commands accept `--summary` for concise terminal output while preserving JSON as the default automation output.
+`work.gates` in `.jig.toml` declares required evidence before structured work can finish. `kind: check` gates reference execution tools from `.agent/jig-contract.json`; `scripts/jig work check --plan-id ...` runs them and records normal receipts for an open plan. `kind: codex_review` gates reference Codex skills and are run by `scripts/jig work review --plan-id ...`, which records structured `jig.work_review` receipts with normalized findings, prompt/schema hashes, skill metadata, and worktree fingerprints. `scripts/jig work refine --plan-id ...` reads failed review findings, runs a Codex fixer loop, reruns review gates, then reruns normal check gates. `scripts/jig work gates --plan-id ...` reports gate status from the latest fresh receipt for each gate on any existing plan, including a closed plan. `scripts/jig work evidence --summary` presents the same gate evidence as a human inspection report with the latest gate evidence, current-worktree match status, changed paths, and stale reasons. Latest evidence entries expose either `tool` for check gates or `skill` for review gates. For `work gates` and `work evidence`, top-level `ok: true` means the inspection command completed; callers must read `overall`, `gates_ok`, and each gate `status` to detect blocked work. Receipt `changed_paths` are repo-relative names collected from `git status --porcelain=v1 -z`; they can include `.agent/` state paths and untracked filenames. These commands accept `--summary` for concise terminal output while preserving JSON as the default automation output.
 
 `scripts/jig work finish --plan-id ...` fails when any required gate is missing, failed, stale, unknown, or unsupported. Older `work.checks` entries are still accepted for compatibility and backfill missing required check gates during migration. If the same tool is declared in `work.gates`, that explicit gate entry is authoritative.
 
@@ -161,9 +165,7 @@ Fresh check evidence means the non-`.agent/` worktree fingerprint did not change
 
 After upgrading an in-flight repo from a Jig version that recorded receipts without `worktree_fingerprint`, rerun `scripts/jig work check --plan-id ...` before `scripts/jig work finish --plan-id ...`. Older receipts deserialize, but their gate freshness is `unknown`.
 
-Non-`check` gate kinds are reserved for future structured integrations such as Codex review gates. They are parsed and reported as unsupported until the runtime can record and validate machine-readable review evidence.
-
-`work.refinements` is reserved for future refinement execution and is rejected with a configuration error until support exists.
+Unknown non-`check` gate kinds are parsed and reported as unsupported. Required unsupported gates block finish.
 
 ## Rollout Rules
 

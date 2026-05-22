@@ -55,7 +55,7 @@ pub(super) fn stage_render(request: RenderStageRequest<'_>) -> Result<StagedRend
     request
         .progress
         .log_blocked_on_err(run_post_render_tasks(&destination))?;
-    merge_existing_root_agents(request.seed_repo_path, &destination, request.progress)?;
+    merge_existing_managed_blocks(request.seed_repo_path, &destination, request.progress)?;
     managed_paths.extend(managed_paths::removed_managed_paths());
 
     let answers_path = destination.join(ANSWERS_FILE);
@@ -168,7 +168,7 @@ impl TemplateRender<'_, '_> {
     }
 }
 
-fn merge_existing_root_agents(
+fn merge_existing_managed_blocks(
     seed_repo_path: Option<&Path>,
     destination: &Path,
     progress: CliProgress,
@@ -177,17 +177,40 @@ fn merge_existing_root_agents(
         return Ok(());
     };
 
-    let existing_path = seed_repo_path.join(managed_paths::ROOT_AGENTS_PATH);
+    for relative in [
+        Path::new(managed_paths::ROOT_AGENTS_PATH),
+        Path::new(managed_paths::ROOT_GITATTRIBUTES_PATH),
+    ] {
+        merge_existing_managed_block(seed_repo_path, destination, relative, progress)?;
+    }
+    Ok(())
+}
+
+fn merge_existing_managed_block(
+    seed_repo_path: &Path,
+    destination: &Path,
+    relative: &Path,
+    progress: CliProgress,
+) -> Result<()> {
+    let Some(spec) = managed_paths::managed_block_spec(relative) else {
+        return Ok(());
+    };
+
+    let existing_path = seed_repo_path.join(relative);
     if !existing_path.exists() {
         return Ok(());
     }
 
-    let rendered_path = destination.join(managed_paths::ROOT_AGENTS_PATH);
+    let rendered_path = destination.join(relative);
     if !rendered_path.exists() {
         return Ok(());
     }
 
-    progress.step("merge root guide", "preserve repo-owned AGENTS.md content");
+    let step_label = format!("merge {}", spec.progress_label);
+    progress.step(
+        &step_label,
+        format!("preserve repo-owned {} content", spec.path),
+    );
     let existing = progress.log_blocked_on_err(
         fs::read_to_string(&existing_path)
             .with_context(|| format!("Failed to read {}", existing_path.display())),
@@ -196,16 +219,21 @@ fn merge_existing_root_agents(
         fs::read_to_string(&rendered_path)
             .with_context(|| format!("Failed to read {}", rendered_path.display())),
     )?;
-    let block = progress.log_blocked_on_err(extract_jig_block(&rendered, &rendered_path))?;
-    let merged = progress.log_blocked_on_err(merge_jig_block(&existing, block, &existing_path))?;
+    let block = progress.log_blocked_on_err(extract_jig_block(&rendered, &rendered_path, spec))?;
+    let merged =
+        progress.log_blocked_on_err(merge_jig_block(&existing, block, &existing_path, spec))?;
     progress.log_blocked_on_err(
         fs::write(&rendered_path, merged)
             .with_context(|| format!("Failed to write {}", rendered_path.display())),
     )
 }
 
-fn extract_jig_block<'a>(contents: &'a str, path: &Path) -> Result<&'a str> {
-    let Some((start, end)) = jig_block_bounds(contents, path)? else {
+fn extract_jig_block<'a>(
+    contents: &'a str,
+    path: &Path,
+    spec: managed_paths::ManagedBlockSpec,
+) -> Result<&'a str> {
+    let Some((start, end)) = jig_block_bounds(contents, path, spec)? else {
         bail!(
             "Rendered {} does not contain a Jig managed block.",
             path.display()
@@ -214,8 +242,13 @@ fn extract_jig_block<'a>(contents: &'a str, path: &Path) -> Result<&'a str> {
     Ok(&contents[start..end])
 }
 
-fn merge_jig_block(existing: &str, block: &str, path: &Path) -> Result<String> {
-    if let Some((start, end)) = jig_block_bounds(existing, path)? {
+fn merge_jig_block(
+    existing: &str,
+    block: &str,
+    path: &Path,
+    spec: managed_paths::ManagedBlockSpec,
+) -> Result<String> {
+    if let Some((start, end)) = jig_block_bounds(existing, path, spec)? {
         return Ok(format!(
             "{}{}{}",
             &existing[..start],
@@ -233,20 +266,17 @@ fn merge_jig_block(existing: &str, block: &str, path: &Path) -> Result<String> {
     Ok(merged)
 }
 
-fn jig_block_bounds(contents: &str, path: &Path) -> Result<Option<(usize, usize)>> {
-    let begins = contents
-        .match_indices(managed_paths::ROOT_AGENTS_BLOCK_BEGIN)
-        .collect::<Vec<_>>();
-    let ends = contents
-        .match_indices(managed_paths::ROOT_AGENTS_BLOCK_END)
-        .collect::<Vec<_>>();
+fn jig_block_bounds(
+    contents: &str,
+    path: &Path,
+    spec: managed_paths::ManagedBlockSpec,
+) -> Result<Option<(usize, usize)>> {
+    let begins = contents.match_indices(spec.begin).collect::<Vec<_>>();
+    let ends = contents.match_indices(spec.end).collect::<Vec<_>>();
 
     match (begins.as_slice(), ends.as_slice()) {
         ([], []) => Ok(None),
-        ([(begin, _)], [(end, _)]) if begin < end => Ok(Some((
-            *begin,
-            end + managed_paths::ROOT_AGENTS_BLOCK_END.len(),
-        ))),
+        ([(begin, _)], [(end, _)]) if begin < end => Ok(Some((*begin, end + spec.end.len()))),
         _ => bail!(
             "Malformed Jig managed block in {}. Expected exactly one begin marker before exactly one end marker.",
             path.display()

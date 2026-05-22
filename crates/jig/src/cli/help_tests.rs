@@ -177,6 +177,14 @@ fn update_help_explains_modes() {
 }
 
 #[test]
+fn state_archive_help_explains_cutoff() {
+    let archive_help = rendered_help(&["state", "archive"]);
+    assert_help_contains(&archive_help, "--before");
+    assert_help_contains(&archive_help, "YYYY-MM-DD");
+    assert_help_contains(&archive_help, "--dry-run");
+}
+
+#[test]
 fn human_summary_flags_are_discoverable() {
     let agent_doctor_help = rendered_help(&["agent", "doctor"]);
     assert_help_contains(&agent_doctor_help, "--summary");

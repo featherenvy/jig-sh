@@ -562,6 +562,8 @@ fn run_init_uses_native_renderer_and_git() {
     assert!(log.contains("git init -b main"));
     assert!(destination.exists());
     assert!(destination.join(".jig.toml").exists());
+    let attributes = fs::read_to_string(destination.join(".gitattributes")).unwrap();
+    assert!(attributes.contains(".agent/state/*.jsonl merge=union"));
     assert!(destination.join("scripts/jig").exists());
 }
 
@@ -738,6 +740,45 @@ fn adopt_preview_reports_conflicts_without_overwriting() {
 }
 
 #[test]
+fn adopt_preserves_repo_gitattributes_while_adding_jig_block() {
+    let _guard = lock_env();
+    let temp = tempdir().unwrap();
+    let template = materialize_template_worktree();
+    let repo = temp.path().join("repo");
+    fs::create_dir_all(&repo).unwrap();
+    fs::write(
+        repo.join(".gitattributes"),
+        "* text=auto eol=lf\n*.sh text eol=lf\n",
+    )
+    .unwrap();
+
+    let output = run_adopt(AdoptOpts {
+        path: repo.clone(),
+        template: Some(template.path().display().to_string()),
+        template_mode: None,
+        vcs_ref: None,
+        force: false,
+        write: true,
+        defaults: true,
+        no_input: true,
+        answers: AnswerOpts::default(),
+    })
+    .unwrap();
+
+    assert_eq!(output["render_mode"], "copy");
+    assert!(
+        output["adoption_report"]["managed_blocks_inserted"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|path| path == ".gitattributes")
+    );
+    let attributes = fs::read_to_string(repo.join(".gitattributes")).unwrap();
+    assert!(attributes.contains("* text=auto eol=lf"));
+    assert!(attributes.contains(".agent/state/*.jsonl merge=union"));
+}
+
+#[test]
 fn adopt_write_records_backup_receipt_for_overwritten_managed_files() {
     let _guard = lock_env();
     let temp = tempdir().unwrap();
@@ -780,15 +821,25 @@ fn adopt_write_records_backup_receipt_for_overwritten_managed_files() {
             .iter()
             .any(|conflict| conflict["path"] == ".agent/PLANS.md")
     );
-    let receipt_path = repo.join(".agent/state/adopt-last.json");
+    let receipt_path = repo.join(".agent/.cache/adopt/adopt-last.json");
     let receipt: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&receipt_path).unwrap()).unwrap();
     assert!(
         receipt["backup_root"]
             .as_str()
             .unwrap()
-            .contains("adopt-backups")
+            .contains(".agent/.cache/adopt/backups")
     );
+    let legacy_receipt_path = repo.join(".agent/state/adopt-last.json");
+    let legacy_receipt: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&legacy_receipt_path).unwrap()).unwrap();
+    assert_eq!(legacy_receipt, receipt);
+    assert_eq!(
+        receipt["canonical_receipt_path"],
+        ".agent/.cache/adopt/adopt-last.json"
+    );
+    assert_eq!(receipt["legacy_receipt_deprecated"], true);
+    assert!(!repo.join(".agent/state/adopt-backups").exists());
     let backup = receipt["apply_report"]["backups"]
         .as_array()
         .unwrap()

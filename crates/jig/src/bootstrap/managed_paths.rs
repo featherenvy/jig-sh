@@ -5,6 +5,17 @@ use super::answers::RenderAnswers;
 pub(super) const ROOT_AGENTS_PATH: &str = "AGENTS.md";
 pub(super) const ROOT_AGENTS_BLOCK_BEGIN: &str = "<!-- BEGIN JIG MANAGED BLOCK -->";
 pub(super) const ROOT_AGENTS_BLOCK_END: &str = "<!-- END JIG MANAGED BLOCK -->";
+pub(super) const ROOT_GITATTRIBUTES_PATH: &str = ".gitattributes";
+pub(super) const ROOT_GITATTRIBUTES_BLOCK_BEGIN: &str = "# BEGIN JIG MANAGED BLOCK";
+pub(super) const ROOT_GITATTRIBUTES_BLOCK_END: &str = "# END JIG MANAGED BLOCK";
+
+#[derive(Clone, Copy, Debug)]
+pub(super) struct ManagedBlockSpec {
+    pub(super) path: &'static str,
+    pub(super) begin: &'static str,
+    pub(super) end: &'static str,
+    pub(super) progress_label: &'static str,
+}
 
 const REMOVED_MANAGED_PATHS: &[&str] = &[
     "scripts/add-migration.sh",
@@ -33,8 +44,24 @@ pub(super) fn should_omit_unmanaged_rendered_path(
     relative == Path::new("Makefile")
 }
 
-pub(super) fn is_root_agents_path(relative: &Path) -> bool {
-    relative == Path::new(ROOT_AGENTS_PATH)
+pub(super) fn managed_block_spec(relative: &Path) -> Option<ManagedBlockSpec> {
+    if relative == Path::new(ROOT_AGENTS_PATH) {
+        return Some(ManagedBlockSpec {
+            path: ROOT_AGENTS_PATH,
+            begin: ROOT_AGENTS_BLOCK_BEGIN,
+            end: ROOT_AGENTS_BLOCK_END,
+            progress_label: "root guide",
+        });
+    }
+    if relative == Path::new(ROOT_GITATTRIBUTES_PATH) {
+        return Some(ManagedBlockSpec {
+            path: ROOT_GITATTRIBUTES_PATH,
+            begin: ROOT_GITATTRIBUTES_BLOCK_BEGIN,
+            end: ROOT_GITATTRIBUTES_BLOCK_END,
+            progress_label: "git attributes",
+        });
+    }
+    None
 }
 
 pub(super) fn is_executable_script(relative: &Path) -> bool {

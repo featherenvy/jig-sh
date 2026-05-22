@@ -4,7 +4,8 @@ use serde_json::{Value, json};
 
 use crate::command::{
     WorkAppendRequest, WorkCheckRequest, WorkCommand, WorkDecisionRequest, WorkEvidenceRequest,
-    WorkFinishRequest, WorkGatesRequest, WorkReceiptsRequest, WorkStartRequest,
+    WorkFinishRequest, WorkGatesRequest, WorkReceiptsRequest, WorkRefineRequest, WorkReviewRequest,
+    WorkStartRequest,
 };
 use crate::context::RepoContext;
 use crate::state::{
@@ -16,6 +17,7 @@ use crate::state::{
 mod checks;
 mod gates;
 mod goal;
+mod review;
 mod tools;
 
 impl From<WorkStartRequest> for PlanOpenRequest {
@@ -79,6 +81,8 @@ pub(super) fn dispatch(ctx: &RepoContext, command: WorkCommand) -> Result<Value>
         WorkCommand::Check(opts) => checks::check(ctx, opts),
         WorkCommand::Gates(opts) => gates::gates(ctx, opts),
         WorkCommand::Evidence(opts) => gates::evidence(ctx, opts),
+        WorkCommand::Review(opts) => review::review(ctx, opts),
+        WorkCommand::Refine(opts) => review::refine(ctx, opts),
         WorkCommand::Decide(opts) => decisions_add(ctx, opts.into()),
         WorkCommand::Receipts(opts) => receipts_list(ctx, opts.into()),
         WorkCommand::Status => state_summary(ctx),
@@ -147,6 +151,16 @@ pub(super) fn gates_from_args(ctx: &RepoContext, args: Value) -> Result<Value> {
 pub(super) fn evidence_from_args(ctx: &RepoContext, args: Value) -> Result<Value> {
     let request: WorkEvidenceRequest = request_from_args(args)?;
     gates::evidence(ctx, request)
+}
+
+pub(super) fn review_from_args(ctx: &RepoContext, args: Value) -> Result<Value> {
+    let request: WorkReviewRequest = request_from_args(args)?;
+    review::review(ctx, request)
+}
+
+pub(super) fn refine_from_args(ctx: &RepoContext, args: Value) -> Result<Value> {
+    let request: WorkRefineRequest = request_from_args(args)?;
+    review::refine(ctx, request)
 }
 
 pub(super) fn decide_from_args(ctx: &RepoContext, args: Value) -> Result<Value> {

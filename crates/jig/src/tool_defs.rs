@@ -21,6 +21,8 @@ pub(crate) mod args {
     pub(crate) const SELECTED_OPTION: &str = "selected_option";
     pub(crate) const SESSION_ID: &str = "session_id";
     pub(crate) const SUCCESS: &str = "success";
+    pub(crate) const GATES: &str = "gates";
+    pub(crate) const MAX_ITERATIONS: &str = "max_iterations";
     pub(crate) const TITLE: &str = "title";
     pub(crate) const TOOL_NAME: &str = "tool_name";
     pub(crate) const TOOLS: &str = "tools";
@@ -83,6 +85,9 @@ pub(crate) mod cli_command {
     pub(crate) const PROXY_START: &str = "start";
     pub(crate) const PROXY_STOP: &str = "stop";
     pub(crate) const SCHEMA_DUMP: &str = "schema-dump";
+    pub(crate) const STATE: &str = "state";
+    pub(crate) const STATE_ARCHIVE: &str = "archive";
+    pub(crate) const STATE_SUMMARY: &str = "summary";
     pub(crate) const UPDATE: &str = "update";
     pub(crate) const VAULT: &str = "vault";
     pub(crate) const VAULT_AUDIT: &str = "audit";
@@ -102,6 +107,8 @@ pub(crate) mod cli_command {
     pub(crate) const WORK_FINISH: &str = "finish";
     pub(crate) const WORK_GATES: &str = "gates";
     pub(crate) const WORK_GOAL: &str = "goal";
+    pub(crate) const WORK_REFINE: &str = "refine";
+    pub(crate) const WORK_REVIEW: &str = "review";
     pub(crate) const WORK_RECEIPTS: &str = "receipts";
     pub(crate) const WORK_START: &str = "start";
     pub(crate) const WORK_STATUS: &str = "status";
@@ -118,6 +125,8 @@ pub(crate) enum MemoryTool {
     Check,
     Gates,
     Evidence,
+    Review,
+    Refine,
     Decide,
     Receipts,
     Status,
@@ -125,7 +134,7 @@ pub(crate) enum MemoryTool {
 }
 
 impl MemoryTool {
-    const ALL: [Self; 11] = [
+    const ALL: &'static [Self] = &[
         Self::AgentDoctor,
         Self::Goal,
         Self::Start,
@@ -133,6 +142,8 @@ impl MemoryTool {
         Self::Check,
         Self::Gates,
         Self::Evidence,
+        Self::Review,
+        Self::Refine,
         Self::Decide,
         Self::Receipts,
         Self::Status,
@@ -148,6 +159,8 @@ impl MemoryTool {
             tool::WORK_CHECK => Some(Self::Check),
             tool::WORK_GATES => Some(Self::Gates),
             tool::WORK_EVIDENCE => Some(Self::Evidence),
+            tool::WORK_REVIEW => Some(Self::Review),
+            tool::WORK_REFINE => Some(Self::Refine),
             tool::WORK_DECIDE => Some(Self::Decide),
             tool::WORK_RECEIPTS => Some(Self::Receipts),
             tool::WORK_STATUS => Some(Self::Status),
@@ -165,6 +178,8 @@ impl MemoryTool {
             Self::Check => tool::WORK_CHECK,
             Self::Gates => tool::WORK_GATES,
             Self::Evidence => tool::WORK_EVIDENCE,
+            Self::Review => tool::WORK_REVIEW,
+            Self::Refine => tool::WORK_REFINE,
             Self::Decide => tool::WORK_DECIDE,
             Self::Receipts => tool::WORK_RECEIPTS,
             Self::Status => tool::WORK_STATUS,
@@ -184,6 +199,10 @@ impl MemoryTool {
             Self::Gates => "Report configured work gate status for a plan.",
             Self::Evidence => {
                 "Summarize work gate evidence and receipt freshness; ok=true means inspection succeeded, while overall reports passed or blocked gates."
+            }
+            Self::Review => "Run configured Codex review gates and record structured findings.",
+            Self::Refine => {
+                "Run review-driven refinement, rerun review gates, then rerun normal check gates."
             }
             Self::Decide => "Record a structured work decision.",
             Self::Receipts => "List structured work receipts.",
@@ -228,6 +247,36 @@ impl MemoryTool {
             ),
             Self::Gates => object_schema(&[(args::PLAN_ID, string_schema())], &[args::PLAN_ID]),
             Self::Evidence => object_schema(&[(args::PLAN_ID, string_schema())], &[]),
+            Self::Review => object_schema(
+                &[
+                    (args::PLAN_ID, string_schema()),
+                    (
+                        args::GATES,
+                        json!({
+                            "type": "array",
+                            "items": { "type": "string" }
+                        }),
+                    ),
+                ],
+                &[args::PLAN_ID],
+            ),
+            Self::Refine => object_schema(
+                &[
+                    (args::PLAN_ID, string_schema()),
+                    (
+                        args::GATES,
+                        json!({
+                            "type": "array",
+                            "items": { "type": "string" }
+                        }),
+                    ),
+                    (
+                        args::MAX_ITERATIONS,
+                        json!({ "type": "integer", "minimum": 1 }),
+                    ),
+                ],
+                &[args::PLAN_ID],
+            ),
             Self::Start => object_schema(
                 &[
                     (args::TITLE, string_schema()),
@@ -300,7 +349,7 @@ pub(crate) fn tool_descriptors(manifest_tools: &[ManifestTool]) -> Vec<Value> {
         .iter()
         .filter(|tool| is_execution_tool(tool))
         .map(manifest_tool_descriptor)
-        .chain(MemoryTool::ALL.into_iter().map(memory_tool_descriptor))
+        .chain(MemoryTool::ALL.iter().copied().map(memory_tool_descriptor))
         .collect()
 }
 
@@ -420,8 +469,10 @@ mod tests {
             .collect::<Vec<_>>();
         let unique = names.iter().copied().collect::<BTreeSet<_>>();
 
-        assert_eq!(names.len(), 11);
+        assert_eq!(names.len(), MemoryTool::ALL.len());
         assert_eq!(unique.len(), names.len());
         assert!(unique.contains(tool::WORK_EVIDENCE));
+        assert!(unique.contains(tool::WORK_REVIEW));
+        assert!(unique.contains(tool::WORK_REFINE));
     }
 }

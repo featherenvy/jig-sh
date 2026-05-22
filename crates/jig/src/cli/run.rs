@@ -181,6 +181,11 @@ pub(crate) fn run() -> Result<()> {
                 human_output,
             )
         }
+        CommandKind::State(command) => dispatch_runtime_command(
+            crate::command::RuntimeCommand::State(command.into()),
+            false,
+            None,
+        ),
     }
 }
 
@@ -238,6 +243,8 @@ fn work_human_output_requested(command: &WorkCommand) -> Option<HumanOutput> {
         WorkCommand::Check(opts) if opts.summary => Some(HumanOutput::WorkCheckSummary),
         WorkCommand::Gates(opts) if opts.summary => Some(HumanOutput::WorkGatesSummary),
         WorkCommand::Evidence(opts) if opts.summary => Some(HumanOutput::WorkEvidenceSummary),
+        WorkCommand::Review(opts) if opts.summary => Some(HumanOutput::WorkReviewSummary),
+        WorkCommand::Refine(opts) if opts.summary => Some(HumanOutput::WorkRefineSummary),
         WorkCommand::Receipts(opts) if opts.summary => Some(HumanOutput::WorkReceiptsSummary),
         WorkCommand::Status(opts) if opts.summary => Some(HumanOutput::WorkStatusSummary),
         _ => None,

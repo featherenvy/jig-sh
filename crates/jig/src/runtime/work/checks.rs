@@ -6,7 +6,10 @@ use crate::context::RepoContext;
 use crate::state::{ReceiptInput, current_worktree_fingerprint, now_ms, record_receipt};
 use crate::tool_defs::tool;
 
-use super::super::execute_manifest_tool_without_worktree_fingerprint;
+use super::super::{
+    execute_manifest_tool_result_without_worktree_fingerprint,
+    execute_manifest_tool_without_worktree_fingerprint,
+};
 use super::tools::{selected_tools, validate_check_tool};
 
 pub(super) fn check(ctx: &RepoContext, opts: WorkCheckRequest) -> Result<Value> {
@@ -16,19 +19,48 @@ pub(super) fn check(ctx: &RepoContext, opts: WorkCheckRequest) -> Result<Value> 
     check_tools(ctx, &opts.plan_id, selected_tools(ctx, &opts.tools)?)
 }
 
-fn check_tools(ctx: &RepoContext, plan_id: &str, tools: Vec<String>) -> Result<Value> {
+pub(super) fn check_tools(ctx: &RepoContext, plan_id: &str, tools: Vec<String>) -> Result<Value> {
+    check_tools_with_failure_mode(ctx, plan_id, tools, true)
+}
+
+pub(super) fn check_tools_collect_failures(
+    ctx: &RepoContext,
+    plan_id: &str,
+    tools: Vec<String>,
+) -> Result<Value> {
+    // Used by review refinement so failed verification checks are reported in
+    // the refine result instead of aborting before all receipts are recorded.
+    check_tools_with_failure_mode(ctx, plan_id, tools, false)
+}
+
+fn check_tools_with_failure_mode(
+    ctx: &RepoContext,
+    plan_id: &str,
+    tools: Vec<String>,
+    fail_on_tool_error: bool,
+) -> Result<Value> {
     let started = now_ms();
     let before_fingerprint = current_worktree_fingerprint(ctx);
     let mut results = Vec::with_capacity(tools.len());
     for name in &tools {
         validate_check_tool(ctx, name, "Work check")?;
 
-        results.push(execute_manifest_tool_without_worktree_fingerprint(
-            ctx,
-            name,
-            json!({}),
-            Some(plan_id.to_string()),
-        )?);
+        let result = if fail_on_tool_error {
+            execute_manifest_tool_without_worktree_fingerprint(
+                ctx,
+                name,
+                json!({}),
+                Some(plan_id.to_string()),
+            )?
+        } else {
+            execute_manifest_tool_result_without_worktree_fingerprint(
+                ctx,
+                name,
+                json!({}),
+                Some(plan_id.to_string()),
+            )?
+        };
+        results.push(result);
     }
     let receipt_ids = results
         .iter()
@@ -53,6 +85,7 @@ fn check_tools(ctx: &RepoContext, plan_id: &str, tools: Vec<String>) -> Result<V
             exit_status: 0,
             stdout: "",
             stderr: "",
+            evidence: None,
             session_override: None,
             collect_git_metadata: true,
             collect_worktree_fingerprint: false,

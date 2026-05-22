@@ -7,6 +7,13 @@ use anyhow::{Context, Result, bail};
 use jig_contract::{FeatureContext, ManifestTool};
 use serde::Deserialize;
 
+mod work_config;
+
+pub(crate) use work_config::{
+    ReviewScopeArg, WorkConfig, WorkGate, WorkRefinementConfig, WorkReviewGate,
+    parse_review_scope_arg,
+};
+
 const CURRENT_SESSION_FILE: &str = "jig-current-session.txt";
 const JIG_REPO_ROOT_ENV: &str = "JIG_REPO_ROOT";
 pub(crate) const DEFAULT_CODEX_MARKETPLACE_ID: &str = "jig-skills";
@@ -177,18 +184,6 @@ pub(crate) struct DevAppConfig {
 
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct WorkConfig {
-    #[serde(default)]
-    checks: Vec<String>,
-    #[serde(default)]
-    gates: Vec<WorkGateConfig>,
-    #[allow(dead_code)]
-    #[serde(default)]
-    refinements: Vec<WorkRefinementConfig>,
-}
-
-#[derive(Clone, Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub(crate) struct AgentToolingConfig {
     #[serde(default)]
     pub(crate) codex: CodexToolingConfig,
@@ -216,30 +211,6 @@ pub(crate) struct CodexMarketplaceConfig {
     pub(crate) source: String,
     #[serde(default)]
     pub(crate) plugins: Vec<String>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct WorkGateConfig {
-    pub(crate) id: String,
-    pub(crate) kind: String,
-    #[serde(default)]
-    pub(crate) tool: Option<String>,
-    #[allow(dead_code)]
-    #[serde(default)]
-    pub(crate) skill: Option<String>,
-    #[serde(default = "default_required")]
-    pub(crate) required: bool,
-}
-
-#[allow(dead_code)]
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct WorkRefinementConfig {
-    id: String,
-    skill: String,
-    #[serde(default)]
-    mode: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -463,40 +434,16 @@ impl RepoContext {
         &self.config.dev
     }
 
-    pub(crate) fn work_gates(&self) -> Vec<WorkGateConfig> {
-        let mut gates = self.config.work.gates.clone();
-        let mut existing_ids = gates
-            .iter()
-            .map(|gate| gate.id.clone())
-            .collect::<HashSet<_>>();
-
-        for tool in &self.config.work.checks {
-            if gates
-                .iter()
-                .any(|gate| gate.kind == "check" && gate.tool.as_ref() == Some(tool))
-            {
-                continue;
-            }
-
-            let id = unique_gate_id(gate_id_from_tool_name(tool), &mut existing_ids);
-            gates.push(WorkGateConfig {
-                id,
-                kind: "check".into(),
-                tool: Some(tool.clone()),
-                skill: None,
-                required: true,
-            });
-        }
-
-        gates
+    pub(crate) fn work_gates(&self) -> Vec<WorkGate> {
+        self.config.work.gates()
     }
 
     pub(crate) fn work_check_tools(&self) -> Vec<String> {
-        self.work_gates()
-            .into_iter()
-            .filter(|gate| gate.kind == "check")
-            .filter_map(|gate| gate.tool)
-            .collect()
+        self.config.work.check_tools()
+    }
+
+    pub(crate) fn work_refinements(&self) -> &[WorkRefinementConfig] {
+        self.config.work.refinements()
     }
 
     pub(crate) fn codex_marketplaces(&self) -> &[CodexMarketplaceConfig] {
@@ -560,10 +507,6 @@ fn non_empty_command<'a>(key: &str, command: &'a str) -> Result<&'a str> {
         bail!("Command key {key} is empty in .jig.toml");
     }
     Ok(command)
-}
-
-fn default_required() -> bool {
-    true
 }
 
 fn default_true() -> bool {
@@ -682,35 +625,7 @@ fn validate_dev_config(config: &RepoConfig) -> Result<()> {
 }
 
 fn validate_work_config(config: &RepoConfig) -> Result<()> {
-    if let Some(refinement) = config.work.refinements.first() {
-        bail!(
-            "work.refinements is not supported yet (first unsupported refinement: {}). Remove work.refinements until refinement execution is implemented.",
-            refinement.id
-        );
-    }
-
-    Ok(())
-}
-
-fn gate_id_from_tool_name(tool: &str) -> String {
-    tool.strip_prefix("jig.")
-        .unwrap_or(tool)
-        .replace(['_', '.'], "-")
-}
-
-fn unique_gate_id(base: String, existing_ids: &mut HashSet<String>) -> String {
-    if existing_ids.insert(base.clone()) {
-        return base;
-    }
-
-    for index in 2.. {
-        let candidate = format!("{base}-{index}");
-        if existing_ids.insert(candidate.clone()) {
-            return candidate;
-        }
-    }
-
-    unreachable!("unbounded gate id search should always find an unused suffix")
+    config.work.validate()
 }
 
 #[cfg_attr(not(feature = "dev-proxy"), allow(dead_code))]

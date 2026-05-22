@@ -182,6 +182,7 @@ fn runtime_command_from_cli(command: CommandKind) -> RuntimeCommand {
         CommandKind::Proxy(command) => RuntimeCommand::Proxy(command.into()),
         CommandKind::Agent(command) => RuntimeCommand::Agent(command.into()),
         CommandKind::Work(command) => RuntimeCommand::Work(command.into()),
+        CommandKind::State(command) => RuntimeCommand::State(command.into()),
         CommandKind::Init(_)
         | CommandKind::Adopt(_)
         | CommandKind::Update(_)
@@ -192,6 +193,18 @@ fn runtime_command_from_cli(command: CommandKind) -> RuntimeCommand {
             panic!("runtime test helper only accepts runtime commands")
         }
     }
+}
+
+#[test]
+fn dispatch_routes_state_summary() {
+    let temp = tempdir().unwrap();
+    write_fixture_repo(temp.path());
+    let ctx = RepoContext::load_from(temp.path()).unwrap();
+
+    let output = dispatch(&ctx, CommandKind::State(crate::cli::StateCommand::Summary)).unwrap();
+
+    assert_eq!(output["ok"], true);
+    assert_eq!(output["counts"]["receipts"], 0);
 }
 
 #[cfg(feature = "dev-proxy")]

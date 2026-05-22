@@ -12,7 +12,7 @@ use super::ANSWERS_FILE;
 use super::file_copy::{
     copy_file_or_symlink_with_permissions, path_exists, prepare_copy_destination_and_read_metadata,
 };
-use super::managed_paths;
+use super::managed_paths::{self, ManagedBlockSpec};
 use super::staged_render::StagedRender;
 use crate::progress::CliProgress;
 
@@ -125,15 +125,17 @@ pub(super) fn apply_staged_render(
                     continue;
                 } else {
                     report.files_modified.push(relative_text.clone());
-                    if is_root_agents_path(relative)
-                        && managed_block_inserted(&rendered_path, Some(&destination_path))?
+                    if let Some(spec) = managed_paths::managed_block_spec(relative)
+                        && managed_block_inserted(&rendered_path, Some(&destination_path), spec)?
                     {
                         report.managed_blocks_inserted.push(relative_text.clone());
                     }
                 }
             } else {
                 report.files_created.push(relative_text.clone());
-                if is_root_agents_path(relative) && managed_block_inserted(&rendered_path, None)? {
+                if let Some(spec) = managed_paths::managed_block_spec(relative)
+                    && managed_block_inserted(&rendered_path, None, spec)?
+                {
                     report.managed_blocks_rendered.push(relative_text.clone());
                 }
             }
@@ -197,7 +199,7 @@ fn staged_render_conflicts(
         }
 
         if path_exists(&rendered_path) {
-            if is_root_agents_path(relative) {
+            if let Some(spec) = managed_paths::managed_block_spec(relative) {
                 if destination_is_regular_file(&destination_path)? {
                     continue;
                 }
@@ -205,9 +207,10 @@ fn staged_render_conflicts(
                     conflicts.insert(RenderConflict {
                         path: relative.display().to_string(),
                         kind: RenderConflictKind::NonRegularRootAgents,
-                        detail:
-                            "root AGENTS.md exists but is not a regular file; managed block merge cannot apply safely"
-                                .into(),
+                        detail: format!(
+                            "{} exists but is not a regular file; managed block merge cannot apply safely",
+                            spec.path,
+                        ),
                     });
                     continue;
                 }
@@ -244,25 +247,27 @@ fn conflict_count_message(count: usize) -> String {
     format!("{count} managed paths differ")
 }
 
-fn is_root_agents_path(relative: &Path) -> bool {
-    managed_paths::is_root_agents_path(relative)
-}
-
-fn managed_block_inserted(rendered_path: &Path, destination_path: Option<&Path>) -> Result<bool> {
-    if !file_contains_complete_managed_block(rendered_path)? {
+fn managed_block_inserted(
+    rendered_path: &Path,
+    destination_path: Option<&Path>,
+    spec: ManagedBlockSpec,
+) -> Result<bool> {
+    if !file_contains_complete_managed_block(rendered_path, spec)? {
         return Ok(false);
     }
     match destination_path {
-        Some(destination_path) => Ok(!file_contains_complete_managed_block(destination_path)?),
+        Some(destination_path) => Ok(!file_contains_complete_managed_block(
+            destination_path,
+            spec,
+        )?),
         None => Ok(true),
     }
 }
 
-fn file_contains_complete_managed_block(path: &Path) -> Result<bool> {
+fn file_contains_complete_managed_block(path: &Path, spec: ManagedBlockSpec) -> Result<bool> {
     let contents =
         fs::read_to_string(path).with_context(|| format!("Failed to read {}", path.display()))?;
-    Ok(contents.contains(managed_paths::ROOT_AGENTS_BLOCK_BEGIN)
-        && contents.contains(managed_paths::ROOT_AGENTS_BLOCK_END))
+    Ok(contents.contains(spec.begin) && contents.contains(spec.end))
 }
 
 fn destination_is_regular_file(path: &Path) -> Result<bool> {

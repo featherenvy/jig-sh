@@ -81,8 +81,8 @@ Nested accepted keys are:
 - `[dev]`: `proxy_port`, `https_port`, `https`, `http2`, `lan`, `tld`, `workspace_discovery`, `apps`
 - `[[dev.apps]]`: `name`, `dir`, `kind`, `command`, `argv`, `port`, `host`, `proxy`
 - `[work]`: `checks`, `gates`, `refinements`
-- `[[work.gates]]`: `id`, `kind`, `tool`, `skill`, `required`
-- `[[work.refinements]]`: `id`, `skill`, `mode`
+- `[[work.gates]]`: `id`, `kind`, `tool`, `skill`, `fail_on`, `severity`, `scope`, `model`, `required`
+- `[[work.refinements]]`: `id`, `skill`, `mode`, `model`
 - `[agent_tooling.codex]`: `marketplaces`
 - `[[agent_tooling.codex.marketplaces]]`: `id`, `source`, `plugins`
 
@@ -133,7 +133,7 @@ tool = "jig.test"
 
 `kind: check` gates must reference execution tool names declared in `.agent/jig-contract.json`. `scripts/jig work check --plan-id ...` runs configured check gates in order unless one or more `--tool` values are passed explicitly. Add `--summary` for concise terminal output; JSON remains the default automation output.
 
-`scripts/jig work gates --plan-id ...` reports each configured gate as `passed`, `missing`, `failed`, `stale`, `unknown`, or `unsupported`. Add `--summary` for the human scan path. `scripts/jig work evidence --summary` is the higher-level human view: it shows the latest gate evidence per tool, whether the proving receipt matches the current worktree, changed paths covered by the receipt, and the exact stale or unknown freshness reason. For `work gates` and `work evidence`, top-level `ok: true` means the inspection command completed; read `overall`, `gates_ok`, and each gate `status` to decide whether work is blocked. Receipt `changed_paths` are repo-relative names from `git status --short`; they can include `.agent/` state paths and untracked filenames, so do not treat receipt JSON as secret-free metadata if local filenames are sensitive. `scripts/jig work finish --plan-id ...` refuses to close work while required gates are missing, failed, stale, unknown, or unsupported. Check gate freshness is based on the non-`.agent/` worktree fingerprint from the latest check or check-batch receipt that proves the gate.
+`scripts/jig work gates --plan-id ...` reports each configured gate as `passed`, `missing`, `failed`, `stale`, `unknown`, or `unsupported`. Add `--summary` for the human scan path. `scripts/jig work evidence --summary` is the higher-level human view: it shows the latest gate evidence per tool, whether the proving receipt matches the current worktree, changed paths covered by the receipt, and the exact stale or unknown freshness reason. For `work gates` and `work evidence`, top-level `ok: true` means the inspection command completed; read `overall`, `gates_ok`, and each gate `status` to decide whether work is blocked. Receipt `changed_paths` are repo-relative names from `git status --porcelain=v1 -z`; they can include `.agent/` state paths and untracked filenames, so do not treat receipt JSON as secret-free metadata if local filenames are sensitive. `scripts/jig work finish --plan-id ...` refuses to close work while required gates are missing, failed, stale, unknown, or unsupported. Check gate freshness is based on the non-`.agent/` worktree fingerprint from the latest check or check-batch receipt that proves the gate.
 
 Required check gates should not create or modify non-`.agent/` files during `work check`. Build outputs, generated metadata, and lockfiles should be committed when they are source-of-truth, ignored when they are disposable, or generated before running the fingerprinted check. If a check does intentionally settle generated files, rerun `scripts/jig work check --plan-id ...` after reviewing those changes so the gate evidence matches the final worktree.
 
@@ -143,19 +143,35 @@ For compatibility, older repos may still use `work.checks`; Jig backfills entrie
 
 Generated SQLx-enabled repos include a check gate for `jig.sqlx_check`. Repos with schema dumps enabled also include `jig.schema_check` and `jig.schema_dump`.
 
-Review procedures are intentionally separate from native check gates:
+Review gates are intentionally separate from native check gates. A `codex_review` gate runs a configured Codex skill through `codex exec review --output-schema`, records a structured `jig.work_review` receipt, and is enforced by `work gates`, `work evidence`, and `work finish` like check evidence:
 
 ```toml
 [[work.gates]]
 id = "rust-error-handling"
 kind = "codex_review"
 skill = "jig-rust:rust-error-handling-review"
-required = false
+severity = "high"
+required = true
 ```
 
-Codex-backed review gates are not implemented yet. They require a structured `codex exec --output-schema ...` receipt path before they can be required. Until then, non-`check` gates are reported as `unsupported` and block finish only when marked `required: true`.
+Use `scripts/jig work review --plan-id ...` to run all configured review gates, or pass `--gate <id>` to run a subset. Review findings are normalized to `critical`, `warning`, or `suggestion`; both `fail_on` and `severity` accept the normalized names plus these aliases:
 
-`work.refinements` is reserved for future refinement execution. Current Jig versions reject it with a clear configuration error instead of accepting no-op refinement entries.
+| alias | normalized threshold |
+| --- | --- |
+| `high` | `critical` |
+| `medium` | `warning` |
+| `low` | `suggestion` |
+
+Omitted thresholds default to `critical`. If both `fail_on` and `severity` are present, `fail_on` chooses the active threshold, but both values must be valid. `scope` defaults to `uncommitted`; supported values are `uncommitted`, `base:<ref>`, `base=<ref>`, `commit:<sha>`, and `commit=<sha>`. `model` is passed to Codex when present.
+
+`scripts/jig work refine --plan-id ...` runs a review-driven fixer loop. It runs review gates, passes actionable findings to `codex --ask-for-approval never exec --sandbox workspace-write` for direct repository edits, reruns review gates, then reruns normal check gates. Enabling refinement opts into unattended Codex workspace writes: the prompt tells the fixer not to run git, but the sandbox still permits repository edits. Review skills used with refinement are trusted inputs because their finding text is handed to an auto-approved workspace-writing fixer; keep refinement-enabled review skills sourced from trusted Codex marketplaces or repos and review the resulting diff before closing work. Refinement requires one explicit `[[work.refinements]]` entry before Jig will invoke the workspace-writing fixer. Without a refinement `model`, the fixer uses the first selected review gate model when present. `--max-iterations` controls fixer attempts and defaults to 1, meaning Jig fixes once and then verifies. Passing `--gate` narrows only the review gates; the final verification step still runs all configured check gates. An optional `[[work.refinements]]` entry provides a repo-local refinement profile for the fixer prompt:
+
+```toml
+[[work.refinements]]
+id = "rust-simplify"
+skill = "jig-rust:rust-simplify"
+mode = "fix-actionable-review-findings"
+```
 
 ## `frontend_apps` Shape
 
@@ -425,12 +441,19 @@ It also provides runtime-owned append-only memory under `.agent/state/*.jsonl` t
 - `scripts/jig work gates --plan-id ... --summary`
 - `scripts/jig work evidence --summary`
 - `scripts/jig work evidence --plan-id ... --summary`
+- `scripts/jig work review --plan-id ...`
+- `scripts/jig work review --plan-id ... --summary`
+- `scripts/jig work refine --plan-id ...`
+- `scripts/jig work refine --plan-id ... --summary`
 - `scripts/jig work decide --plan-id ...`
 - `scripts/jig work receipts --plan-id ...`
 - `scripts/jig work receipts --plan-id ... --summary`
 - `scripts/jig work status`
 - `scripts/jig work status --summary`
 - `scripts/jig work finish --plan-id ...`
+- `scripts/jig state summary`
+- `scripts/jig state archive --before YYYY-MM-DD --dry-run`
+- `scripts/jig state archive --before YYYY-MM-DD`
 
 `work finish` closes the plan with `--resolution`. If an active session is also open, it closes that session with `--outcome`; when `--outcome` is omitted, the session outcome falls back to `--resolution`.
 
@@ -440,6 +463,15 @@ new receipts. For one-off contract command runs that should not record evidence,
 pass `--no-receipt`; `--no-receipt` conflicts with `--plan-id` because
 plan-linked checks must leave evidence for `work finish` gate enforcement. When
 receipt recording is skipped, command JSON still includes `"receipt_id": null`.
+Use `scripts/jig state archive --before ...` when `receipts.jsonl` grows too
+large; `--before YYYY-MM-DD` is interpreted as a UTC cutoff date. Archiving
+keeps latest gate evidence active and moves older unprotected receipt records
+into `.agent/state/archive/`. The retention model preserves the latest
+work-linked receipt for each plan/tool/gate plus the check receipts that support
+that latest evidence, so old closed or abandoned plans can keep their most recent
+gate evidence in the active file. Archiving limits historical receipt growth; it
+does not guarantee that every receipt for an old plan is moved out of
+`receipts.jsonl`.
 
 For local runtime development, set `JIG_DEV_BIN` to an already-built `jig` binary. The installer resolves that explicit binary to an absolute path before returning it, and verifies that its reported version matches `.jig.toml`. A stale or mismatched `JIG_DEV_BIN` is a hard error rather than a fallback to the cached runtime. In the `jig-sh` source checkout, the installer also keeps the repo-local cache tied to the current checkout so same-version release caches do not hide local runtime changes. Avoid rebuilding that binary while a long-running `JIG_DEV_BIN` process, such as `jig proxy start --foreground`, is still active.
 

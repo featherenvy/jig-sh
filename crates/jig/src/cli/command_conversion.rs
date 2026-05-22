@@ -7,11 +7,12 @@ use super::{
     ProxyCertGenerateOpts, ProxyCertRuntimeOpts, ProxyCertTrustOpts, ProxyCertUntrustOpts,
     ProxyCommand, ProxyListOpts, ProxyPruneOpts, ProxyRunOpts, ProxyRuntimeOpts,
     ProxyServiceCommand, ProxyServiceInstallOpts, ProxyServiceRuntimeOpts, ProxyStartOpts,
-    ProxyStopOpts, ToolOpts, VaultAuditCommand, VaultAuditVerifyOpts, VaultCommand, VaultInitOpts,
-    VaultRunOpts, VaultRuntimeOpts, VaultSecretCommand, VaultSecretListOpts, VaultSecretRemoveOpts,
-    VaultSecretSetOpts, VaultStatusOpts, WorkAppendOpts, WorkCheckOpts, WorkCommand,
-    WorkDecisionAddOpts, WorkEvidenceOpts, WorkFinishOpts, WorkGatesOpts, WorkGoalOpts,
-    WorkReceiptsOpts, WorkStartOpts,
+    ProxyStopOpts, StateArchiveOpts, StateCommand, ToolOpts, VaultAuditCommand,
+    VaultAuditVerifyOpts, VaultCommand, VaultInitOpts, VaultRunOpts, VaultRuntimeOpts,
+    VaultSecretCommand, VaultSecretListOpts, VaultSecretRemoveOpts, VaultSecretSetOpts,
+    VaultStatusOpts, WorkAppendOpts, WorkCheckOpts, WorkCommand, WorkDecisionAddOpts,
+    WorkEvidenceOpts, WorkFinishOpts, WorkGatesOpts, WorkGoalOpts, WorkReceiptsOpts,
+    WorkRefineOpts, WorkReviewOpts, WorkStartOpts,
 };
 
 impl From<ToolOpts> for command::ToolRequest {
@@ -228,6 +229,8 @@ impl From<WorkCommand> for command::WorkCommand {
             WorkCommand::Check(opts) => Self::Check(opts.into()),
             WorkCommand::Gates(opts) => Self::Gates(opts.into()),
             WorkCommand::Evidence(opts) => Self::Evidence(opts.into()),
+            WorkCommand::Review(opts) => Self::Review(opts.into()),
+            WorkCommand::Refine(opts) => Self::Refine(opts.into()),
             WorkCommand::Decide(opts) => Self::Decide(opts.into()),
             WorkCommand::Receipts(opts) => Self::Receipts(opts.into()),
             // `--summary` is a CLI output-mode flag handled in `run` before
@@ -299,6 +302,25 @@ impl From<WorkEvidenceOpts> for command::WorkEvidenceRequest {
     }
 }
 
+impl From<WorkReviewOpts> for command::WorkReviewRequest {
+    fn from(opts: WorkReviewOpts) -> Self {
+        Self {
+            plan_id: opts.plan_id,
+            gates: opts.gates,
+        }
+    }
+}
+
+impl From<WorkRefineOpts> for command::WorkRefineRequest {
+    fn from(opts: WorkRefineOpts) -> Self {
+        Self {
+            plan_id: opts.plan_id,
+            gates: opts.gates,
+            max_iterations: opts.max_iterations,
+        }
+    }
+}
+
 impl From<WorkReceiptsOpts> for command::WorkReceiptsRequest {
     fn from(opts: WorkReceiptsOpts) -> Self {
         Self {
@@ -329,6 +351,24 @@ impl From<WorkDecisionAddOpts> for command::WorkDecisionRequest {
             rationale: opts.rationale,
             alternatives: opts.alternatives,
             plan_id: opts.plan_id,
+        }
+    }
+}
+
+impl From<StateCommand> for command::StateCommand {
+    fn from(command: StateCommand) -> Self {
+        match command {
+            StateCommand::Summary => Self::Summary,
+            StateCommand::Archive(opts) => Self::Archive(opts.into()),
+        }
+    }
+}
+
+impl From<StateArchiveOpts> for command::StateArchiveRequest {
+    fn from(opts: StateArchiveOpts) -> Self {
+        Self {
+            before: opts.before,
+            dry_run: opts.dry_run,
         }
     }
 }
@@ -574,6 +614,23 @@ mod tests {
         .into();
 
         assert_eq!(request.plan_id.as_deref(), Some("plan_1"));
+    }
+
+    #[test]
+    fn state_archive_conversion_preserves_cutoff_and_dry_run() {
+        let request: command::StateCommand = StateCommand::Archive(StateArchiveOpts {
+            before: "2026-01-01".into(),
+            dry_run: true,
+        })
+        .into();
+
+        match request {
+            command::StateCommand::Archive(request) => {
+                assert_eq!(request.before, "2026-01-01");
+                assert!(request.dry_run);
+            }
+            other => panic!("expected state archive request, got {other:?}"),
+        }
     }
 
     #[test]

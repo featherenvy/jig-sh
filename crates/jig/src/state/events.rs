@@ -1,12 +1,13 @@
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use fs4::fs_std::FileExt;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::DeserializeOwned};
 use serde_json::Value;
+use tempfile::NamedTempFile;
 use ulid::Ulid;
 
 use crate::context::RepoContext;
@@ -401,6 +402,8 @@ pub(super) struct ReceiptRecord {
     pub(super) exit_status: i32,
     pub(super) stdout_preview: String,
     pub(super) stderr_preview: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) evidence: Option<Value>,
     pub(super) changed_paths: Vec<String>,
     pub(super) diff_stat: DiffStat,
     #[serde(default)]
@@ -429,35 +432,156 @@ pub(super) fn append_jsonl<T: Serialize>(path: &Path, value: &T) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .read(true)
-        .open(path)
-        .with_context(|| format!("Failed to open {}", path.display()))?;
-    file.lock_exclusive()?;
-    serde_json::to_writer(&mut file, value)?;
-    file.write_all(b"\n")?;
-    file.sync_data()?;
-    FileExt::unlock(&file)?;
-    Ok(())
+    with_jsonl_write_lock(path, |_guard| {
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .with_context(|| format!("Failed to open {}", path.display()))?;
+        serde_json::to_writer(&mut file, value)?;
+        file.write_all(b"\n")?;
+        file.sync_data()?;
+        Ok(())
+    })
 }
 
 pub(super) fn append_text(path: &Path, content: &[u8]) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let mut file = OpenOptions::new()
+    with_jsonl_write_lock(path, |_guard| {
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .with_context(|| format!("Failed to open {}", path.display()))?;
+        file.write_all(content)?;
+        file.sync_data()?;
+        Ok(())
+    })
+}
+
+pub(super) struct JsonlWriteGuard {
+    lock_file: File,
+    legacy_lock_file: Option<File>,
+}
+
+pub(super) fn write_jsonl_locked<T: Serialize>(
+    _guard: &JsonlWriteGuard,
+    path: &Path,
+    values: &[T],
+) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let mut temp = NamedTempFile::new_in(parent)
+        .with_context(|| format!("Failed to create temp file in {}", parent.display()))?;
+    for value in values {
+        serde_json::to_writer(&mut temp, value)?;
+        temp.write_all(b"\n")?;
+    }
+    temp.as_file_mut().sync_data()?;
+    temp.persist(path)
+        .map_err(|error| error.error)
+        .with_context(|| format!("Failed to replace {}", path.display()))?;
+    Ok(())
+}
+
+pub(super) fn with_jsonl_write_lock<T>(
+    path: &Path,
+    operation: impl FnOnce(&JsonlWriteGuard) -> Result<T>,
+) -> Result<T> {
+    let legacy_lock_file = legacy_lock_for_path(path)?;
+    if let Some(file) = &legacy_lock_file {
+        if let Err(error) = file.lock_exclusive() {
+            return Err(error).context("Failed to lock legacy state file");
+        }
+    }
+    let lock_file = match lock_for_path(path) {
+        Ok(file) => file,
+        Err(error) => {
+            if let Some(file) = &legacy_lock_file {
+                let _ = FileExt::unlock(file);
+            }
+            return Err(error);
+        }
+    };
+    if let Err(error) = lock_file.lock_exclusive() {
+        if let Some(file) = &legacy_lock_file {
+            let _ = FileExt::unlock(file);
+        }
+        return Err(error).context("Failed to lock state file");
+    }
+    let guard = JsonlWriteGuard {
+        lock_file,
+        legacy_lock_file,
+    };
+    let result = operation(&guard);
+    let legacy_unlock_result = guard
+        .legacy_lock_file
+        .as_ref()
+        .map(FileExt::unlock)
+        .unwrap_or(Ok(()));
+    let unlock_result = FileExt::unlock(&guard.lock_file);
+    match (result, legacy_unlock_result, unlock_result) {
+        (Ok(value), Ok(()), Ok(())) => Ok(value),
+        (Err(error), _, _) => Err(error),
+        (Ok(_), Err(error), _) => Err(error).context("Failed to unlock legacy state file"),
+        (Ok(_), Ok(()), Err(error)) => Err(error).context("Failed to unlock state file"),
+    }
+}
+
+fn lock_for_path(path: &Path) -> Result<File> {
+    let lock_path = state_lock_path(path);
+    if let Some(parent) = lock_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    OpenOptions::new()
         .create(true)
-        .append(true)
+        .truncate(false)
+        .write(true)
+        .read(true)
+        .open(&lock_path)
+        .with_context(|| format!("Failed to open lock {}", lock_path.display()))
+}
+
+fn legacy_lock_for_path(path: &Path) -> Result<Option<File>> {
+    let Some(parent) = path.parent() else {
+        return Ok(None);
+    };
+    fs::create_dir_all(parent)?;
+    // Older Jig versions locked the state file itself. Keep taking that lock
+    // during the cache-lock cutover so mixed-version writers still serialize.
+    OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
         .read(true)
         .open(path)
-        .with_context(|| format!("Failed to open {}", path.display()))?;
-    file.lock_exclusive()?;
-    file.write_all(content)?;
-    file.sync_data()?;
-    FileExt::unlock(&file)?;
-    Ok(())
+        .map(Some)
+        .with_context(|| format!("Failed to open legacy lock {}", path.display()))
+}
+
+fn state_lock_path(path: &Path) -> PathBuf {
+    let Some(parent) = path.parent() else {
+        return path.with_extension("lock");
+    };
+    let Some(file_name) = path.file_name() else {
+        return path.with_extension("lock");
+    };
+    if parent.file_name().and_then(|name| name.to_str()) == Some("state") {
+        if let Some(agent_dir) = parent.parent() {
+            if agent_dir.file_name().and_then(|name| name.to_str()) == Some(".agent") {
+                let mut lock_name = file_name.to_os_string();
+                lock_name.push(".lock");
+                return agent_dir.join(".cache").join("state-locks").join(lock_name);
+            }
+        }
+    }
+    let mut lock_name = file_name.to_os_string();
+    lock_name.push(".lock");
+    parent.join(lock_name)
 }
 
 pub(super) fn read_jsonl<T: DeserializeOwned>(path: &Path) -> Result<Vec<T>> {

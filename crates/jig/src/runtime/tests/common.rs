@@ -183,6 +183,80 @@ tool = "jig.custom_check"
     write_open_plan(root);
 }
 
+pub(super) fn write_review_fixture_repo(root: &Path) {
+    write_review_fixture_repo_with_check(root, "printf 'check ok\\n'");
+}
+
+pub(super) fn write_review_fixture_repo_with_check(root: &Path, check_command: &str) {
+    write_review_fixture_repo_with_options(root, check_command, true);
+}
+
+pub(super) fn write_review_fixture_repo_without_refinement(root: &Path) {
+    write_review_fixture_repo_with_options(root, "printf 'check ok\\n'", false);
+}
+
+fn write_review_fixture_repo_with_options(root: &Path, check_command: &str, refinement: bool) {
+    fs::create_dir_all(root.join(".agent")).unwrap();
+    let refinement_config = if refinement {
+        r#"
+[[work.refinements]]
+id = "test-refinement"
+skill = "jig-rust:rust-simplify"
+"#
+    } else {
+        ""
+    };
+    fs::write(
+        root.join(".jig.toml"),
+        format!(
+            r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.2.0-beta.1"
+
+[commands]
+custom_check_command = "{check_command}"
+
+[[work.gates]]
+id = "rust-error-handling"
+kind = "codex_review"
+skill = "jig-rust:rust-error-handling-review"
+severity = "high"
+required = true
+
+[[work.gates]]
+id = "custom"
+kind = "check"
+tool = "jig.custom_check"
+{refinement_config}
+"#,
+            refinement_config = refinement_config
+        ),
+    )
+    .unwrap();
+    fs::write(
+        root.join(".agent/jig-contract.json"),
+        serde_json::to_string_pretty(&json!({
+            "contract_version": 3,
+            "tool_namespace": "jig",
+            "jig_version": "0.2.0-beta.1",
+            "required_commands": ["custom_check_command"],
+            "tools": [
+                {
+                    "name": "jig.custom_check",
+                    "kind": "command",
+                    "description": "Run configured custom check.",
+                    "command": "custom_check_command"
+                }
+            ],
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    write_open_plan(root);
+}
+
 fn write_open_plan(root: &Path) {
     let ctx = RepoContext::load_from(root).unwrap();
     crate::state::seed_open_plan_for_test(&ctx, "plan_1", "Test plan", "# Test plan\n").unwrap();
@@ -231,6 +305,7 @@ pub(super) fn record_test_receipt(ctx: &RepoContext, receipt: TestReceipt<'_>) -
             exit_status: 0,
             stdout: "",
             stderr: "",
+            evidence: None,
             session_override: None,
             collect_git_metadata: false,
             collect_worktree_fingerprint: false,

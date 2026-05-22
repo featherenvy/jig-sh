@@ -60,6 +60,7 @@ tokio = { version = "1.48.0", features = ["full"] }
 tokio-rustls = "0.26.1"
 toml = "0.9.8"
 ulid = "1.2.1"
+wait-timeout = "0.2.1"
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_Threading"] }
 x509-parser = { version = "0.18.1", features = ["verify"] }
 zeroize = "1.8.2"

@@ -9,6 +9,8 @@ use std::path::PathBuf;
 
 use serde::Deserialize;
 
+pub(crate) const DEFAULT_REFINE_MAX_ITERATIONS: usize = 1;
+
 #[derive(Debug)]
 pub(crate) enum RuntimeCommand {
     Bootstrap(ToolRequest),
@@ -23,6 +25,7 @@ pub(crate) enum RuntimeCommand {
     Proxy(ProxyCommand),
     Agent(AgentCommand),
     Work(WorkCommand),
+    State(StateCommand),
 }
 
 #[derive(Clone, Debug)]
@@ -200,6 +203,8 @@ pub(crate) enum WorkCommand {
     Check(WorkCheckRequest),
     Gates(WorkGatesRequest),
     Evidence(WorkEvidenceRequest),
+    Review(WorkReviewRequest),
+    Refine(WorkRefineRequest),
     Decide(WorkDecisionRequest),
     Receipts(WorkReceiptsRequest),
     Status,
@@ -252,6 +257,22 @@ pub(crate) struct WorkEvidenceRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub(crate) struct WorkReviewRequest {
+    pub(crate) plan_id: String,
+    #[serde(default, deserialize_with = "crate::serde_helpers::null_or_default")]
+    pub(crate) gates: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct WorkRefineRequest {
+    pub(crate) plan_id: String,
+    #[serde(default, deserialize_with = "crate::serde_helpers::null_or_default")]
+    pub(crate) gates: Vec<String>,
+    #[serde(default = "default_refine_max_iterations")]
+    pub(crate) max_iterations: usize,
+}
+
+#[derive(Debug, Deserialize)]
 pub(crate) struct WorkDecisionRequest {
     pub(crate) title: String,
     pub(crate) selected_option: String,
@@ -259,6 +280,10 @@ pub(crate) struct WorkDecisionRequest {
     #[serde(default, deserialize_with = "crate::serde_helpers::null_or_default")]
     pub(crate) alternatives: Vec<String>,
     pub(crate) plan_id: Option<String>,
+}
+
+fn default_refine_max_iterations() -> usize {
+    DEFAULT_REFINE_MAX_ITERATIONS
 }
 
 #[derive(Debug, Deserialize)]
@@ -282,6 +307,18 @@ pub(crate) struct WorkFinishRequest {
     pub(crate) plan_id: String,
     pub(crate) resolution: Option<String>,
     pub(crate) outcome: Option<String>,
+}
+
+#[derive(Debug)]
+pub(crate) enum StateCommand {
+    Summary,
+    Archive(StateArchiveRequest),
+}
+
+#[derive(Debug)]
+pub(crate) struct StateArchiveRequest {
+    pub(crate) before: String,
+    pub(crate) dry_run: bool,
 }
 
 #[cfg_attr(not(feature = "dev-proxy"), allow(dead_code))]

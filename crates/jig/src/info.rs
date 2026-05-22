@@ -6,7 +6,7 @@ use anyhow::Result;
 use serde_json::{Value, json};
 
 use crate::command::{VaultCommand, VaultRuntimeOptions, VaultStatusRequest};
-use crate::context::{DevAppConfig, RepoContext, WorkGateConfig};
+use crate::context::{DevAppConfig, RepoContext, WorkGate};
 
 const COMMAND: &str = "info";
 const DEFAULT_MCP_COMMAND: &str = "scripts/jig mcp";
@@ -271,14 +271,29 @@ fn dev_app_value(app: &DevAppConfig) -> Value {
     })
 }
 
-fn work_gate_value(gate: &WorkGateConfig) -> Value {
-    json!({
-        "id": &gate.id,
-        "kind": &gate.kind,
-        "tool": &gate.tool,
-        "skill": &gate.skill,
-        "required": gate.required,
-    })
+fn work_gate_value(gate: &WorkGate) -> Value {
+    match gate {
+        WorkGate::Check(gate) => json!({
+            "id": &gate.id,
+            "kind": "check",
+            "tool": &gate.tool,
+            "required": gate.required,
+        }),
+        WorkGate::CodexReview(gate) => json!({
+            "id": &gate.id,
+            "kind": "codex_review",
+            "skill": &gate.skill,
+            "fail_on": gate.threshold,
+            "scope": &gate.scope,
+            "model": &gate.model,
+            "required": gate.required,
+        }),
+        WorkGate::Unsupported(gate) => json!({
+            "id": &gate.id,
+            "kind": &gate.kind,
+            "required": gate.required,
+        }),
+    }
 }
 
 fn enabled_capabilities(value: &Value) -> Vec<&'static str> {

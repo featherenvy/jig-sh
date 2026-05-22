@@ -37,6 +37,22 @@ Examples:
   jig work evidence --summary
   jig work evidence --plan-id plan_abc123 --summary";
 
+pub(super) const WORK_REVIEW_AFTER_HELP: &str = "\
+Run configured codex_review gates for a plan and record structured finding receipts.
+Use --gate to run one review gate by id. Use --summary for terminal scanning.
+
+Examples:
+  jig work review --plan-id plan_abc123
+  jig work review --plan-id plan_abc123 --gate rust-error-handling --summary";
+
+pub(super) const WORK_REFINE_AFTER_HELP: &str = "\
+Run review-driven refinement: review, fix actionable findings, review again,
+then rerun normal check gates. Use --gate to limit review gates by id.
+
+Examples:
+  jig work refine --plan-id plan_abc123
+  jig work refine --plan-id plan_abc123 --max-iterations 2 --summary";
+
 pub(super) const WORK_FINISH_AFTER_HELP: &str = "\
 Close a plan after required gates pass; use --outcome for a machine-readable result.
 
@@ -82,6 +98,18 @@ pub(crate) enum WorkCommand {
         after_help = WORK_EVIDENCE_AFTER_HELP
     )]
     Evidence(WorkEvidenceOpts),
+    /// Run configured Codex review gates for a plan.
+    #[command(
+        name = tool_defs::cli_command::WORK_REVIEW,
+        after_help = WORK_REVIEW_AFTER_HELP
+    )]
+    Review(WorkReviewOpts),
+    /// Run review-driven refinement, then rerun review and check gates.
+    #[command(
+        name = tool_defs::cli_command::WORK_REFINE,
+        after_help = WORK_REFINE_AFTER_HELP
+    )]
+    Refine(WorkRefineOpts),
     /// Record a durable decision for the current work.
     #[command(name = tool_defs::cli_command::WORK_DECIDE)]
     Decide(WorkDecisionAddOpts),
@@ -182,6 +210,40 @@ pub(crate) struct WorkEvidenceOpts {
     pub(crate) plan_id: Option<String>,
 
     #[arg(long, help = "Print a concise human-readable evidence summary")]
+    pub(crate) summary: bool,
+}
+
+#[derive(Args, Debug)]
+pub(crate) struct WorkReviewOpts {
+    #[arg(long, help = "Open plan id to review")]
+    pub(crate) plan_id: String,
+
+    #[arg(long = "gate", help = "Review gate id to run; may be repeated")]
+    pub(crate) gates: Vec<String>,
+
+    #[arg(long, help = "Print a concise human-readable review summary")]
+    pub(crate) summary: bool,
+}
+
+#[derive(Args, Debug)]
+pub(crate) struct WorkRefineOpts {
+    #[arg(long, help = "Open plan id to refine")]
+    pub(crate) plan_id: String,
+
+    #[arg(
+        long = "gate",
+        help = "Review gate id to refine against; may be repeated"
+    )]
+    pub(crate) gates: Vec<String>,
+
+    #[arg(
+        long,
+        default_value_t = crate::command::DEFAULT_REFINE_MAX_ITERATIONS,
+        help = "Maximum fixer attempts before stopping; default is 1 (fix once, then verify)"
+    )]
+    pub(crate) max_iterations: usize,
+
+    #[arg(long, help = "Print a concise human-readable refinement summary")]
     pub(crate) summary: bool,
 }
 

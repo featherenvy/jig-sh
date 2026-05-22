@@ -6,6 +6,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
 
+#[cfg(unix)]
+use std::{ffi::OsString, os::unix::ffi::OsStringExt};
+
 use crate::process::{format_exit_status, require_success, run_checked_output_with_context};
 
 const MAX_INLINE_UNTRACKED_BYTES: u64 = 8 * 1024 * 1024;
@@ -70,12 +73,23 @@ fn collect_git_receipt_metadata_with_options(
 }
 
 fn repo_changed_paths(root: &Path) -> Result<Vec<String>> {
-    let output = git_output(root, &["status", "--short"], "git status --short")?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    Ok(stdout
-        .lines()
-        .filter_map(|line| line.split_whitespace().last().map(str::to_string))
-        .collect())
+    let output = git_output(
+        root,
+        &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+        "git status --porcelain -z",
+    )?;
+    parse_porcelain_status_z(&output.stdout).map(|entries| {
+        entries
+            .into_iter()
+            .flat_map(|entry| {
+                let mut paths = vec![entry.path.display().to_string()];
+                if let Some(original_path) = entry.original_path {
+                    paths.push(original_path.display().to_string());
+                }
+                paths
+            })
+            .collect()
+    })
 }
 
 fn repo_diff_stat(root: &Path) -> Result<DiffStat> {
@@ -90,6 +104,7 @@ pub(crate) fn repo_worktree_fingerprint(root: &Path) -> Result<String> {
         &[
             "status",
             "--porcelain=v1",
+            "-z",
             "--untracked-files=all",
             "--",
             ".",
@@ -130,18 +145,13 @@ pub(crate) fn repo_worktree_fingerprint(root: &Path) -> Result<String> {
 }
 
 fn untracked_file_contents(root: &Path, status_stdout: &[u8]) -> Result<Vec<u8>> {
-    let stdout = String::from_utf8_lossy(status_stdout);
     let mut contents = Vec::new();
     let mut remaining_inline_bytes = MAX_TOTAL_INLINE_UNTRACKED_BYTES;
-    for line in stdout.lines() {
-        if !line.starts_with("?? ") {
+    for entry in parse_porcelain_status_z(status_stdout)? {
+        if entry.status != "??" {
             continue;
         }
-        let path = line
-            .strip_prefix("?? ")
-            .context("Malformed git status untracked line")?;
-        let path = unquote_status_path(path)?;
-        let full_path = root.join(&path);
+        let full_path = root.join(&entry.path);
         let metadata = fs::symlink_metadata(&full_path).with_context(|| {
             format!(
                 "Failed to read untracked path metadata {}",
@@ -149,7 +159,7 @@ fn untracked_file_contents(root: &Path, status_stdout: &[u8]) -> Result<Vec<u8>>
             )
         })?;
 
-        contents.extend_from_slice(path.as_os_str().as_encoded_bytes());
+        contents.extend_from_slice(entry.path.as_os_str().as_encoded_bytes());
         contents.push(0);
         append_untracked_path_fingerprint(
             &mut contents,
@@ -161,6 +171,71 @@ fn untracked_file_contents(root: &Path, status_stdout: &[u8]) -> Result<Vec<u8>>
         contents.push(0);
     }
     Ok(contents)
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct PorcelainStatusEntry {
+    status: String,
+    path: PathBuf,
+    original_path: Option<PathBuf>,
+}
+
+fn parse_porcelain_status_z(stdout: &[u8]) -> Result<Vec<PorcelainStatusEntry>> {
+    let fields = stdout.split(|byte| *byte == 0).collect::<Vec<_>>();
+    let mut entries = Vec::new();
+    let mut index = 0;
+    while index < fields.len() {
+        let field = fields[index];
+        if field.is_empty() {
+            if index == fields.len() - 1 {
+                break;
+            }
+            bail!("Malformed git status --porcelain -z output: empty path field");
+        }
+        if field.len() < 4 || field[2] != b' ' {
+            bail!(
+                "Malformed git status --porcelain -z record: {}",
+                String::from_utf8_lossy(field)
+            );
+        }
+        let status = String::from_utf8_lossy(&field[..2]).to_string();
+        let path = path_buf_from_git_bytes(&field[3..])?;
+        index += 1;
+
+        let original_path = if status.as_bytes().contains(&b'R')
+            || status.as_bytes().contains(&b'C')
+        {
+            let original = fields.get(index).context(
+                "Malformed git status --porcelain -z output: rename/copy record missing original path",
+            )?;
+            if original.is_empty() {
+                bail!("Malformed git status --porcelain -z output: empty original path");
+            }
+            index += 1;
+            Some(path_buf_from_git_bytes(original)?)
+        } else {
+            None
+        };
+
+        entries.push(PorcelainStatusEntry {
+            status,
+            path,
+            original_path,
+        });
+    }
+    Ok(entries)
+}
+
+#[cfg(unix)]
+fn path_buf_from_git_bytes(bytes: &[u8]) -> Result<PathBuf> {
+    Ok(PathBuf::from(OsString::from_vec(bytes.to_vec())))
+}
+
+#[cfg(not(unix))]
+fn path_buf_from_git_bytes(bytes: &[u8]) -> Result<PathBuf> {
+    String::from_utf8(bytes.to_vec())
+        .map(PathBuf::from)
+        .context("Git status path is not UTF-8")
 }
 
 fn append_untracked_path_fingerprint(
@@ -252,70 +327,6 @@ fn system_time_key(time: Option<SystemTime>) -> u128 {
     time.and_then(|time| time.duration_since(UNIX_EPOCH).ok())
         .map(|duration| duration.as_nanos())
         .unwrap_or_default()
-}
-
-fn unquote_status_path(path: &str) -> Result<PathBuf> {
-    if !path.starts_with('"') {
-        return Ok(PathBuf::from(path));
-    }
-
-    let decoded = unescape_c_quoted_path(path)?;
-    Ok(PathBuf::from(decoded))
-}
-
-fn unescape_c_quoted_path(path: &str) -> Result<String> {
-    let bytes = path.as_bytes();
-    if bytes.len() < 2 || bytes[0] != b'"' || bytes[bytes.len() - 1] != b'"' {
-        bail!("Malformed quoted git status path: {path}");
-    }
-
-    let mut decoded = Vec::new();
-    let mut index = 1;
-    while index + 1 < bytes.len() {
-        let byte = bytes[index];
-        if byte != b'\\' {
-            decoded.push(byte);
-            index += 1;
-            continue;
-        }
-
-        index += 1;
-        if index + 1 >= bytes.len() {
-            bail!("Malformed escape in git status path: {path}");
-        }
-        match bytes[index] {
-            b'\\' => decoded.push(b'\\'),
-            b'"' => decoded.push(b'"'),
-            b'n' => decoded.push(b'\n'),
-            b't' => decoded.push(b'\t'),
-            b'r' => decoded.push(b'\r'),
-            b'b' => decoded.push(8),
-            b'f' => decoded.push(12),
-            b'0'..=b'7' => {
-                if index + 2 >= bytes.len() - 1 {
-                    bail!("Malformed octal escape in git status path: {path}");
-                }
-                let value = parse_octal_escape(&bytes[index..index + 3], path)?;
-                decoded.push(value);
-                index += 2;
-            }
-            other => bail!("Unsupported escape in git status path: \\{}", other as char),
-        }
-        index += 1;
-    }
-
-    String::from_utf8(decoded).with_context(|| format!("Git status path is not UTF-8: {path}"))
-}
-
-fn parse_octal_escape(bytes: &[u8], path: &str) -> Result<u8> {
-    let mut value = 0_u16;
-    for byte in bytes {
-        if !(b'0'..=b'7').contains(byte) {
-            bail!("Malformed octal escape in git status path: {path}");
-        }
-        value = value * 8 + u16::from(byte - b'0');
-    }
-    u8::try_from(value).with_context(|| format!("Octal escape is out of range in path: {path}"))
 }
 
 fn git_output(root: &Path, args: &[&str], label: &str) -> Result<Output> {
@@ -461,6 +472,41 @@ mod tests {
         assert!(metadata.git_diff_stat_error.is_some());
         assert!(metadata.worktree_fingerprint.is_none());
         assert!(metadata.worktree_fingerprint_error.is_some());
+    }
+
+    #[test]
+    fn changed_paths_preserve_spaces_and_rename_paths() {
+        let temp = tempdir().unwrap();
+        run_git(temp.path(), &["init"]);
+        run_git(
+            temp.path(),
+            &["config", "user.email", "fixture@example.com"],
+        );
+        run_git(temp.path(), &["config", "user.name", "Fixture"]);
+        std::fs::write(temp.path().join("old name.txt"), "tracked").unwrap();
+        run_git(temp.path(), &["add", "old name.txt"]);
+        run_git(temp.path(), &["commit", "-m", "initial fixture"]);
+
+        run_git(temp.path(), &["mv", "old name.txt", "new name.txt"]);
+        std::fs::write(temp.path().join("loose note.txt"), "untracked").unwrap();
+
+        let paths = repo_changed_paths(temp.path()).unwrap();
+
+        assert!(paths.contains(&"new name.txt".to_string()));
+        assert!(paths.contains(&"old name.txt".to_string()));
+        assert!(paths.contains(&"loose note.txt".to_string()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn porcelain_z_parser_preserves_non_utf8_path_bytes() {
+        let entries = parse_porcelain_status_z(b"?? bad\xFFname\0").unwrap();
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0].path.as_os_str().as_encoded_bytes(),
+            b"bad\xFFname"
+        );
     }
 
     #[test]

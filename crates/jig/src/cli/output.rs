@@ -14,6 +14,8 @@ pub(super) enum HumanOutput {
     WorkCheckSummary,
     WorkGatesSummary,
     WorkEvidenceSummary,
+    WorkReviewSummary,
+    WorkRefineSummary,
     WorkStartPlanId,
     WorkReceiptsSummary,
     WorkStatusSummary,
@@ -31,6 +33,8 @@ pub(super) fn print_output(
         Some(HumanOutput::WorkCheckSummary) => print_text(&format_work_check_summary(value)),
         Some(HumanOutput::WorkGatesSummary) => print_text(&format_work_gates_summary(value)),
         Some(HumanOutput::WorkEvidenceSummary) => print_text(&format_work_evidence_summary(value)),
+        Some(HumanOutput::WorkReviewSummary) => print_text(&format_work_review_summary(value)),
+        Some(HumanOutput::WorkRefineSummary) => print_text(&format_work_refine_summary(value)),
         Some(HumanOutput::WorkStartPlanId) => print_text(&format_work_start_plan_id(value)?),
         Some(HumanOutput::WorkReceiptsSummary) => print_text(&format_work_receipts_summary(value)),
         Some(HumanOutput::WorkStatusSummary) => print_text(&format_work_status_summary(value)),
@@ -395,6 +399,7 @@ pub(super) fn format_work_gates_summary(value: &serde_json::Value) -> String {
         let required_label = if required { "required" } else { "optional" };
         let tool = value_str(gate, "tool")
             .map(|tool| format!(" ({tool})"))
+            .or_else(|| value_str(gate, "skill").map(|skill| format!(" ({skill})")))
             .unwrap_or_default();
         let freshness = value_str(gate, "freshness")
             .map(|freshness| format!(", freshness {freshness}"))
@@ -409,6 +414,11 @@ pub(super) fn format_work_gates_summary(value: &serde_json::Value) -> String {
         if status != "missing" {
             if let Some(diff) = value_str(gate, "diff_summary").filter(|diff| !diff.is_empty()) {
                 lines.push(format!("    receipt diff: {diff}"));
+            }
+        }
+        if status == "invalid_output" {
+            if let Some(parse_error) = value_str(gate, "parse_error") {
+                lines.push(format!("    parse error: {parse_error}"));
             }
         }
         let changed_paths = value_string_list(gate, "changed_paths");
@@ -460,11 +470,13 @@ pub(super) fn format_work_evidence_summary(value: &serde_json::Value) -> String 
     ];
 
     if latest.is_empty() {
-        lines.push("Latest gate evidence per tool: none".into());
+        lines.push("Latest gate evidence per gate: none".into());
     } else {
-        lines.push("Latest gate evidence per tool:".into());
+        lines.push("Latest gate evidence per gate:".into());
         for gate in latest {
-            let tool = value_str(gate, "tool").unwrap_or("<unknown>");
+            let tool = value_str(gate, "tool")
+                .or_else(|| value_str(gate, "skill"))
+                .unwrap_or("<unknown>");
             let gate_id = value_str(gate, "gate_id").unwrap_or("<unknown>");
             let receipt = value_str(gate, "freshness_receipt_id")
                 .or_else(|| value_str(gate, "receipt_id"))
@@ -520,6 +532,100 @@ pub(super) fn format_work_evidence_summary(value: &serde_json::Value) -> String 
         ));
     } else {
         lines.push("Next step: start a new work plan for follow-up changes".into());
+    }
+
+    lines.join("\n")
+}
+
+pub(super) fn format_work_review_summary(value: &serde_json::Value) -> String {
+    let plan_id = value_str(value, "plan_id").unwrap_or("<unknown>");
+    let status = value_str(value, "status").unwrap_or("unknown");
+    let reviews = value["reviews"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    let mut lines = vec![
+        format!("Work review: {status}"),
+        format_work_plan_line(plan_id, "open"),
+        format!("  Review gates: {}", reviews.len()),
+    ];
+
+    for review in reviews {
+        let gate_id = value_str(review, "gate_id").unwrap_or("<unknown>");
+        let gate_status = value_str(review, "status").unwrap_or("unknown");
+        let skill = value_str(review, "skill").unwrap_or("<unknown>");
+        let finding_count = review["finding_count"].as_u64().unwrap_or(0);
+        let actionable_count = review["actionable_count"].as_u64().unwrap_or(0);
+        let retained_finding_count = review["retained_finding_count"]
+            .as_u64()
+            .unwrap_or(finding_count);
+        let retained_actionable_count = review["retained_actionable_count"]
+            .as_u64()
+            .unwrap_or(actionable_count);
+        let truncated = review["findings_truncated"].as_bool().unwrap_or(false)
+            || review["actionable_findings_truncated"]
+                .as_bool()
+                .unwrap_or(false);
+        let count_summary = if truncated {
+            format!(
+                "{actionable_count}/{finding_count} actionable, showing {retained_actionable_count}/{retained_finding_count}"
+            )
+        } else {
+            format!("{actionable_count}/{finding_count} actionable")
+        };
+        lines.push(format!(
+            "  - {gate_id}: {gate_status}, {count_summary} ({skill})"
+        ));
+    }
+
+    if status == "passed" {
+        lines.push(format!(
+            "Next step: scripts/jig work check --plan-id {plan_id} --summary"
+        ));
+    } else {
+        lines.push(format!(
+            "Next step: scripts/jig work refine --plan-id {plan_id} --summary"
+        ));
+    }
+
+    lines.join("\n")
+}
+
+pub(super) fn format_work_refine_summary(value: &serde_json::Value) -> String {
+    let plan_id = value_str(value, "plan_id").unwrap_or("<unknown>");
+    let status = value_str(value, "status").unwrap_or("unknown");
+    let iterations = value["iterations"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    let remaining = value["remaining_actionable_findings"]
+        .as_array()
+        .map(Vec::len)
+        .unwrap_or(0);
+    let mut lines = vec![
+        format!("Work refine: {status}"),
+        format_work_plan_line(plan_id, "open"),
+        format!("  Fixer iterations: {}", iterations.len()),
+        format!("  Remaining actionable findings: {remaining}"),
+    ];
+
+    for iteration in iterations {
+        let index = iteration["iteration"].as_u64().unwrap_or(0);
+        let receipt = value_str(iteration, "receipt_id").unwrap_or("none");
+        let finding_count = iteration["finding_count"].as_u64().unwrap_or(0);
+        lines.push(format!(
+            "  - iteration {index}: receipt {receipt}, findings addressed {finding_count}"
+        ));
+    }
+
+    if status == "passed" {
+        lines.push(format!(
+            "Next step: scripts/jig work finish --plan-id {plan_id} --resolution <summary> --outcome success"
+        ));
+    } else {
+        lines.push(format!(
+            "Next step: inspect remaining findings, then rerun scripts/jig work refine --plan-id {plan_id} --summary"
+        ));
     }
 
     lines.join("\n")
