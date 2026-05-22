@@ -197,6 +197,8 @@ Each configured app directory is expected to support:
 - build: `bun run build:bundle`
 - test coverage: `bun run test:coverage`
 
+The coverage command must write `coverage/coverage-summary.json` in the app directory; generated local checks and web CI enforce each app's `coverage_threshold` from that summary.
+
 ## `dev` Shape
 
 The `dev` table configures `scripts/jig dev` and `scripts/jig proxy`. This is runtime-owned local machine behavior, not a generated contract tool. Generated repos include a `[dev]` table with conservative defaults; repos that remove it use the runtime defaults from the pinned `jig_version`.

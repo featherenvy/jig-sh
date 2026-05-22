@@ -4,7 +4,7 @@ const NON_PRODUCTION_SEGMENTS: &[&str] = &[
     "bench", "benches", "example", "examples", "fixture", "fixtures", "test", "tests",
 ];
 
-pub(super) fn crate_guide_skip_reason(
+pub(super) fn non_production_crate_reason(
     relative_crate_dir: &Path,
     package_name: Option<&str>,
 ) -> Option<String> {

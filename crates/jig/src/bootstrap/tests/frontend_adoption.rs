@@ -261,7 +261,7 @@ fn adopt_accepts_npm_frontend_app_and_renders_current_web_and_dev_config() {
         );
     }
     assert!(
-        output["adoption_report"]["files_created"]
+        output["render_report"]["files_created"]
             .as_array()
             .unwrap()
             .iter()
@@ -282,7 +282,7 @@ fn adopt_accepts_npm_frontend_app_and_renders_current_web_and_dev_config() {
             .any(|path| path == ".github/workflows/webapp-checks.yml")
     );
     assert!(
-        output["adoption_report"]["todos"]
+        output["render_report"]["todos"]
             .as_array()
             .unwrap()
             .iter()
@@ -309,7 +309,7 @@ fn adopt_accepts_npm_frontend_app_and_renders_current_web_and_dev_config() {
     assert!(web_check.contains("npm run"));
     assert!(web_check.contains("if [ -f package.json ] && [ -f package-lock.json ]"));
     assert!(web_check.contains("scripts/check-webapp-scripts.mjs"));
-    assert!(web_check.contains("scripts/enforce-coverage.js"));
+    assert!(web_check.contains("scripts/enforce-coverage.cjs"));
     let contract = fs::read_to_string(repo.join(".agent/jig-contract.json")).unwrap();
     assert!(contract.contains("\"typescript_lint_command\""));
     assert!(contract.contains(r#""name": "jig.typescript_lint""#));
@@ -327,7 +327,7 @@ fn adopt_accepts_npm_frontend_app_and_renders_current_web_and_dev_config() {
     assert!(web_workflow.contains("cache: npm"));
     assert!(web_workflow.contains("npm ci"));
     assert!(web_workflow.contains("node scripts/check-webapp-scripts.mjs"));
-    assert!(web_workflow.contains("node scripts/enforce-coverage.js"));
+    assert!(web_workflow.contains("node scripts/enforce-coverage.cjs"));
     assert!(!web_workflow.contains("make enforce-coverage"));
     assert!(!web_workflow.contains("oven-sh/setup-bun"));
 

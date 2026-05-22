@@ -17,7 +17,7 @@ This matrix captures what was extracted from the source application workflow and
 | `scripts/jig migration-add` | Runtime-owned | Adds timestamped forward-only migration stubs when `sqlx_enabled` is `true`. |
 | `scripts/jig check contract` | Runtime-owned | Validates runtime wiring and manifest drift. |
 | `scripts/install-jig.sh` + `scripts/jig` | Templated | Exact-version runtime launcher and installer for generated repos. |
-| `scripts/enforce-coverage.js` | Extracted | Kept generic. |
+| `scripts/enforce-coverage.cjs` | Extracted | Kept generic and CommonJS so it runs inside ESM frontend packages. |
 | `scripts/new-checkout.sh` | Extracted + generalized | Uses current repo basename instead of source-specific naming. |
 | `.github/workflows/agent-map-check.yml` | Templated | Runner label is configurable. |
 | `.github/workflows/repo-policy.yml` | Templated subset | Keeps core policy checks and only includes SQLx/migration jobs when `sqlx_enabled` is `true`. |

@@ -4,7 +4,7 @@ use std::path::Path;
 use serde_json::{Value as JsonValue, json};
 
 use super::scan::{RepoScan, push_scan_warning, read_toml_for_inference, relative_path_string};
-use crate::bootstrap::crate_guide::crate_guide_skip_reason;
+use crate::bootstrap::crate_classification::non_production_crate_reason;
 
 #[derive(Clone, Debug, Default)]
 pub(super) struct RepoTopology {
@@ -82,7 +82,7 @@ pub(super) fn infer_repo_topology(
         let targets = crate_targets(crate_dir, &parsed, warnings);
         let kind = crate_kind(&targets);
         let relative_path = Path::new(&dir);
-        let skip_reason = crate_guide_skip_reason(relative_path, Some(&name));
+        let skip_reason = non_production_crate_reason(relative_path, Some(&name));
         let role = if skip_reason.is_some() {
             RustCrateRole::ExampleFixtureTest
         } else if matches!(kind, RustCrateKind::Binary | RustCrateKind::Mixed) {

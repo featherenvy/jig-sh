@@ -40,7 +40,7 @@ use template_source::{prepare_update_template_source, read_stored_template_state
 
 mod adopt_infer;
 mod answers;
-mod crate_guide;
+mod crate_classification;
 mod embedded_templates;
 mod file_copy;
 mod gate_preview;
@@ -333,9 +333,9 @@ pub fn run_init(opts: InitOpts) -> Result<Value> {
         "destination": destination.display().to_string(),
         "answers_file": ANSWERS_FILE,
         "git_initialized": git_initialized,
-        "adoption_report": adoption_report(&copy_result),
+        "render_report": initial_render_report(&copy_result),
         "next_steps": initial_next_steps(InitialCommand::Init, &destination, &copy_result),
-        "notes": initial_notes(copy_result.notes),
+        "notes": initial_notes(copy_result.notes, copy_result.frontend_apps_configured),
     }))
 }
 
@@ -428,9 +428,9 @@ pub fn run_adopt(opts: AdoptOpts) -> Result<Value> {
             &answer_shape,
         ),
         "adoption_review": review.items,
-        "adoption_report": adoption_report(&copy_result),
+        "render_report": initial_render_report(&copy_result),
         "next_steps": initial_next_steps(InitialCommand::Adopt, &destination, &copy_result),
-        "notes": initial_notes(copy_result.notes),
+        "notes": initial_notes(copy_result.notes, copy_result.frontend_apps_configured),
     }))
 }
 
@@ -733,12 +733,18 @@ fn initial_next_steps(
     steps
 }
 
-fn initial_notes(extra_notes: Vec<String>) -> Vec<String> {
+fn initial_notes(extra_notes: Vec<String>, frontend_apps_configured: bool) -> Vec<String> {
     let mut notes = vec![
         "The first scripts/jig command may install or compile the pinned Jig runtime into this repo's local cache.".into(),
         "Adoption validates configured frontend app package scripts and lockfiles immediately.".into(),
         "Init records configured frontend apps without reading package.json; add lint, typecheck, build:bundle, test:coverage, and a package-manager lockfile before web CI runs.".into(),
     ];
+    if frontend_apps_configured {
+        notes.push(
+            "Frontend coverage checks expect each test:coverage script to write coverage/coverage-summary.json in its app directory."
+                .into(),
+        );
+    }
     notes.extend(extra_notes);
     notes
 }
@@ -812,7 +818,7 @@ fn write_adopt_last_receipt(
     Ok(())
 }
 
-fn adoption_report(result: &initial_copy::BootstrapCopyResult) -> Value {
+fn initial_render_report(result: &initial_copy::BootstrapCopyResult) -> Value {
     json!({
         "dry_run": result.apply_report.dry_run,
         "files_created": &result.apply_report.files_created,

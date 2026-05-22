@@ -9,7 +9,7 @@ on:
 [% endfor %]
       - "scripts/check-webapps.sh"
       - "scripts/check-webapp-scripts.mjs"
-      - "scripts/enforce-coverage.js"
+      - "scripts/enforce-coverage.cjs"
       - ".github/workflows/webapp-checks.yml"
   push:
     branches:
@@ -20,7 +20,7 @@ on:
 [% endfor %]
       - "scripts/check-webapps.sh"
       - "scripts/check-webapp-scripts.mjs"
-      - "scripts/enforce-coverage.js"
+      - "scripts/enforce-coverage.cjs"
       - ".github/workflows/webapp-checks.yml"
   merge_group:
     types:
@@ -155,7 +155,7 @@ jobs:
         run: |
           COVERAGE_DIR="${{ matrix.app.dir }}/coverage" \
             COVERAGE_THRESHOLD="${{ matrix.app.coverage_threshold }}" \
-            node scripts/enforce-coverage.js
+            node scripts/enforce-coverage.cjs
 [% else %]
 name: Webapp Checks (Disabled)
 

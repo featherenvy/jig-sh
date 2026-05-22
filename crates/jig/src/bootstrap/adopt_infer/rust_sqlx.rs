@@ -4,6 +4,7 @@ use std::path::Path;
 use super::scan::{
     RepoScan, push_scan_warning, read_limited_text, read_toml_for_inference, relative_path_string,
 };
+use crate::bootstrap::crate_classification::non_production_crate_reason;
 
 const MAX_MIGRATION_SQL_DEPTH: usize = 3;
 
@@ -14,6 +15,7 @@ pub(super) enum RustCrateRootSourceKind {
     SinglePackage,
     WorkspaceMembers,
     WorkspaceFallback,
+    ScannedPackages,
 }
 
 #[derive(Debug, Default)]
@@ -21,6 +23,7 @@ pub(super) struct RustCrateRootsInference {
     pub(super) roots: Vec<String>,
     pub(super) sources: Vec<String>,
     pub(super) source_kind: RustCrateRootSourceKind,
+    pub(super) scanned_manifest_paths: Vec<String>,
 }
 
 #[derive(Debug, Default)]
@@ -76,6 +79,7 @@ pub(super) fn infer_rust_crate_roots_with_metadata(
                 roots: vec![".".into()],
                 sources: vec!["Cargo.toml [package]".into()],
                 source_kind: RustCrateRootSourceKind::SinglePackage,
+                ..RustCrateRootsInference::default()
             };
         }
         push_scan_warning(
@@ -112,6 +116,75 @@ pub(super) fn infer_rust_crate_roots_with_metadata(
         roots: roots.into_iter().collect(),
         sources: vec![source],
         source_kind,
+        ..RustCrateRootsInference::default()
+    }
+}
+
+pub(super) fn infer_rust_crate_roots_from_scan(
+    root: &Path,
+    scan: &RepoScan,
+    warnings: &mut Vec<String>,
+) -> RustCrateRootsInference {
+    let mut roots = BTreeSet::new();
+    let mut manifest_paths = BTreeSet::new();
+    let mut package_count = 0usize;
+    for cargo_path in scan.named_files("Cargo.toml") {
+        let relative_cargo_path = cargo_path.strip_prefix(root).unwrap_or(cargo_path);
+        if relative_cargo_path == Path::new("Cargo.toml") {
+            continue;
+        }
+        let Some(parsed) = read_toml_for_inference(cargo_path, warnings) else {
+            continue;
+        };
+        let package = parsed.get("package").and_then(toml::Value::as_table);
+        let workspace = parsed.get("workspace").and_then(toml::Value::as_table);
+        // Workspace-only manifests are runnable Cargo roots with --manifest-path,
+        // so the fallback keeps them even without a local [package].
+        if package.is_none() && workspace.is_none() {
+            continue;
+        }
+        let package_name = package
+            .and_then(|package| package.get("name"))
+            .and_then(toml::Value::as_str);
+        let crate_dir = cargo_path.parent().unwrap_or(root);
+        let relative_crate_dir =
+            relative_path_string(crate_dir.strip_prefix(root).unwrap_or(crate_dir));
+        if let Some(reason) =
+            non_production_crate_reason(Path::new(&relative_crate_dir), package_name)
+        {
+            if reason.starts_with("package name ") {
+                push_scan_warning(
+                    warnings,
+                    cargo_path,
+                    &format!("nested Cargo.toml skipped during Rust inference: {reason}"),
+                );
+            }
+            continue;
+        }
+        let crate_root = crate_dir.parent().unwrap_or(root);
+        let relative_crate_root =
+            relative_path_string(crate_root.strip_prefix(root).unwrap_or(crate_root));
+        roots.insert(if relative_crate_root.is_empty() {
+            ".".into()
+        } else {
+            relative_crate_root
+        });
+        manifest_paths.insert(relative_path_string(relative_cargo_path));
+        package_count += 1;
+    }
+    if roots.is_empty() {
+        return RustCrateRootsInference::default();
+    }
+    let mut roots: Vec<String> = roots.into_iter().collect();
+    if roots.iter().any(|root| root == ".") {
+        roots = vec![".".into()];
+    }
+
+    RustCrateRootsInference {
+        roots,
+        sources: vec![format!("scanned {package_count} nested Cargo.toml file(s)")],
+        source_kind: RustCrateRootSourceKind::ScannedPackages,
+        scanned_manifest_paths: manifest_paths.into_iter().collect(),
     }
 }
 

@@ -23,7 +23,10 @@ use self::github::{GithubCiShapeInference, infer_ci_github_runner_with_metadata}
 use self::metadata::{Confidence, InferenceMetadata};
 use self::package_manager::infer_package_manager_with_metadata;
 use self::repo::{infer_default_branch_with_metadata, infer_repo_name_with_metadata};
-use self::rust_sqlx::{RustCrateRootSourceKind, infer_rust_crate_roots_with_metadata, infer_sqlx};
+use self::rust_sqlx::{
+    RustCrateRootSourceKind, infer_rust_crate_roots_from_scan,
+    infer_rust_crate_roots_with_metadata, infer_sqlx,
+};
 use self::scan::{RepoScan, push_scan_warning};
 use self::topology::{RepoTopology, infer_repo_topology};
 
@@ -76,12 +79,25 @@ pub(super) fn infer_adopt_answers(root: &Path) -> AdoptInference {
     let scan = RepoScan::collect(root, &mut warnings);
     let repo_name = infer_repo_name_with_metadata(root);
     let default_branch = infer_default_branch_with_metadata(root, &mut warnings);
-    let rust_crate_roots = infer_rust_crate_roots_with_metadata(root, &mut warnings);
+    let mut rust_crate_roots = infer_rust_crate_roots_with_metadata(root, &mut warnings);
+    if rust_crate_roots.roots.is_empty() && !root.join("Cargo.toml").is_file() {
+        rust_crate_roots = infer_rust_crate_roots_from_scan(root, &scan, &mut warnings);
+    }
     let repo_topology = infer_repo_topology(root, &scan, &rust_crate_roots.roots, &mut warnings);
     let mut package_manager_warnings = Vec::new();
     let package_manager =
         infer_package_manager_with_metadata(root, &scan, &mut package_manager_warnings);
-    let commands = infer_commands(root, &scan, &mut warnings);
+    let scanned_rust_packages =
+        rust_crate_roots.source_kind == RustCrateRootSourceKind::ScannedPackages;
+    let nested_manifest_paths =
+        scanned_rust_packages.then_some(rust_crate_roots.scanned_manifest_paths.as_slice());
+    let commands = infer_commands(root, &scan, nested_manifest_paths, &mut warnings);
+    if scanned_rust_packages && commands.rust_test_locked_command.is_none() {
+        warnings.push(
+            "nested Rust manifest scan did not infer rust_test_locked_command; add a project-owned locked command once lockfiles are committed"
+                .into(),
+        );
+    }
     let frontend_apps =
         infer_frontend_apps_with_metadata(root, repo_name.value.as_deref(), &mut warnings);
     if !frontend_apps.apps.is_empty() {
@@ -119,7 +135,6 @@ pub(super) fn infer_adopt_answers(root: &Path) -> AdoptInference {
         warnings,
         ..AdoptInference::default()
     };
-
     if let Some(value) = inference.repo_name.clone() {
         let confidence = if repo_name
             .source
@@ -499,6 +514,10 @@ impl AdoptInference {
                 "frontend: {} app(s), using {package_manager}",
                 self.frontend_apps.len()
             ));
+            items.push(
+                "frontend coverage: test:coverage must write coverage/coverage-summary.json in each app directory"
+                    .into(),
+            );
         }
         if self.sqlx_enabled == Some(true) {
             match resolved_answers.rust_migration_dir.as_deref() {
@@ -517,6 +536,21 @@ impl AdoptInference {
             items.push(
                 "Rust: workspace fallback used; confirm rust_crate_roots in .jig.toml".into(),
             );
+        } else if matches!(
+            self.rust_crate_root_source_kind,
+            RustCrateRootSourceKind::ScannedPackages
+        ) {
+            if self.command_profile.uses_nested_manifest_commands() {
+                items.push(
+                    "Rust: nested crates detected without a root Cargo.toml; generated Rust commands cover inferred manifests not handled by wrappers"
+                        .into(),
+                );
+            } else {
+                items.push(
+                    "Rust: nested crates detected without a root Cargo.toml; wrapper Rust commands took precedence, so confirm they cover the inferred manifests"
+                        .into(),
+                );
+            }
         }
         let overrides = self.overrides(explicit_answers, answer_shape);
         if !overrides.is_empty() {
@@ -642,6 +676,8 @@ mod tests {
     use std::collections::BTreeMap;
     use std::fs;
     use std::path::Path;
+    #[cfg(unix)]
+    use std::process::Command;
 
     use super::super::git::git;
     use super::*;
@@ -940,6 +976,315 @@ edition = "2024"
         assert_eq!(
             inference.report()["metadata"]["rust_crate_roots"]["sources"][0],
             "Cargo.toml [package]"
+        );
+    }
+
+    #[test]
+    fn nested_crates_without_root_workspace_are_inferred_from_scan() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(temp.path().join("crates/api/src")).unwrap();
+        fs::write(
+            temp.path().join("crates/api/Cargo.toml"),
+            r#"[package]
+name = "api"
+version = "0.1.0"
+edition = "2024"
+"#,
+        )
+        .unwrap();
+        fs::write(temp.path().join("crates/api/src/lib.rs"), "").unwrap();
+
+        let inference = infer_adopt_answers(temp.path());
+
+        assert_eq!(inference.rust_crate_roots, vec!["crates"]);
+        assert_eq!(
+            inference.rust_crate_root_source_kind,
+            RustCrateRootSourceKind::ScannedPackages
+        );
+        assert!(inference.summary().contains("Rust crate (crates)"));
+        assert!(
+            inference
+                .rust_test_command
+                .as_deref()
+                .unwrap()
+                .contains("jig_manifest=crates/api/Cargo.toml")
+        );
+        assert!(
+            inference
+                .adoption_review(
+                    &AnswerOpts::default(),
+                    &AnswerOpts::default(),
+                    &AnswerInputShape::default()
+                )
+                .items
+                .iter()
+                .any(|item| item.contains("nested crates detected without a root Cargo.toml"))
+        );
+    }
+
+    #[test]
+    fn depth_one_nested_crate_without_root_workspace_uses_repo_root_scan() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(temp.path().join("api/src")).unwrap();
+        fs::create_dir_all(temp.path().join("examples/demo/src")).unwrap();
+        fs::write(
+            temp.path().join("api/Cargo.toml"),
+            r#"[package]
+name = "api"
+version = "0.1.0"
+edition = "2024"
+"#,
+        )
+        .unwrap();
+        fs::write(temp.path().join("api/src/lib.rs"), "").unwrap();
+        fs::write(
+            temp.path().join("examples/demo/Cargo.toml"),
+            r#"[package]
+name = "demo"
+version = "0.1.0"
+edition = "2024"
+"#,
+        )
+        .unwrap();
+        fs::write(temp.path().join("examples/demo/src/lib.rs"), "").unwrap();
+
+        let inference = infer_adopt_answers(temp.path());
+        let command = inference.rust_test_command.as_deref().unwrap();
+
+        assert_eq!(inference.rust_crate_roots, vec!["."]);
+        assert!(command.contains("jig_manifest=api/Cargo.toml"));
+        assert!(!command.contains("examples/demo/Cargo.toml"));
+        assert!(
+            !inference
+                .rust_clippy_command
+                .as_deref()
+                .unwrap()
+                .contains("--locked")
+        );
+        assert!(inference.rust_test_locked_command.is_none());
+        assert!(
+            inference
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("did not infer rust_test_locked_command"))
+        );
+    }
+
+    #[test]
+    fn nested_crate_scan_filters_non_production_package_names() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(temp.path().join("api/src")).unwrap();
+        fs::create_dir_all(temp.path().join("svc/src")).unwrap();
+        fs::write(
+            temp.path().join("api/Cargo.toml"),
+            r#"[package]
+name = "fixture"
+version = "0.1.0"
+edition = "2024"
+"#,
+        )
+        .unwrap();
+        fs::write(temp.path().join("api/src/lib.rs"), "").unwrap();
+        fs::write(
+            temp.path().join("svc/Cargo.toml"),
+            r#"[package]
+name = "svc"
+version = "0.1.0"
+edition = "2024"
+"#,
+        )
+        .unwrap();
+        fs::write(temp.path().join("svc/src/lib.rs"), "").unwrap();
+
+        let inference = infer_adopt_answers(temp.path());
+        let command = inference.rust_test_command.as_deref().unwrap();
+
+        assert_eq!(inference.rust_crate_roots, vec!["."]);
+        assert!(command.contains("jig_manifest=svc/Cargo.toml"));
+        assert!(!command.contains("api/Cargo.toml"));
+    }
+
+    #[test]
+    fn mixed_depth_nested_crate_scan_collapses_roots_to_repo_root() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(temp.path().join("api/src")).unwrap();
+        fs::create_dir_all(temp.path().join("crates/worker/src")).unwrap();
+        fs::write(
+            temp.path().join("api/Cargo.toml"),
+            r#"[package]
+name = "api"
+version = "0.1.0"
+edition = "2024"
+"#,
+        )
+        .unwrap();
+        fs::write(temp.path().join("api/src/lib.rs"), "").unwrap();
+        fs::write(
+            temp.path().join("crates/worker/Cargo.toml"),
+            r#"[package]
+name = "worker"
+version = "0.1.0"
+edition = "2024"
+"#,
+        )
+        .unwrap();
+        fs::write(temp.path().join("crates/worker/src/lib.rs"), "").unwrap();
+
+        let inference = infer_adopt_answers(temp.path());
+        let command = inference.rust_test_command.as_deref().unwrap();
+
+        assert_eq!(inference.rust_crate_roots, vec!["."]);
+        assert!(command.contains("jig_manifest=api/Cargo.toml"));
+        assert!(command.contains("jig_manifest=crates/worker/Cargo.toml"));
+    }
+
+    #[test]
+    fn deeply_nested_crate_scan_uses_parent_directories_as_roots() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(temp.path().join("services/auth/api/src")).unwrap();
+        fs::create_dir_all(temp.path().join("services/billing/api/src")).unwrap();
+        fs::write(
+            temp.path().join("services/auth/api/Cargo.toml"),
+            r#"[package]
+name = "auth-api"
+version = "0.1.0"
+edition = "2024"
+"#,
+        )
+        .unwrap();
+        fs::write(temp.path().join("services/auth/api/src/lib.rs"), "").unwrap();
+        fs::write(
+            temp.path().join("services/billing/api/Cargo.toml"),
+            r#"[package]
+name = "billing-api"
+version = "0.1.0"
+edition = "2024"
+"#,
+        )
+        .unwrap();
+        fs::write(temp.path().join("services/billing/api/src/lib.rs"), "").unwrap();
+
+        let inference = infer_adopt_answers(temp.path());
+        let command = inference.rust_test_command.as_deref().unwrap();
+
+        assert_eq!(
+            inference.rust_crate_roots,
+            vec!["services/auth", "services/billing"]
+        );
+        assert!(command.contains("jig_manifest=services/auth/api/Cargo.toml"));
+        assert!(command.contains("jig_manifest=services/billing/api/Cargo.toml"));
+    }
+
+    #[test]
+    fn nested_crate_review_notes_when_wrapper_commands_take_precedence() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(temp.path().join("api/src")).unwrap();
+        fs::write(
+            temp.path().join("api/Cargo.toml"),
+            r#"[package]
+name = "api"
+version = "0.1.0"
+edition = "2024"
+"#,
+        )
+        .unwrap();
+        fs::write(temp.path().join("api/src/lib.rs"), "").unwrap();
+        fs::write(
+            temp.path().join("Makefile"),
+            "fmt-check:\n\tcargo fmt -- --check\nclippy:\n\tcargo clippy\ntest:\n\tcargo test\ntest-locked:\n\tcargo test --locked\n",
+        )
+        .unwrap();
+
+        let inference = infer_adopt_answers(temp.path());
+        let review = inference.adoption_review(
+            &AnswerOpts::default(),
+            &AnswerOpts::default(),
+            &AnswerInputShape::default(),
+        );
+
+        assert_eq!(inference.rust_test_command.as_deref(), Some("make test"));
+        assert!(
+            review
+                .items
+                .iter()
+                .any(|item| item.contains("wrapper Rust commands took precedence"))
+        );
+        assert!(
+            !review
+                .items
+                .iter()
+                .any(|item| item.contains("generated Rust commands cover inferred manifests"))
+        );
+        assert!(
+            !inference
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("did not infer rust_test_locked_command"))
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn nested_manifest_command_preserves_failing_cargo_status() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(temp.path().join("crates/api/src")).unwrap();
+        fs::write(
+            temp.path().join("crates/api/Cargo.toml"),
+            r#"[package]
+name = "api"
+version = "0.1.0"
+edition = "2024"
+"#,
+        )
+        .unwrap();
+        fs::write(temp.path().join("crates/api/src/lib.rs"), "").unwrap();
+        let bin_dir = temp.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let cargo_path = bin_dir.join("cargo");
+        fs::write(&cargo_path, "#!/bin/sh\nexit 42\n").unwrap();
+        fs::set_permissions(&cargo_path, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let inference = infer_adopt_answers(temp.path());
+        let existing_path = std::env::var_os("PATH").unwrap_or_default();
+        let path = format!("{}:{}", bin_dir.display(), existing_path.to_string_lossy());
+        let status = Command::new("sh")
+            .arg("-c")
+            .arg(inference.rust_test_command.as_deref().unwrap())
+            .current_dir(temp.path())
+            .env("PATH", path)
+            .status()
+            .unwrap();
+
+        assert_eq!(status.code(), Some(42));
+    }
+
+    #[test]
+    fn nested_fixture_crates_without_root_workspace_are_not_inferred_as_app_roots() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(temp.path().join("tests/fixtures/demo/src")).unwrap();
+        fs::write(
+            temp.path().join("tests/fixtures/demo/Cargo.toml"),
+            r#"[package]
+name = "demo-fixture"
+version = "0.1.0"
+edition = "2024"
+"#,
+        )
+        .unwrap();
+        fs::write(temp.path().join("tests/fixtures/demo/src/lib.rs"), "").unwrap();
+
+        let inference = infer_adopt_answers(temp.path());
+
+        assert!(inference.rust_crate_roots.is_empty());
+        assert_eq!(
+            inference.rust_crate_root_source_kind,
+            RustCrateRootSourceKind::None
+        );
+        assert_eq!(
+            inference.detected_stack_label(),
+            "no application stack detected"
         );
     }
 

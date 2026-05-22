@@ -145,7 +145,7 @@ fn adopt_human_summary_includes_reviewable_next_steps() {
     let output = serde_json::json!({
         "render_mode": "preview",
         "destination": "/tmp/repo",
-        "adoption_report": {
+        "render_report": {
             "files_created": ["scripts/jig"],
             "files_modified": [],
             "files_removed": [],

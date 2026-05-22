@@ -201,7 +201,7 @@ The template renders these repo-owned assets into a consumer repository:
 - `.agent/PLANS.md`
 - `.agent/jig-contract.json`
 - `scripts/*.sh`
-- `scripts/enforce-coverage.js`
+- `scripts/enforce-coverage.cjs`
 - `.github/workflows/*.yml`
 
 Generated repos use `scripts/jig` as the execution backend.
@@ -299,6 +299,8 @@ Optional web apps are expected to expose these package scripts in each configure
 - `typecheck`
 - `build:bundle`
 - `test:coverage`
+
+`test:coverage` must write `coverage/coverage-summary.json` in the app directory so generated checks can enforce the configured threshold.
 
 The default workflow assumes Bun for package installation and script execution.
 

@@ -9,7 +9,10 @@ mod sqlx;
 mod tool;
 mod web;
 
-use self::rust::{detect_nextest, first_text_source_matching, infer_rust_wrapper_commands};
+use self::rust::{
+    detect_nextest, first_text_source_matching, infer_rust_wrapper_commands,
+    nested_manifest_commands,
+};
 use self::sqlx::infer_sqlx_command_tools;
 use self::tool::{DetectedTool, dedup_tools, tool_reports};
 use self::web::infer_web_tools;
@@ -34,11 +37,13 @@ pub(super) struct CommandCandidate {
     // Typed provenance for wrapper commands so mixed-source checks do not parse
     // the user-facing `source` text.
     wrapper_source: Option<String>,
+    from_nested_manifest_scan: bool,
 }
 
 pub(super) fn infer_commands(
     root: &Path,
     scan: &RepoScan,
+    nested_manifest_paths: Option<&[String]>,
     warnings: &mut Vec<String>,
 ) -> CommandInference {
     let wrappers = infer_rust_wrapper_commands(root, warnings);
@@ -51,6 +56,12 @@ pub(super) fn infer_commands(
         web_tools: infer_web_tools(root, scan, warnings),
         sqlx_tools: infer_sqlx_command_tools(root, scan, warnings),
     };
+    if let Some(manifest_paths) = nested_manifest_paths {
+        let nested = nested_manifest_commands(manifest_paths);
+        out.rust_fmt_check_command.get_or_insert(nested.fmt);
+        out.rust_clippy_command.get_or_insert(nested.clippy);
+        out.rust_test_command.get_or_insert(nested.test);
+    }
 
     if let Some(nextest) = detect_nextest(root, scan, warnings) {
         out.rust_tools.push(DetectedTool {
@@ -88,6 +99,18 @@ pub(super) fn infer_commands(
 }
 
 impl CommandInference {
+    pub(super) fn uses_nested_manifest_commands(&self) -> bool {
+        [
+            self.rust_fmt_check_command.as_ref(),
+            self.rust_clippy_command.as_ref(),
+            self.rust_test_command.as_ref(),
+            self.rust_test_locked_command.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        .any(|candidate| candidate.from_nested_manifest_scan)
+    }
+
     pub(super) fn report(&self) -> JsonValue {
         json!({
             "rust": {
@@ -131,6 +154,7 @@ fn nextest_candidate(command: &str, source: String, confidence: &'static str) ->
         confidence,
         warnings: Vec::new(),
         wrapper_source: None,
+        from_nested_manifest_scan: false,
     }
 }
 

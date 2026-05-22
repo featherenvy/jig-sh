@@ -55,7 +55,7 @@ run_check() {
 
   if [ "$mode" = "coverage" ]; then
     COVERAGE_DIR="$app_dir/coverage" COVERAGE_THRESHOLD="$coverage_threshold" \
-      "$node_bin" scripts/enforce-coverage.js
+      "$node_bin" scripts/enforce-coverage.cjs
   fi
 }
 

@@ -961,7 +961,7 @@ fn looks_like_shell_assignment(value: &str) -> bool {
 fn shell_command_prefix_keyword(program: &str) -> bool {
     matches!(
         program,
-        "!" | "do" | "elif" | "else" | "if" | "then" | "until" | "while"
+        "!" | "do" | "done" | "elif" | "else" | "esac" | "fi" | "if" | "then" | "until" | "while"
     )
 }
 
@@ -982,13 +982,19 @@ fn shell_builtin_or_keyword(program: &str) -> bool {
             | "cd"
             | "command"
             | "continue"
+            | "do"
+            | "done"
             | "echo"
+            | "elif"
+            | "else"
+            | "esac"
             | "eval"
             | "exec"
             | "exit"
             | "export"
             | "false"
             | "fg"
+            | "fi"
             | "for"
             | "function"
             | "if"
@@ -1115,6 +1121,16 @@ mod tests {
             command_programs(
                 Path::new("."),
                 "printf '%s\\n' skipped > /tmp/out && cargo test 2>&1"
+            ),
+            vec!["cargo"]
+        );
+    }
+
+    #[test]
+    fn command_programs_skip_shell_block_closers() {
+        assert_eq!(
+            command_programs_for_shell(
+                "for manifest in crates/*/Cargo.toml; do cargo test --manifest-path \"$manifest\"; done; if [ \"$found\" -eq 0 ]; then printf skipped; fi"
             ),
             vec!["cargo"]
         );

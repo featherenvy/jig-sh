@@ -293,7 +293,7 @@ pub(super) fn format_adopt_human_summary(output: &serde_json::Value) -> String {
     push_summary_field(&mut summary, "mode", output["render_mode"].as_str());
     push_summary_field(&mut summary, "target", output["destination"].as_str());
 
-    let report = &output["adoption_report"];
+    let report = &output["render_report"];
     let created = array_len(&report["files_created"]);
     let modified = array_len(&report["files_modified"]);
     let removed = array_len(&report["files_removed"]);

@@ -64,7 +64,10 @@
 - `jig init` and `jig adopt --defaults` now default omitted SQLx answers to a tooling-only profile unless a migration directory is supplied, emit a note about that inference, and keep noninteractive adoption usable without extra SQLx flags.
 - Behavior change: SQLx adoption now leaves schema dumps disabled unless `schema_dump_enabled = true` or an explicit `schema_dump_command` is supplied, so first-run `scripts/jig doctor --summary` does not require a repo-owned `scripts/dump-schema.sh` before the repo has implemented one.
 - `jig adopt --json` now reports retired cleanup paths separately as `adoption_profile.retired_managed_files` instead of mixing them into active `managed_files`.
+- `jig init` and `jig adopt --json` now expose the managed-file summary as `render_report`.
 - Backend-only adoption no longer writes disabled web workflow/scripts; previously generated backend-only web scaffolding is now treated as retired managed output during refresh.
+- Generated frontend coverage enforcement now uses `scripts/enforce-coverage.cjs` so ESM packages with `"type": "module"` can run the gate; old `scripts/enforce-coverage.js` is retired, and generated guidance now names the required `coverage/coverage-summary.json` artifact.
+- `jig adopt` now detects nested Rust crates even when a repo has no root `Cargo.toml`, and generated Rust check commands run each inferred nested manifest instead of reporting a false skip.
 - `scripts/jig doctor --summary` now includes the detail for required failing checks, and required-tool probing recognizes `cargo sqlx` as needing the `cargo-sqlx` subcommand.
 - `scripts/jig work gates --summary` now defaults to the single open work plan, matching `scripts/jig work evidence --summary`; pass `--plan-id` when multiple plans are open or to inspect a closed plan.
 - `scripts/jig doctor --summary` now reports missing Codex Jig skills as optional setup instead of blocking overall repo readiness.

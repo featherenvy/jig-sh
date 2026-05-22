@@ -27,6 +27,7 @@ const RETIRED_MANAGED_PATHS: &[&str] = &[
     "scripts/check-rust-file-loc.sh",
     "scripts/check-schema-dump.sh",
     "scripts/check-sqlx-unchecked-non-test.sh",
+    "scripts/enforce-coverage.js",
     "scripts/generate-agent-map.sh",
     "scripts/generate-sqlx-unchecked-queries-todo.sh",
     "scripts/jig-toml.sh",
@@ -37,7 +38,7 @@ const WEB_MANAGED_PATHS: &[&str] = &[
     ".github/workflows/webapp-checks.yml",
     "scripts/check-webapp-scripts.mjs",
     "scripts/check-webapps.sh",
-    "scripts/enforce-coverage.js",
+    "scripts/enforce-coverage.cjs",
 ];
 
 pub(super) fn retired_managed_paths(answers: &RenderAnswers) -> impl Iterator<Item = PathBuf> + '_ {

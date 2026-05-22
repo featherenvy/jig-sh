@@ -45,6 +45,7 @@ Configured web apps:
 [% endfor %]
 
 Each configured app is expected to support `lint`, `typecheck`, `build:bundle`, and `test:coverage`.
+`test:coverage` must write `coverage/coverage-summary.json` in the app directory for threshold enforcement.
 Jig validates those scripts during adoption; generated web CI validates them again before running.
 Generated install steps use a repo-root lockfile when one exists, otherwise the app-local lockfile.
 `[[frontend_apps]]` keeps CI and coverage metadata; generated `[[dev.apps]]` drives `scripts/jig dev` and takes precedence for local dev settings. When both sections are present, Jig requires a matching dev app name and dir for every frontend app. Use the optional fourth `--frontend-app` field or answers-file `kind` for `vite` versus `env-port`; extra `[[dev.apps]]` entries without `[[frontend_apps]]` are treated as dev-only and are not covered by generated web CI.

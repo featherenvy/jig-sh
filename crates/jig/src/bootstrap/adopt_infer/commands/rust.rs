@@ -17,6 +17,13 @@ pub(super) struct NextestDetection {
     pub(super) confidence: &'static str,
 }
 
+#[derive(Debug)]
+pub(super) struct NestedManifestCommands {
+    pub(super) fmt: CommandCandidate,
+    pub(super) clippy: CommandCandidate,
+    pub(super) test: CommandCandidate,
+}
+
 pub(super) fn infer_rust_wrapper_commands(
     root: &Path,
     warnings: &mut Vec<String>,
@@ -83,6 +90,26 @@ pub(super) fn infer_rust_wrapper_commands(
     }
     out.warn_if_mixed_sources();
     out
+}
+
+pub(super) fn nested_manifest_commands(manifest_paths: &[String]) -> NestedManifestCommands {
+    NestedManifestCommands {
+        fmt: nested_manifest_candidate(
+            manifest_paths,
+            "cargo fmt --manifest-path \"$jig_manifest\" -- --check",
+            "fmt",
+        ),
+        clippy: nested_manifest_candidate(
+            manifest_paths,
+            "cargo clippy --manifest-path \"$jig_manifest\" --all-targets -- -D warnings",
+            "clippy",
+        ),
+        test: nested_manifest_candidate(
+            manifest_paths,
+            "cargo test --manifest-path \"$jig_manifest\"",
+            "test",
+        ),
+    }
 }
 
 pub(super) fn detect_nextest(
@@ -203,7 +230,44 @@ fn wrapper_candidate(runner: &str, recipe: &str, source_name: &str) -> CommandCa
         confidence: "high",
         warnings: vec!["wrapper recipe inferred by name; review the rendered command".into()],
         wrapper_source: Some(source_name.into()),
+        from_nested_manifest_scan: false,
     }
+}
+
+fn nested_manifest_candidate(
+    manifest_paths: &[String],
+    cargo_command: &str,
+    label: &str,
+) -> CommandCandidate {
+    CommandCandidate {
+        command: nested_manifest_command(manifest_paths, cargo_command, label),
+        source: "nested Cargo.toml scan".into(),
+        confidence: "medium",
+        warnings: vec![
+            "Generated from nested Cargo.toml files because no root Cargo.toml was found; review rust_crate_roots before relying on this command."
+                .into(),
+        ],
+        wrapper_source: None,
+        from_nested_manifest_scan: true,
+    }
+}
+
+fn nested_manifest_command(manifest_paths: &[String], cargo_command: &str, label: &str) -> String {
+    let mut command = "( found=0".to_string();
+    command.push_str("; rc=0");
+    for manifest_path in manifest_paths {
+        let manifest_path = crate::shell::quote(manifest_path);
+        // Keep any cargo failure nonzero while still attempting later inferred manifests.
+        command.push_str(&format!(
+            "; jig_manifest={manifest_path}; if [ -f \"$jig_manifest\" ]; then found=1; {cargo_command} || rc=$?; fi"
+        ));
+    }
+    command.push_str(&format!(
+        "; if [ \"$found\" -eq 0 ]; then printf '%s\\n' {}; fi",
+        crate::shell::quote(&format!("{}{label}.", crate::CARGO_SKIP_OUTPUT_PREFIX))
+    ));
+    command.push_str("; exit \"$rc\" )");
+    command
 }
 
 fn wrapper_source_name(candidate: &CommandCandidate) -> Option<&str> {

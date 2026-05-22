@@ -493,7 +493,7 @@ on:
 [% endfor %]
       - "scripts/check-webapps.sh"
       - "scripts/check-webapp-scripts.mjs"
-      - "scripts/enforce-coverage.js"
+      - "scripts/enforce-coverage.cjs"
       - ".github/workflows/webapp-checks.yml"
   push:
     branches:
@@ -504,7 +504,7 @@ on:
 [% endfor %]
       - "scripts/check-webapps.sh"
       - "scripts/check-webapp-scripts.mjs"
-      - "scripts/enforce-coverage.js"
+      - "scripts/enforce-coverage.cjs"
       - ".github/workflows/webapp-checks.yml"
   merge_group:
     types:
@@ -639,7 +639,7 @@ jobs:
         run: |
           COVERAGE_DIR="${{ matrix.app.dir }}/coverage" \
             COVERAGE_THRESHOLD="${{ matrix.app.coverage_threshold }}" \
-            node scripts/enforce-coverage.js
+            node scripts/enforce-coverage.cjs
 [% else %]
 name: Webapp Checks (Disabled)
 
@@ -679,9 +679,10 @@ schema_dump_command = "<<[ schema_dump_command | replace("\\", "\\\\") | replace
 [% if sqlx_enabled %]
 sqlx_check_command = "<<[ sqlx_check_command | replace("\\", "\\\\") | replace("\"", "\\\"") ]>>"
 [% endif %]
-# Command values are project-owned. Generated Cargo defaults skip when no root
-# Cargo.toml exists so a harness-only init can be verified; replace them with
-# real repo setup and validation commands once application code lands.
+# Command values are project-owned. Generated Cargo defaults skip cleanly when
+# no manifests are found; with nested manifests they run each one in turn.
+# Review them against this repo's workspace layout and replace them when custom
+# orchestration is needed.
 bootstrap_command = "<<[ bootstrap_command | replace("\\", "\\\\") | replace("\"", "\\\"") ]>>"
 [% if legacy_dev_command %]
 # Deprecated and ignored by generated commands; preserved only so you can migrate it into [dev] / [[dev.apps]].
@@ -856,6 +857,7 @@ Configured web apps:
 [% endfor %]
 
 Each configured app is expected to support `lint`, `typecheck`, `build:bundle`, and `test:coverage`.
+`test:coverage` must write `coverage/coverage-summary.json` in the app directory for threshold enforcement.
 Jig validates those scripts during adoption; generated web CI validates them again before running.
 Generated install steps use a repo-root lockfile when one exists, otherwise the app-local lockfile.
 `[[frontend_apps]]` keeps CI and coverage metadata; generated `[[dev.apps]]` drives `scripts/jig dev` and takes precedence for local dev settings. When both sections are present, Jig requires a matching dev app name and dir for every frontend app. Use the optional fourth `--frontend-app` field or answers-file `kind` for `vite` versus `env-port`; extra `[[dev.apps]]` entries without `[[frontend_apps]]` are treated as dev-only and are not covered by generated web CI.
@@ -1023,7 +1025,7 @@ run_check() {
 
   if [ "$mode" = "coverage" ]; then
     COVERAGE_DIR="$app_dir/coverage" COVERAGE_THRESHOLD="$coverage_threshold" \
-      "$node_bin" scripts/enforce-coverage.js
+      "$node_bin" scripts/enforce-coverage.cjs
   fi
 }
 
@@ -1070,7 +1072,7 @@ case "$mode" in
     ;;
 esac
 "# },
-    EmbeddedTemplateFile { relative_path: "scripts/enforce-coverage.js.jinja", contents: r#"#!/usr/bin/env node
+    EmbeddedTemplateFile { relative_path: "scripts/enforce-coverage.cjs.jinja", contents: r#"#!/usr/bin/env node
 const fs = require("node:fs");
 const path = require("node:path");
 

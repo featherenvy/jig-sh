@@ -640,6 +640,7 @@ fn adopt_defaults_to_tooling_only_when_sqlx_answers_are_omitted() {
     assert!(!repo.join("scripts/check-webapps.sh").exists());
     assert!(!repo.join("scripts/check-webapp-scripts.mjs").exists());
     assert!(!repo.join("scripts/enforce-coverage.js").exists());
+    assert!(!repo.join("scripts/enforce-coverage.cjs").exists());
     assert!(
         !output["adoption_profile"]["managed_files"]
             .as_array()
@@ -681,7 +682,8 @@ fn adopt_previews_by_default_without_writing_files() {
 
     assert_eq!(output["render_mode"], "preview");
     assert_eq!(output["write"], false);
-    assert_eq!(output["adoption_report"]["dry_run"], true);
+    assert!(output.get("adoption_report").is_none());
+    assert_eq!(output["render_report"]["dry_run"], true);
     assert_eq!(
         output["detection_report"]["web_package_manager"],
         serde_json::Value::Null
@@ -743,7 +745,7 @@ fn adopt_preview_reports_conflicts_without_overwriting() {
 
     assert_eq!(output["render_mode"], "preview");
     assert!(
-        output["adoption_report"]["conflicts"]
+        output["render_report"]["conflicts"]
             .as_array()
             .unwrap()
             .iter()
@@ -785,7 +787,7 @@ fn adopt_preserves_repo_gitattributes_while_adding_jig_block() {
 
     assert_eq!(output["render_mode"], "copy");
     assert!(
-        output["adoption_report"]["managed_blocks_inserted"]
+        output["render_report"]["managed_blocks_inserted"]
             .as_array()
             .unwrap()
             .iter()
@@ -833,7 +835,7 @@ fn adopt_write_records_backup_receipt_for_overwritten_managed_files() {
 
     assert_eq!(output["render_mode"], "copy");
     assert!(
-        output["adoption_report"]["conflicts"]
+        output["render_report"]["conflicts"]
             .as_array()
             .unwrap()
             .iter()
