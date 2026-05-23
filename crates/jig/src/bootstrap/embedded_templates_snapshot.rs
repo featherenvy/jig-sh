@@ -660,6 +660,42 @@ jobs:
         run: echo "No web apps configured in .jig.toml"
 [% endif %]
 "# },
+    EmbeddedTemplateFile { relative_path: ".gitignore.jinja", contents: r#"# BEGIN JIG MANAGED BLOCK
+# OS and editor noise
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Rust
+target/
+
+# JavaScript and TypeScript
+node_modules/
+coverage/
+dist/
+build/
+.vite/
+.turbo/
+.astro/
+
+# Jig local runtime cache. Keep durable agent state tracked.
+.agent/.cache/*
+!.agent/.cache/.gitignore
+
+# Local logs and scratch files
+*.log
+tmp/
+temp/
+# END JIG MANAGED BLOCK
+"# },
     EmbeddedTemplateFile { relative_path: ".jig.toml.jinja", contents: r#"_commit = "<<[ _jig.commit | replace("\\", "\\\\") | replace("\"", "\\\"") ]>>"
 _src_path = "<<[ _jig.src_path | replace("\\", "\\\\") | replace("\"", "\\\"") ]>>"
 _template_mode = "<<[ _jig.template_mode | replace("\\", "\\\\") | replace("\"", "\\\"") ]>>"

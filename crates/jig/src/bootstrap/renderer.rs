@@ -180,6 +180,7 @@ fn merge_existing_managed_blocks(
     for relative in [
         Path::new(managed_paths::ROOT_AGENTS_PATH),
         Path::new(managed_paths::ROOT_GITATTRIBUTES_PATH),
+        Path::new(managed_paths::ROOT_GITIGNORE_PATH),
     ] {
         merge_existing_managed_block(seed_repo_path, destination, relative, progress)?;
     }

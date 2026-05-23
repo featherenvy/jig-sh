@@ -1,0 +1,35 @@
+# BEGIN JIG MANAGED BLOCK
+# OS and editor noise
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Rust
+target/
+
+# JavaScript and TypeScript
+node_modules/
+coverage/
+dist/
+build/
+.vite/
+.turbo/
+.astro/
+
+# Jig local runtime cache. Keep durable agent state tracked.
+.agent/.cache/*
+!.agent/.cache/.gitignore
+
+# Local logs and scratch files
+*.log
+tmp/
+temp/
+# END JIG MANAGED BLOCK

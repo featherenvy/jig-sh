@@ -8,6 +8,9 @@ pub(super) const ROOT_AGENTS_BLOCK_END: &str = "<!-- END JIG MANAGED BLOCK -->";
 pub(super) const ROOT_GITATTRIBUTES_PATH: &str = ".gitattributes";
 pub(super) const ROOT_GITATTRIBUTES_BLOCK_BEGIN: &str = "# BEGIN JIG MANAGED BLOCK";
 pub(super) const ROOT_GITATTRIBUTES_BLOCK_END: &str = "# END JIG MANAGED BLOCK";
+pub(super) const ROOT_GITIGNORE_PATH: &str = ".gitignore";
+pub(super) const ROOT_GITIGNORE_BLOCK_BEGIN: &str = "# BEGIN JIG MANAGED BLOCK";
+pub(super) const ROOT_GITIGNORE_BLOCK_END: &str = "# END JIG MANAGED BLOCK";
 
 #[derive(Clone, Copy, Debug)]
 pub(super) struct ManagedBlockSpec {
@@ -91,6 +94,14 @@ pub(super) fn managed_block_spec(relative: &Path) -> Option<ManagedBlockSpec> {
             begin: ROOT_GITATTRIBUTES_BLOCK_BEGIN,
             end: ROOT_GITATTRIBUTES_BLOCK_END,
             progress_label: "git attributes",
+        });
+    }
+    if relative == Path::new(ROOT_GITIGNORE_PATH) {
+        return Some(ManagedBlockSpec {
+            path: ROOT_GITIGNORE_PATH,
+            begin: ROOT_GITIGNORE_BLOCK_BEGIN,
+            end: ROOT_GITIGNORE_BLOCK_END,
+            progress_label: "git ignore",
         });
     }
     None

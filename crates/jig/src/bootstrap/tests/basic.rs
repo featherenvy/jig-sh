@@ -584,6 +584,11 @@ fn run_init_uses_native_renderer_and_git() {
     assert!(log.contains("git init -b main"));
     assert!(destination.exists());
     assert!(destination.join(".jig.toml").exists());
+    let gitignore = fs::read_to_string(destination.join(".gitignore")).unwrap();
+    assert!(gitignore.contains("node_modules/"));
+    assert!(gitignore.contains("target/"));
+    assert!(gitignore.contains(".agent/.cache/*"));
+    assert!(gitignore.contains("# BEGIN JIG MANAGED BLOCK"));
     let attributes = fs::read_to_string(destination.join(".gitattributes")).unwrap();
     assert!(attributes.contains(".agent/state/*.jsonl merge=union"));
     assert!(destination.join("scripts/jig").exists());
@@ -3346,6 +3351,11 @@ fn adopt_appends_jig_block_to_existing_root_agents() {
         "# Existing Agent Guide\n\nKeep this repo-specific guidance.\n",
     )
     .unwrap();
+    fs::write(
+        repo.join(".gitignore"),
+        "# Project ignores\nproject-owned-cache/\n",
+    )
+    .unwrap();
 
     run_adopt(AdoptOpts {
         path: repo.clone(),
@@ -3375,6 +3385,13 @@ fn adopt_appends_jig_block_to_existing_root_agents() {
             .count(),
         1
     );
+
+    let gitignore = fs::read_to_string(repo.join(".gitignore")).unwrap();
+    assert!(gitignore.starts_with("# Project ignores"));
+    assert!(gitignore.contains("project-owned-cache/"));
+    assert!(gitignore.contains("# BEGIN JIG MANAGED BLOCK"));
+    assert!(gitignore.contains("node_modules/"));
+    assert_eq!(gitignore.matches("# BEGIN JIG MANAGED BLOCK").count(), 1);
 }
 
 #[cfg(unix)]
