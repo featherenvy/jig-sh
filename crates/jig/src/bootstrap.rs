@@ -47,13 +47,18 @@ mod gate_preview;
 mod git;
 mod initial_copy;
 mod managed_paths;
+mod opts;
 mod path;
+mod presets;
 mod preview_seed;
 mod renderer;
 mod scaffold;
 mod staged_render;
 mod sync;
 mod template_source;
+
+pub use opts::AnswerOpts;
+pub use presets::scaffold_presets_report;
 
 const ANSWERS_FILE: &str = ".jig.toml";
 const GIT_BIN_ENV: &str = "JIG_GIT_BIN";
@@ -66,156 +71,6 @@ const REMOTE_TEMPLATE_MODE_ERROR: &str = "--template-mode only applies to local 
 const ALWAYS_TASK_MUTATED_PATHS: &[&str] = &[".jig.toml", "agent-map.md"];
 const TEMPLATE_MODE_KEY: &str = "_template_mode";
 const TEMPLATE_LOCAL_PATH_KEY: &str = "_template_local_path";
-
-#[derive(Args, Clone, Debug, Default)]
-pub struct AnswerOpts {
-    #[arg(
-        long,
-        help_heading = "Automation",
-        help = "Read renderer answers from a TOML file"
-    )]
-    pub answers_file: Option<PathBuf>,
-    #[arg(
-        long,
-        help_heading = "Common Answers",
-        help = "Repository display name written into generated docs"
-    )]
-    pub repo_name: Option<String>,
-    #[arg(
-        long,
-        help_heading = "Common Answers",
-        help = "Default branch used for generated CI and comparison commands"
-    )]
-    pub default_branch: Option<String>,
-    #[arg(
-        long,
-        help_heading = "Common Answers",
-        help = "GitHub Actions runs-on value for generated workflows"
-    )]
-    pub ci_github_runner: Option<String>,
-    #[arg(
-        long,
-        help_heading = "Advanced Template Source",
-        help = "Exact Jig runtime version to pin in generated repos"
-    )]
-    pub jig_version: Option<String>,
-    #[arg(
-        long,
-        help_heading = "Advanced Template Source",
-        help = "Portable canonical template source URL for future updates"
-    )]
-    pub template_source_url: Option<String>,
-    #[arg(
-        long,
-        help_heading = "Common Answers",
-        help = "Generate SQLx and migration contract tools"
-    )]
-    pub sqlx_enabled: Option<bool>,
-    #[arg(
-        long = "rust-crate-root",
-        help_heading = "Common Answers",
-        help = "Directory whose direct children are Rust crates; may be repeated"
-    )]
-    pub rust_crate_roots: Vec<String>,
-    #[arg(
-        long,
-        help_heading = "Common Answers",
-        help = "SQL migration directory for SQLx-enabled repos"
-    )]
-    pub rust_migration_dir: Option<String>,
-    #[arg(
-        long,
-        help_heading = "Common Answers",
-        help = "Committed SQLx metadata directory"
-    )]
-    pub rust_sqlx_metadata_dir: Option<String>,
-    #[arg(
-        long,
-        help_heading = "Common Answers",
-        help = "Generate schema dump and freshness commands"
-    )]
-    pub schema_dump_enabled: Option<bool>,
-    #[arg(
-        long,
-        help_heading = "Advanced Command Overrides",
-        help = "Command used by scripts/jig schema-dump"
-    )]
-    pub schema_dump_command: Option<String>,
-    #[arg(
-        long,
-        help_heading = "Advanced Command Overrides",
-        help = "Command used by legacy schema-check manifests"
-    )]
-    pub schema_check_command: Option<String>,
-    #[arg(
-        long,
-        help_heading = "Advanced Command Overrides",
-        help = "Command used by scripts/jig check sqlx"
-    )]
-    pub sqlx_check_command: Option<String>,
-    #[arg(
-        long,
-        help_heading = "Advanced Command Overrides",
-        help = "Command used by legacy migration-add manifests"
-    )]
-    pub migration_add_command: Option<String>,
-    #[arg(
-        long,
-        help_heading = "Advanced Command Overrides",
-        help = "Command used by scripts/jig bootstrap"
-    )]
-    pub bootstrap_command: Option<String>,
-    #[arg(
-        long,
-        help_heading = "Advanced Command Overrides",
-        help = "Command used by legacy contract-check manifests"
-    )]
-    pub contract_check_command: Option<String>,
-    #[arg(
-        long,
-        help_heading = "Advanced Command Overrides",
-        help = "Deprecated; configure [dev] and [[dev.apps]] instead"
-    )]
-    pub dev_command: Option<String>,
-    #[arg(
-        long,
-        help_heading = "Advanced Command Overrides",
-        help = "Command used by scripts/jig check fmt"
-    )]
-    pub rust_fmt_check_command: Option<String>,
-    #[arg(
-        long,
-        help_heading = "Advanced Command Overrides",
-        help = "Command used by scripts/jig check clippy"
-    )]
-    pub rust_clippy_command: Option<String>,
-    #[arg(
-        long,
-        help_heading = "Advanced Command Overrides",
-        help = "Command used by scripts/jig check test"
-    )]
-    pub rust_test_command: Option<String>,
-    #[arg(
-        long,
-        help_heading = "Advanced Command Overrides",
-        help = "Command used by scripts/jig check test-locked"
-    )]
-    pub rust_test_locked_command: Option<String>,
-    #[arg(
-        long,
-        help_heading = "Common Answers",
-        help = "Web package manager for generated web app checks"
-    )]
-    pub web_package_manager: Option<String>,
-    #[arg(
-        long = "frontend-app",
-        help_heading = "Common Answers",
-        value_parser = parse_frontend_app,
-        help = "Existing frontend app to wire into CI and dev checks",
-        long_help = "Frontend CI app as name:dir:coverage_threshold[:kind]. Kind defaults to vite. Example: --frontend-app web:web:80:vite. package.json must expose lint, typecheck, build:bundle, and test:coverage; may be repeated."
-    )]
-    pub frontend_apps: Vec<FrontendApp>,
-}
 
 #[derive(Args, Clone, Debug)]
 #[command(after_help = "\
@@ -433,86 +288,6 @@ pub enum ScaffoldDb {
     None,
     Postgres,
     Sqlite,
-}
-
-#[derive(Debug, Serialize)]
-struct ScaffoldPresetReport {
-    name: &'static str,
-    summary: &'static str,
-    defaults: Vec<&'static str>,
-    layout: Vec<&'static str>,
-    frontend_shorthands: Vec<ScaffoldFrontendShorthandReport>,
-    examples: Vec<&'static str>,
-    ownership: &'static str,
-    non_goals: Vec<&'static str>,
-}
-
-#[derive(Debug, Serialize)]
-struct ScaffoldFrontendShorthandReport {
-    name: &'static str,
-    expands_to: &'static str,
-}
-
-pub fn scaffold_presets_report() -> Value {
-    let presets = ScaffoldPreset::value_variants()
-        .iter()
-        .copied()
-        .map(ScaffoldPreset::report)
-        .collect::<Vec<_>>();
-    json!({
-        "ok": true,
-        "command": crate::tool_defs::cli_command::PRESETS,
-        "presets": presets
-    })
-}
-
-impl ScaffoldPreset {
-    fn report(self) -> ScaffoldPresetReport {
-        match self {
-            Self::RustReact => ScaffoldPresetReport {
-                name: "rust-react",
-                summary: "Rust API workspace plus optional Vite React, Astro, and admin frontend apps.",
-                defaults: vec![
-                    "Rust crate roots default to apps and crates.",
-                    "Frontends default to web when omitted.",
-                    "Database scaffolding defaults to none; pass --db postgres or --db sqlite when wanted.",
-                    "Generated frontend checks default to bun unless --web-package-manager is supplied.",
-                    "Schema dumps stay disabled until a command is configured.",
-                ],
-                layout: vec![
-                    "apps/<repo>-api",
-                    "crates/<repo>-core",
-                    "crates/<repo>",
-                    "crates/<repo>-test-support",
-                    "crates/<repo>-db when --db postgres or --db sqlite is selected",
-                ],
-                frontend_shorthands: vec![
-                    ScaffoldFrontendShorthandReport {
-                        name: "web",
-                        expands_to: "Vite React app in web/",
-                    },
-                    ScaffoldFrontendShorthandReport {
-                        name: "landing",
-                        expands_to: "Astro site in landing/",
-                    },
-                    ScaffoldFrontendShorthandReport {
-                        name: "admin",
-                        expands_to: "Vite React admin app in admin-panel/",
-                    },
-                ],
-                examples: vec![
-                    "jig init ./my-app --preset rust-react",
-                    "jig init ./my-app --preset rust-react --db postgres --frontends web,landing,admin",
-                    "jig init ./my-app --preset rust-react --db sqlite --frontends web",
-                ],
-                ownership: "Scaffolded application code is project-owned after creation; jig update keeps the harness current and does not rewrite app code.",
-                non_goals: vec![
-                    "jig update does not migrate or overwrite scaffolded application source.",
-                    "Presets are starter shapes, not long-term application frameworks.",
-                ],
-            },
-        }
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

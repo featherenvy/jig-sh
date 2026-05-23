@@ -265,4 +265,6 @@ use run::{
 #[cfg(test)]
 mod help_tests;
 #[cfg(test)]
+mod preset_tests;
+#[cfg(test)]
 mod tests;

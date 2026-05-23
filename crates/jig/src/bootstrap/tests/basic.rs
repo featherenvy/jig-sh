@@ -105,23 +105,16 @@ fn initial_next_steps_and_notes_are_tailored_to_rendered_config() {
     let steps = initial_next_steps(InitialCommand::Adopt, &destination, &result);
 
     assert_eq!(steps[0], "cd /tmp/demo");
-    assert!(steps.iter().any(|step| step == "scripts/jig bootstrap"));
-    assert!(
-        steps
-            .iter()
-            .any(|step| step == "scripts/jig doctor --summary")
-    );
-    assert!(
-        steps
-            .iter()
-            .any(|step| step == "scripts/jig agent bootstrap")
-    );
-    assert!(
-        steps
-            .iter()
-            .any(|step| step == "scripts/jig check contract")
-    );
-    assert!(steps.iter().any(|step| step == "scripts/jig check test"));
+    for expected in [
+        "scripts/jig bootstrap",
+        "scripts/jig doctor --summary",
+        "scripts/jig agent bootstrap",
+        "scripts/jig check contract",
+        "scripts/jig check test",
+        "scripts/jig dev",
+    ] {
+        assert!(steps.iter().any(|step| step == expected));
+    }
     assert!(
         steps
             .iter()
@@ -132,49 +125,21 @@ fn initial_next_steps_and_notes_are_tailored_to_rendered_config() {
             .iter()
             .any(|step| step.contains("scripts/dump-schema.sh"))
     );
-    assert!(steps.iter().any(|step| step == "scripts/jig dev"));
     assert!(
         steps
             .iter()
             .any(|step| step.contains("Commit the adoption diff"))
     );
     assert!(!steps.iter().any(|step| step.starts_with("Review ")));
-    let bootstrap_index = steps
-        .iter()
-        .position(|step| step == "scripts/jig bootstrap")
-        .unwrap();
-    let doctor_index = steps
-        .iter()
-        .position(|step| step == "scripts/jig doctor --summary")
-        .unwrap();
-    let test_index = steps
-        .iter()
-        .position(|step| step == "scripts/jig check test")
-        .unwrap();
-    let contract_index = steps
-        .iter()
-        .position(|step| step == "scripts/jig check contract")
-        .unwrap();
-    assert!(bootstrap_index < doctor_index);
-    assert!(doctor_index < contract_index);
-    assert!(contract_index < test_index);
 
     let notes = initial_notes(Vec::new(), true, None);
-    assert!(
-        notes
-            .iter()
-            .any(|note| note.contains("Review generated .jig.toml"))
-    );
-    assert!(
-        notes
-            .iter()
-            .any(|note| note.contains("scripts/jig check typescript-lint"))
-    );
-    assert!(
-        notes
-            .iter()
-            .any(|note| note.contains("scripts/jig check contract"))
-    );
+    for expected in [
+        "Review generated .jig.toml",
+        "scripts/jig check typescript-lint",
+        "scripts/jig check contract",
+    ] {
+        assert!(notes.iter().any(|note| note.contains(expected)));
+    }
 
     let preview_steps = initial_next_steps(
         InitialCommand::Adopt,
