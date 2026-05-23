@@ -3,9 +3,20 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 PACKAGE_NAME="jig-sh"
-# Publish the split support crate first; jig-sh depends on this exact version
-# from crates.io once package verification leaves path dependencies behind.
-PUBLISH_PACKAGE_NAMES=("jig-dev-proxy" "$PACKAGE_NAME")
+# Publish workspace library crates before the CLI; cargo publish strips path
+# dependencies, so every exact-version internal crate must exist on crates.io
+# before dependents can be published.
+PUBLISH_PACKAGE_NAMES=(
+  "jig-contract"
+  "jig-core"
+  "jig-rust"
+  "jig-sqlx"
+  "jig-typescript"
+  "jig-features"
+  "jig-vault"
+  "jig-dev-proxy"
+  "$PACKAGE_NAME"
+)
 BIN_NAME="jig"
 RELEASE_FIXTURE_FILES=(
   examples/adopted-custom-commands.toml
@@ -66,6 +77,24 @@ run() {
   printf ' %q' "$@"
   printf '\n'
   "$@"
+}
+
+crate_dir_for_package() {
+  case "$1" in
+    jig-contract) printf '%s\n' "crates/jig-contract" ;;
+    jig-core) printf '%s\n' "crates/jig-core" ;;
+    jig-rust) printf '%s\n' "crates/jig-rust" ;;
+    jig-sqlx) printf '%s\n' "crates/jig-sqlx" ;;
+    jig-typescript) printf '%s\n' "crates/jig-typescript" ;;
+    jig-features) printf '%s\n' "crates/jig-features" ;;
+    jig-vault) printf '%s\n' "crates/jig-vault" ;;
+    jig-dev-proxy) printf '%s\n' "crates/jig-dev-proxy" ;;
+    jig-sh) printf '%s\n' "crates/jig" ;;
+    *)
+      echo "Unknown publish package: $1" >&2
+      exit 1
+      ;;
+  esac
 }
 
 manifest_version() {
@@ -566,11 +595,27 @@ release_github() {
 }
 
 cargo_dirty_flag=()
+cargo_publish_patch_args=()
 cargo_dirty_flags() {
   cargo_dirty_flag=()
   if [[ "${ALLOW_DIRTY:-}" == "1" ]]; then
     cargo_dirty_flag=(--allow-dirty)
   fi
+}
+
+cargo_publish_patch_args_for() {
+  local package_name="$1"
+  local dependency_name
+  local dependency_dir
+
+  cargo_publish_patch_args=()
+  for dependency_name in "${PUBLISH_PACKAGE_NAMES[@]}"; do
+    if [[ "$dependency_name" == "$package_name" ]]; then
+      continue
+    fi
+    dependency_dir="$(crate_dir_for_package "$dependency_name")"
+    cargo_publish_patch_args+=(--config "patch.crates-io.$dependency_name.path=\"$ROOT_DIR/$dependency_dir\"")
+  done
 }
 
 crate_version_status() {
@@ -613,10 +658,6 @@ publish_package_if_missing() {
       echo "$package_name v$version is already published; skipping cargo publish."
       ;;
     404)
-      if [[ "$package_name" == "$PACKAGE_NAME" ]]; then
-        wait_for_crate_version "jig-dev-proxy" "$version"
-        echo "If publishing $PACKAGE_NAME fails after jig-dev-proxy v$version is published, bump the patch version and rerun the release." >&2
-      fi
       run cargo publish -p "$package_name" --locked
       wait_for_crate_version "$package_name" "$version"
       ;;
@@ -683,26 +724,21 @@ release_check() {
   run_ci_checks
   run bash scripts/validate-fixtures.sh
   for package_name in "${PUBLISH_PACKAGE_NAMES[@]}"; do
-    if [[ "$package_name" == "$PACKAGE_NAME" ]]; then
-      dependency_status="$(crate_version_status "jig-dev-proxy" "$version")"
-      case "$dependency_status" in
-        200)
-          ;;
-        404)
-          echo "jig-dev-proxy v$version is not on crates.io yet; dry-running $PACKAGE_NAME with a local registry patch before any real crate publish."
-          # This fallback is only for the first publish of a split crate version.
-          # Once jig-dev-proxy v$version is visible in the registry, the normal
-          # dry-run path above exercises crates.io dependency resolution.
-          run cargo publish -p "$package_name" --locked --dry-run "${cargo_dirty_flag[@]}" --config "patch.crates-io.jig-dev-proxy.path=\"$ROOT_DIR/crates/jig-dev-proxy\""
-          continue
-          ;;
-        *)
-          echo "Could not determine whether jig-dev-proxy v$version is already published; crates.io returned HTTP $dependency_status." >&2
-          exit 1
-          ;;
-      esac
-    fi
-    run cargo publish -p "$package_name" --locked --dry-run "${cargo_dirty_flag[@]}"
+    dependency_status="$(crate_version_status "$package_name" "$version")"
+    case "$dependency_status" in
+      200)
+        run cargo publish -p "$package_name" --locked --dry-run "${cargo_dirty_flag[@]}"
+        ;;
+      404)
+        echo "$package_name v$version is not on crates.io yet; dry-running with local workspace dependency patches before any real crate publish."
+        cargo_publish_patch_args_for "$package_name"
+        run cargo publish -p "$package_name" --locked --dry-run "${cargo_dirty_flag[@]}" "${cargo_publish_patch_args[@]}"
+        ;;
+      *)
+        echo "Could not determine whether $package_name v$version is already published; crates.io returned HTTP $dependency_status." >&2
+        exit 1
+        ;;
+    esac
   done
 
   echo "Release check passed for workspace crates v$version."
