@@ -85,7 +85,7 @@ fn seed_answers_only_serializes_provided_values() {
 }
 
 #[test]
-fn initial_next_steps_are_tailored_to_rendered_config() {
+fn initial_next_steps_and_notes_are_tailored_to_rendered_config() {
     assert_eq!(template_progress_label(None), "default jig-sh template");
     assert_eq!(template_progress_label(Some("/tmp/jig-sh")), "/tmp/jig-sh");
 
@@ -105,7 +105,6 @@ fn initial_next_steps_are_tailored_to_rendered_config() {
     let steps = initial_next_steps(InitialCommand::Adopt, &destination, &result);
 
     assert_eq!(steps[0], "cd /tmp/demo");
-    assert!(steps[1].starts_with("Review .jig.toml"));
     assert!(steps.iter().any(|step| step == "scripts/jig bootstrap"));
     assert!(
         steps
@@ -115,44 +114,66 @@ fn initial_next_steps_are_tailored_to_rendered_config() {
     assert!(
         steps
             .iter()
-            .any(|step| step == "scripts/jig check contract")
-    );
-    assert!(
-        steps
-            .iter()
-            .any(|step| step == "scripts/jig check typescript-lint")
-    );
-    assert!(
-        steps
-            .iter()
-            .any(|step| step == "scripts/jig check typescript-typecheck")
-    );
-    assert!(
-        steps
-            .iter()
-            .any(|step| step == "scripts/jig check typescript-build")
-    );
-    assert!(
-        steps
-            .iter()
-            .any(|step| step == "scripts/jig check typescript-coverage")
-    );
-    assert!(steps.iter().any(|step| step == "scripts/jig dev"));
-    assert!(
-        steps
-            .iter()
             .any(|step| step == "scripts/jig agent bootstrap")
     );
-    assert!(steps.iter().any(|step| step.contains("cargo-sqlx")));
+    assert!(
+        steps
+            .iter()
+            .any(|step| step == "scripts/jig check contract")
+    );
+    assert!(steps.iter().any(|step| step == "scripts/jig check test"));
+    assert!(
+        steps
+            .iter()
+            .any(|step| step.contains("scripts/jig check sqlx"))
+    );
     assert!(
         steps
             .iter()
             .any(|step| step.contains("scripts/dump-schema.sh"))
     );
+    assert!(steps.iter().any(|step| step == "scripts/jig dev"));
     assert!(
         steps
             .iter()
             .any(|step| step.contains("Commit the adoption diff"))
+    );
+    assert!(!steps.iter().any(|step| step.starts_with("Review ")));
+    let bootstrap_index = steps
+        .iter()
+        .position(|step| step == "scripts/jig bootstrap")
+        .unwrap();
+    let doctor_index = steps
+        .iter()
+        .position(|step| step == "scripts/jig doctor --summary")
+        .unwrap();
+    let test_index = steps
+        .iter()
+        .position(|step| step == "scripts/jig check test")
+        .unwrap();
+    let contract_index = steps
+        .iter()
+        .position(|step| step == "scripts/jig check contract")
+        .unwrap();
+    assert!(bootstrap_index < doctor_index);
+    assert!(doctor_index < contract_index);
+    assert!(contract_index < test_index);
+
+    let notes = initial_notes(Vec::new(), true, None);
+    assert!(
+        notes
+            .iter()
+            .any(|note| note.contains("Review generated .jig.toml"))
+    );
+    assert!(
+        notes
+            .iter()
+            .any(|note| note.contains("scripts/jig check typescript-lint"))
+    );
+    assert!(
+        notes
+            .iter()
+            .any(|note| note.contains("scripts/jig check contract"))
     );
 
     let preview_steps = initial_next_steps(
@@ -176,7 +197,7 @@ fn initial_next_steps_are_tailored_to_rendered_config() {
     assert!(
         preview_steps
             .iter()
-            .any(|step| step.contains("jig adopt --write"))
+            .any(|step| step.contains("jig adopt . --write"))
     );
     assert!(
         preview_steps
@@ -1592,7 +1613,7 @@ fn adopt_previews_by_default_without_writing_files() {
             .as_array()
             .unwrap()
             .iter()
-            .any(|step| step.as_str().unwrap().contains("jig adopt --write"))
+            .any(|step| step.as_str().unwrap().contains("jig adopt . --write"))
     );
     assert!(!repo.join(".jig.toml").exists());
     assert!(!repo.join("scripts/jig").exists());

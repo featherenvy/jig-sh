@@ -184,6 +184,7 @@ fn runtime_command_from_cli(command: CommandKind) -> RuntimeCommand {
         CommandKind::Work(command) => RuntimeCommand::Work(command.into()),
         CommandKind::State(command) => RuntimeCommand::State(command.into()),
         CommandKind::Init(_)
+        | CommandKind::Presets
         | CommandKind::Adopt(_)
         | CommandKind::Update(_)
         | CommandKind::Doctor(_)

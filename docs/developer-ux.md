@@ -8,10 +8,12 @@ That front door is intentionally repo-local. Developers do not need to remember 
 
 Jig splits the first-run experience into two cases:
 
-- `jig init` creates a new repository with the harness already present.
+- `jig init` creates a new repository with the harness already present, optionally with generated starter application code from a preset.
 - `jig adopt` adds the harness to an existing repository while preserving project-owned files and guidance.
 
 Both flows generate the same core assets: `.jig.toml`, `scripts/jig`, `.mcp.json`, root agent guidance, `agent-map.md`, `.agent/PLANS.md`, `.agent/jig-contract.json`, scripts, and CI workflows. Existing root `AGENTS.md` content is preserved; Jig only manages the marked block between the Jig comments. Existing root `Makefile` content also remains project-owned, because generated commands are routed through `scripts/jig`.
+
+The entry commands are intentionally separate. Start a new repo with `jig init`; add Jig to a repo that already exists with `jig adopt .`, which previews by default and applies only when re-run with `--write`. Use `jig presets` before greenfield app scaffolding as the reference for available starter shapes, defaults, frontend shorthands, examples, and ownership rules.
 
 The practical result is that a new contributor can start with a small command set:
 
@@ -23,6 +25,8 @@ scripts/jig check fmt
 scripts/jig check clippy
 scripts/jig check test
 ```
+
+`doctor --summary` is the short onboarding readiness pass, including harness and contract status without recording gate evidence. `scripts/jig check contract` records the contract gate evidence expected by reviews and CI.
 
 Those commands are boring on purpose. They are meant to be copyable by humans, agents, onboarding docs, and CI without each caller having to infer project layout.
 
@@ -50,6 +54,7 @@ jig init /path/to/new-repo --repo-name new-repo --sqlx-enabled false
 When the repo should start with an app, use a preset. The Rust + React preset creates the Jig harness, Rust workspace, API binary, core crate, main backend crate, test-support crate, optional SQLx DB crate, and requested frontend apps in one pass:
 
 ```sh
+jig presets
 jig init /path/to/new-repo \
   --preset rust-react \
   --db postgres \
@@ -57,6 +62,8 @@ jig init /path/to/new-repo \
 ```
 
 `web` and `admin` generate Vite React apps, with `admin` normalized to the `admin-panel` directory; `landing` generates an Astro marketing app. The DB crate is generated as a starting point and is not connected to API startup until the project wires in `DATABASE_URL` and migration policy. The generated `.jig.toml` wires those apps into `scripts/jig dev` and the TypeScript/web check gates, defaults Rust roots to `apps` and `crates`, uses `bun` unless a package manager is supplied, and leaves schema dumps disabled until the project provides a command. Use `--frontends` as the canonical multi-app form; repeat `--frontend name[:kind]` for one-off additions.
+
+Preset application code is a starter shape, not a managed framework. After init, the backend crates and frontend apps are project-owned; `jig update` updates the harness and will not migrate or overwrite scaffolded application source.
 
 Rust backend repos can opt into migration and SQLx checks from the start:
 

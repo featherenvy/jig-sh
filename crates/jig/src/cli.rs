@@ -94,6 +94,15 @@ Examples:
   jig info --summary
   jig explain --summary";
 
+const PRESETS_AFTER_HELP: &str = "\
+Use presets with `jig init` when you want Jig to create starter application code
+and the repo harness together.
+
+Examples:
+  jig presets
+  jig init ./my-app --preset rust-react
+  jig init ./my-app --preset rust-react --db postgres --frontends web,landing,admin";
+
 const VAULT_AFTER_HELP: &str = "\
 Jig Vault stores local secrets outside the repository. Terminal use prompts for
 the vault passphrase; scripts can set JIG_VAULT_PASSPHRASE. Command-line
@@ -110,6 +119,9 @@ pub(crate) enum CommandKind {
     /// Create a new repository and render Jig harness files into it.
     #[command(name = tool_defs::cli_command::INIT)]
     Init(bootstrap::InitOpts),
+    /// Show available project scaffolds for `jig init`.
+    #[command(name = tool_defs::cli_command::PRESETS, after_help = PRESETS_AFTER_HELP)]
+    Presets,
     /// Adopt Jig harness files into an existing repository.
     #[command(name = tool_defs::cli_command::ADOPT)]
     Adopt(bootstrap::AdoptOpts),

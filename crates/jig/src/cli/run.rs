@@ -51,6 +51,15 @@ pub(crate) fn run() -> Result<()> {
             }
             Ok(())
         }
+        CommandKind::Presets => {
+            let output = bootstrap::scaffold_presets_report();
+            if json_output {
+                print_json(&output)?;
+            } else {
+                print_presets_human_summary(&output)?;
+            }
+            Ok(())
+        }
         CommandKind::Adopt(opts) => {
             let output = bootstrap::run_adopt(opts)?;
             if json_output {
@@ -295,6 +304,82 @@ fn print_init_human_summary(output: &serde_json::Value) -> Result<()> {
     Ok(())
 }
 
+fn print_presets_human_summary(output: &serde_json::Value) -> Result<()> {
+    let mut stdout = io::stdout().lock();
+    stdout.write_all(format_presets_human_summary(output).as_bytes())?;
+    Ok(())
+}
+
+pub(super) fn format_presets_human_summary(output: &serde_json::Value) -> String {
+    let mut summary = String::new();
+    summary.push_str("available presets\n");
+    let presets = output["presets"]
+        .as_array()
+        .expect("presets report must include a presets array");
+    if presets.is_empty() {
+        summary.push_str("  No presets are currently registered.\n");
+        return summary;
+    }
+    for (index, preset) in presets.iter().enumerate() {
+        if index > 0 {
+            summary.push('\n');
+        }
+        let name = preset["name"].as_str().unwrap_or("<unknown>");
+        let summary_text = preset["summary"].as_str().unwrap_or("");
+        summary.push_str(&format!("  {name}\n"));
+        if !summary_text.is_empty() {
+            summary.push_str(&format!("    {summary_text}\n"));
+        }
+        if let Some(defaults) = preset["defaults"].as_array()
+            && !defaults.is_empty()
+        {
+            summary.push_str("    defaults:\n");
+            for default in defaults.iter().filter_map(serde_json::Value::as_str) {
+                summary.push_str(&format!("      - {default}\n"));
+            }
+        }
+        if let Some(layout) = preset["layout"].as_array()
+            && !layout.is_empty()
+        {
+            summary.push_str("    generated layout:\n");
+            for path in layout.iter().filter_map(serde_json::Value::as_str) {
+                summary.push_str(&format!("      - {path}\n"));
+            }
+        }
+        if let Some(frontends) = preset["frontend_shorthands"].as_array()
+            && !frontends.is_empty()
+        {
+            summary.push_str("    frontend shorthands:\n");
+            for frontend in frontends {
+                let shorthand = frontend["name"].as_str().unwrap_or("<unknown>");
+                let expands_to = frontend["expands_to"].as_str().unwrap_or("");
+                summary.push_str(&format!("      - {shorthand}: {expands_to}\n"));
+            }
+        }
+        if let Some(examples) = preset["examples"].as_array()
+            && !examples.is_empty()
+        {
+            summary.push_str("    examples:\n");
+            for example in examples.iter().filter_map(serde_json::Value::as_str) {
+                summary.push_str(&format!("      {example}\n"));
+            }
+        }
+        if let Some(ownership) = preset["ownership"].as_str() {
+            summary.push_str("    ownership:\n");
+            summary.push_str(&format!("      - {ownership}\n"));
+        }
+        if let Some(non_goals) = preset["non_goals"].as_array()
+            && !non_goals.is_empty()
+        {
+            summary.push_str("    non-goals:\n");
+            for non_goal in non_goals.iter().filter_map(serde_json::Value::as_str) {
+                summary.push_str(&format!("      - {non_goal}\n"));
+            }
+        }
+    }
+    summary
+}
+
 pub(super) fn format_init_human_summary(output: &serde_json::Value) -> String {
     let mut summary = String::new();
     summary.push_str("init summary\n");
@@ -519,13 +604,16 @@ fn missing_init_path_hint(error: &clap::Error) -> Option<&'static str> {
 
     Some(
         "\
-`jig init` creates or populates a new destination directory.
+`jig init` creates a new Jig-managed repository.
+Use `jig adopt .` for an existing repository.
 
 Use one of:
   jig init /path/to/new-repo --repo-name new-repo --sqlx-enabled false
+  jig init /path/to/new-repo --preset rust-react
   jig init /path/to/new-repo --preset rust-react --db postgres --frontends web,landing,admin
   jig adopt .              # preview Jig adoption for this existing repo
-  jig adopt . --write      # apply Jig adoption to this existing repo",
+  jig adopt . --write      # apply Jig adoption to this existing repo
+  jig presets              # list available project scaffolds",
     )
 }
 

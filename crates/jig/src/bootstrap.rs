@@ -69,88 +69,182 @@ const TEMPLATE_LOCAL_PATH_KEY: &str = "_template_local_path";
 
 #[derive(Args, Clone, Debug, Default)]
 pub struct AnswerOpts {
-    #[arg(long, help = "Read renderer answers from a TOML file")]
+    #[arg(
+        long,
+        help_heading = "Automation",
+        help = "Read renderer answers from a TOML file"
+    )]
     pub answers_file: Option<PathBuf>,
-    #[arg(long, help = "Repository display name written into generated docs")]
+    #[arg(
+        long,
+        help_heading = "Common Answers",
+        help = "Repository display name written into generated docs"
+    )]
     pub repo_name: Option<String>,
     #[arg(
         long,
+        help_heading = "Common Answers",
         help = "Default branch used for generated CI and comparison commands"
     )]
     pub default_branch: Option<String>,
-    #[arg(long, help = "GitHub Actions runs-on value for generated workflows")]
+    #[arg(
+        long,
+        help_heading = "Common Answers",
+        help = "GitHub Actions runs-on value for generated workflows"
+    )]
     pub ci_github_runner: Option<String>,
-    #[arg(long, help = "Exact Jig runtime version to pin in generated repos")]
+    #[arg(
+        long,
+        help_heading = "Advanced Template Source",
+        help = "Exact Jig runtime version to pin in generated repos"
+    )]
     pub jig_version: Option<String>,
     #[arg(
         long,
+        help_heading = "Advanced Template Source",
         help = "Portable canonical template source URL for future updates"
     )]
     pub template_source_url: Option<String>,
-    #[arg(long, help = "Generate SQLx and migration contract tools")]
+    #[arg(
+        long,
+        help_heading = "Common Answers",
+        help = "Generate SQLx and migration contract tools"
+    )]
     pub sqlx_enabled: Option<bool>,
     #[arg(
         long = "rust-crate-root",
+        help_heading = "Common Answers",
         help = "Directory whose direct children are Rust crates; may be repeated"
     )]
     pub rust_crate_roots: Vec<String>,
-    #[arg(long, help = "SQL migration directory for SQLx-enabled repos")]
+    #[arg(
+        long,
+        help_heading = "Common Answers",
+        help = "SQL migration directory for SQLx-enabled repos"
+    )]
     pub rust_migration_dir: Option<String>,
-    #[arg(long, help = "Committed SQLx metadata directory")]
+    #[arg(
+        long,
+        help_heading = "Common Answers",
+        help = "Committed SQLx metadata directory"
+    )]
     pub rust_sqlx_metadata_dir: Option<String>,
-    #[arg(long, help = "Generate schema dump and freshness commands")]
+    #[arg(
+        long,
+        help_heading = "Common Answers",
+        help = "Generate schema dump and freshness commands"
+    )]
     pub schema_dump_enabled: Option<bool>,
-    #[arg(long, help = "Command used by scripts/jig schema-dump")]
+    #[arg(
+        long,
+        help_heading = "Advanced Command Overrides",
+        help = "Command used by scripts/jig schema-dump"
+    )]
     pub schema_dump_command: Option<String>,
-    #[arg(long, help = "Command used by legacy schema-check manifests")]
+    #[arg(
+        long,
+        help_heading = "Advanced Command Overrides",
+        help = "Command used by legacy schema-check manifests"
+    )]
     pub schema_check_command: Option<String>,
-    #[arg(long, help = "Command used by scripts/jig check sqlx")]
+    #[arg(
+        long,
+        help_heading = "Advanced Command Overrides",
+        help = "Command used by scripts/jig check sqlx"
+    )]
     pub sqlx_check_command: Option<String>,
-    #[arg(long, help = "Command used by legacy migration-add manifests")]
+    #[arg(
+        long,
+        help_heading = "Advanced Command Overrides",
+        help = "Command used by legacy migration-add manifests"
+    )]
     pub migration_add_command: Option<String>,
-    #[arg(long, help = "Command used by scripts/jig bootstrap")]
+    #[arg(
+        long,
+        help_heading = "Advanced Command Overrides",
+        help = "Command used by scripts/jig bootstrap"
+    )]
     pub bootstrap_command: Option<String>,
-    #[arg(long, help = "Command used by legacy contract-check manifests")]
+    #[arg(
+        long,
+        help_heading = "Advanced Command Overrides",
+        help = "Command used by legacy contract-check manifests"
+    )]
     pub contract_check_command: Option<String>,
-    #[arg(long, help = "Deprecated; configure [dev] and [[dev.apps]] instead")]
+    #[arg(
+        long,
+        help_heading = "Advanced Command Overrides",
+        help = "Deprecated; configure [dev] and [[dev.apps]] instead"
+    )]
     pub dev_command: Option<String>,
-    #[arg(long, help = "Command used by scripts/jig check fmt")]
+    #[arg(
+        long,
+        help_heading = "Advanced Command Overrides",
+        help = "Command used by scripts/jig check fmt"
+    )]
     pub rust_fmt_check_command: Option<String>,
-    #[arg(long, help = "Command used by scripts/jig check clippy")]
+    #[arg(
+        long,
+        help_heading = "Advanced Command Overrides",
+        help = "Command used by scripts/jig check clippy"
+    )]
     pub rust_clippy_command: Option<String>,
-    #[arg(long, help = "Command used by scripts/jig check test")]
+    #[arg(
+        long,
+        help_heading = "Advanced Command Overrides",
+        help = "Command used by scripts/jig check test"
+    )]
     pub rust_test_command: Option<String>,
-    #[arg(long, help = "Command used by scripts/jig check test-locked")]
+    #[arg(
+        long,
+        help_heading = "Advanced Command Overrides",
+        help = "Command used by scripts/jig check test-locked"
+    )]
     pub rust_test_locked_command: Option<String>,
-    #[arg(long, help = "Web package manager for generated web app checks")]
+    #[arg(
+        long,
+        help_heading = "Common Answers",
+        help = "Web package manager for generated web app checks"
+    )]
     pub web_package_manager: Option<String>,
     #[arg(
         long = "frontend-app",
+        help_heading = "Common Answers",
         value_parser = parse_frontend_app,
-        help = "Frontend CI app as name:dir:coverage_threshold[:kind]; kind defaults to vite; package.json must expose lint, typecheck, build:bundle, and test:coverage; may be repeated"
+        help = "Existing frontend app to wire into CI and dev checks",
+        long_help = "Frontend CI app as name:dir:coverage_threshold[:kind]. Kind defaults to vite. Example: --frontend-app web:web:80:vite. package.json must expose lint, typecheck, build:bundle, and test:coverage; may be repeated."
     )]
     pub frontend_apps: Vec<FrontendApp>,
 }
 
 #[derive(Args, Clone, Debug)]
 #[command(after_help = "\
-Templates:
-  Release builds default to the official jig-sh harness template:
-  https://github.com/bpcakes/jig-sh.git
+For existing repositories, use:
+  jig adopt .
 
-  Release builds pin omitted --template to this jig version's release tag.
-  Unreleased or dirty local builds use templates embedded in the jig binary unless --vcs-ref is supplied.
+Templates:
+  Omit --template for the default jig-sh harness template.
+  Release builds pin that template to this jig version's release tag.
+  Unreleased local builds use templates embedded in the jig binary unless --vcs-ref is supplied.
+
+Scaffold ownership:
+  Presets create starter application code once. After creation, that app code is project-owned.
+  `jig update` keeps the Jig harness current; it does not rewrite scaffolded app code.
 
 Examples:
   jig init /path/to/new-repo --repo-name new-repo --sqlx-enabled false
+  jig init /path/to/new-repo --preset rust-react
+  jig init /path/to/new-repo --preset rust-react --db postgres --frontends web,landing,admin
+  jig presets
   jig init /path/to/new-repo --template /path/to/jig-sh --template-mode committed --repo-name new-repo --sqlx-enabled false")]
 pub struct InitOpts {
-    #[arg(help = "Destination directory to create or populate")]
+    #[arg(help = "Destination directory for the new repository")]
     pub path: PathBuf,
     #[command(flatten)]
     pub scaffold: ScaffoldOpts,
     #[arg(
         long,
+        help_heading = "Advanced Template Source",
         value_name = "PATH_OR_GIT_URL",
         help = "Template source to render; defaults to the official jig-sh template",
         long_help = "Template source to render. Release builds default to the official jig-sh template at https://github.com/bpcakes/jig-sh.git pinned to the release tag for this jig version; passing that canonical HTTPS URL explicitly, with or without .git, has the same pinned behavior unless --vcs-ref is also provided. Unreleased or dirty local builds use templates embedded in the jig binary for omitted --template, avoiding a stale release-tag lookup during local development. For checkout-driven template development, pass the path to your jig-sh checkout, for example /Users/you/src/jig-sh. For remote forks, SSH URLs, or private harnesses, pass a git URL. The source must contain templates/project."
@@ -159,21 +253,35 @@ pub struct InitOpts {
     #[arg(
         long,
         value_enum,
+        help_heading = "Advanced Template Source",
         help = "How to read a local git template checkout",
         long_help = "How to read a local git template checkout. The default for local git paths is committed, which renders from clean HEAD and refuses dirty template changes."
     )]
     pub template_mode: Option<TemplateMode>,
-    #[arg(long, help = "Git revision to render from the template source")]
+    #[arg(
+        long,
+        help_heading = "Advanced Template Source",
+        help = "Git revision to render from the template source"
+    )]
     pub vcs_ref: Option<String>,
     #[arg(
         long,
+        help_heading = "Safety",
         help = "Allow init to write into a non-empty destination and overwrite existing scaffold files",
         long_help = "Allow init to write into a non-empty destination and overwrite existing scaffold files. Template-to-scaffold path collisions are still rejected because they indicate a preset/template ownership bug."
     )]
     pub force: bool,
-    #[arg(long, help = "Use default answers for omitted configuration prompts")]
+    #[arg(
+        long,
+        help_heading = "Automation",
+        help = "Use default answers for omitted configuration prompts"
+    )]
     pub defaults: bool,
-    #[arg(long, help = "Fail instead of prompting for missing answers")]
+    #[arg(
+        long,
+        help_heading = "Automation",
+        help = "Fail instead of prompting for missing answers"
+    )]
     pub no_input: bool,
     #[command(flatten)]
     pub answers: AnswerOpts,
@@ -287,26 +395,30 @@ pub struct ScaffoldOpts {
     #[arg(
         long,
         value_enum,
-        help = "Project scaffold to generate alongside the Jig harness"
+        help_heading = "Project Shape",
+        help = "Project scaffold to generate alongside the Jig harness; run `jig presets` to inspect available presets"
     )]
     pub preset: Option<ScaffoldPreset>,
     #[arg(
         long,
         value_enum,
+        help_heading = "Project Shape",
         help = "Database scaffold for presets that support a Rust backend"
     )]
     pub db: Option<ScaffoldDb>,
     #[arg(
         long = "frontend",
+        help_heading = "Project Shape",
         value_parser = parse_scaffold_frontend,
-        help = "Frontend scaffold as name[:kind], e.g. web:spa, landing:astro, admin-panel:admin; may be repeated"
+        help = "Frontend scaffold as name[:kind], e.g. web:spa, landing:astro, admin-panel:admin; may be repeated. Bare web, landing, and admin use preset shorthands."
     )]
     pub frontends: Vec<ScaffoldFrontend>,
     #[arg(
         long = "frontends",
+        help_heading = "Project Shape",
         value_delimiter = ',',
         value_parser = parse_scaffold_frontend,
-        help = "Comma-separated frontend scaffolds, e.g. web,landing,admin-panel"
+        help = "Comma-separated frontend scaffolds, e.g. web,landing,admin. Bare web, landing, and admin use preset shorthands."
     )]
     pub frontend_list: Vec<ScaffoldFrontend>,
 }
@@ -321,6 +433,86 @@ pub enum ScaffoldDb {
     None,
     Postgres,
     Sqlite,
+}
+
+#[derive(Debug, Serialize)]
+struct ScaffoldPresetReport {
+    name: &'static str,
+    summary: &'static str,
+    defaults: Vec<&'static str>,
+    layout: Vec<&'static str>,
+    frontend_shorthands: Vec<ScaffoldFrontendShorthandReport>,
+    examples: Vec<&'static str>,
+    ownership: &'static str,
+    non_goals: Vec<&'static str>,
+}
+
+#[derive(Debug, Serialize)]
+struct ScaffoldFrontendShorthandReport {
+    name: &'static str,
+    expands_to: &'static str,
+}
+
+pub fn scaffold_presets_report() -> Value {
+    let presets = ScaffoldPreset::value_variants()
+        .iter()
+        .copied()
+        .map(ScaffoldPreset::report)
+        .collect::<Vec<_>>();
+    json!({
+        "ok": true,
+        "command": crate::tool_defs::cli_command::PRESETS,
+        "presets": presets
+    })
+}
+
+impl ScaffoldPreset {
+    fn report(self) -> ScaffoldPresetReport {
+        match self {
+            Self::RustReact => ScaffoldPresetReport {
+                name: "rust-react",
+                summary: "Rust API workspace plus optional Vite React, Astro, and admin frontend apps.",
+                defaults: vec![
+                    "Rust crate roots default to apps and crates.",
+                    "Frontends default to web when omitted.",
+                    "Database scaffolding defaults to none; pass --db postgres or --db sqlite when wanted.",
+                    "Generated frontend checks default to bun unless --web-package-manager is supplied.",
+                    "Schema dumps stay disabled until a command is configured.",
+                ],
+                layout: vec![
+                    "apps/<repo>-api",
+                    "crates/<repo>-core",
+                    "crates/<repo>",
+                    "crates/<repo>-test-support",
+                    "crates/<repo>-db when --db postgres or --db sqlite is selected",
+                ],
+                frontend_shorthands: vec![
+                    ScaffoldFrontendShorthandReport {
+                        name: "web",
+                        expands_to: "Vite React app in web/",
+                    },
+                    ScaffoldFrontendShorthandReport {
+                        name: "landing",
+                        expands_to: "Astro site in landing/",
+                    },
+                    ScaffoldFrontendShorthandReport {
+                        name: "admin",
+                        expands_to: "Vite React admin app in admin-panel/",
+                    },
+                ],
+                examples: vec![
+                    "jig init ./my-app --preset rust-react",
+                    "jig init ./my-app --preset rust-react --db postgres --frontends web,landing,admin",
+                    "jig init ./my-app --preset rust-react --db sqlite --frontends web",
+                ],
+                ownership: "Scaffolded application code is project-owned after creation; jig update keeps the harness current and does not rewrite app code.",
+                non_goals: vec![
+                    "jig update does not migrate or overwrite scaffolded application source.",
+                    "Presets are starter shapes, not long-term application frameworks.",
+                ],
+            },
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -771,15 +963,13 @@ fn initial_next_steps(
     let destination_for_cd = destination
         .canonicalize()
         .unwrap_or_else(|_| destination.to_path_buf());
-    let mut steps = vec![
-        format!(
-            "cd {}",
-            crate::shell::quote(&destination_for_cd.display().to_string())
-        ),
-        "Review .jig.toml, AGENTS.md, agent-map.md, and generated checks.".into(),
-    ];
+    let mut steps = vec![format!(
+        "cd {}",
+        crate::shell::quote(&destination_for_cd.display().to_string())
+    )];
     if command == InitialCommand::Adopt && result.apply_report.dry_run {
-        steps.push("Re-run jig adopt --write after reviewing the preview.".into());
+        steps.push("Review the adoption preview and managed-file diff.".into());
+        steps.push("Re-run jig adopt . --write after reviewing the summary.".into());
         steps.push("No files were changed by this preview.".into());
         return steps;
     }
@@ -787,37 +977,25 @@ fn initial_next_steps(
         steps.push("scripts/jig bootstrap".into());
     }
     steps.push("scripts/jig doctor --summary".into());
-    steps.push("scripts/jig check contract".into());
-    if result.frontend_apps_configured {
-        steps.push("scripts/jig check typescript-lint".into());
-        steps.push("scripts/jig check typescript-typecheck".into());
-        steps.push("scripts/jig check typescript-build".into());
-        steps.push("scripts/jig check typescript-coverage".into());
-        steps.push("scripts/jig dev".into());
-    }
     if result.codex_skills_configured {
         steps.push("scripts/jig agent bootstrap".into());
     }
+    steps.push("scripts/jig check contract".into());
+    steps.push("scripts/jig check test".into());
+    if result.frontend_apps_configured {
+        steps.push("scripts/jig dev".into());
+    }
     if result.sqlx_enabled {
         steps.push(
-            "Run scripts/jig doctor --summary to confirm cargo-sqlx is installed; configure database access, then run scripts/jig check sqlx."
+            "Configure database access, then run scripts/jig check sqlx; doctor flags missing cargo-sqlx."
                 .into(),
         );
     }
     if result.schema_dump_enabled {
-        steps.push(
-            "Implement scripts/dump-schema.sh for this repo, then run scripts/jig schema-dump."
-                .into(),
-        );
+        steps.push("Provide scripts/dump-schema.sh, then run scripts/jig schema-dump.".into());
     }
-    steps.push("scripts/jig check agent-guides".into());
-    steps.push("scripts/jig check test".into());
     if command == InitialCommand::Adopt {
-        if result.apply_report.dry_run {
-            steps.push("No files were changed by this preview.".into());
-        } else {
-            steps.push("Commit the adoption diff after the generated checks pass.".into());
-        }
+        steps.push("Commit the adoption diff after generated checks pass.".into());
     }
     steps
 }
@@ -829,15 +1007,30 @@ fn initial_notes(
 ) -> Vec<String> {
     let mut notes = vec![
         "The first scripts/jig command may install or compile the pinned Jig runtime into this repo's local cache.".into(),
-        "Adoption validates configured frontend app package scripts and lockfiles immediately.".into(),
-        "Init records configured frontend apps without reading package.json; add lint, typecheck, build:bundle, test:coverage, and a package-manager lockfile before web CI runs.".into(),
+        "Review generated .jig.toml, AGENTS.md, agent-map.md, and check commands before relying on the harness.".into(),
+        "Re-run scripts/jig doctor --summary after setup changes to confirm readiness.".into(),
+        "Full gates remain available through scripts/jig work gates or scripts/jig check <gate>.".into(),
     ];
-    if frontend_apps_configured {
+    if scaffold_plan.is_some() {
         notes.push(
-            "Frontend coverage checks expect each test:coverage script to write coverage/coverage-summary.json in its app directory."
+            "Scaffolded application code is project-owned after creation. jig update keeps the Jig harness current and does not rewrite app code."
                 .into(),
         );
     }
+    if frontend_apps_configured {
+        notes.push(
+            "Frontend checks expect package scripts for lint, typecheck, build:bundle, and test:coverage plus a package-manager lockfile; generated preset apps include them."
+                .into(),
+        );
+        notes.push(
+            "Frontend gates are available as scripts/jig check typescript-lint, typescript-typecheck, typescript-build, and typescript-coverage."
+                .into(),
+        );
+    }
+    notes.push(
+        "Policy gates are available as scripts/jig check contract and scripts/jig check agent-guides when evidence is needed."
+            .into(),
+    );
     if let Some(note) = scaffold_plan.and_then(scaffold::InitScaffoldPlan::sanitized_repo_name_note)
     {
         notes.push(note);

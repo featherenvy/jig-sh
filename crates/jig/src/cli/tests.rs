@@ -1,5 +1,7 @@
 use super::*;
+use crate::cli::run::format_presets_human_summary;
 use crate::cli::run::{format_adopt_human_summary, format_init_human_summary};
+use clap::ValueEnum;
 #[test]
 fn template_errors_get_hint() {
     let missing_template_value =
@@ -164,7 +166,7 @@ fn adopt_human_summary_includes_reviewable_next_steps() {
             "SQLx: enabled with migrations at migrations"
         ],
         "next_steps": [
-            "Re-run jig adopt --write after reviewing the preview.",
+            "Re-run jig adopt . --write after reviewing the preview.",
             "No files were changed by this preview."
         ]
     });
@@ -176,7 +178,7 @@ fn adopt_human_summary_includes_reviewable_next_steps() {
     assert!(summary.contains("stack: Rust workspace, SQLx"));
     assert!(summary.contains(".agent/PLANS.md"));
     assert!(summary.contains("SQLx metadata directory was not detected"));
-    assert!(summary.contains("Re-run jig adopt --write"));
+    assert!(summary.contains("Re-run jig adopt . --write"));
 }
 
 #[test]
@@ -260,6 +262,33 @@ fn init_accepts_json_after_subcommand() {
 
     assert!(init.json);
     assert!(matches!(init.command, CommandKind::Init(_)));
+}
+
+#[test]
+fn parses_presets_command() {
+    let presets = Cli::try_parse_from(["jig", "presets"]).unwrap();
+
+    assert!(matches!(presets.command, CommandKind::Presets));
+}
+
+#[test]
+fn presets_summary_explains_defaults_and_ownership() {
+    let output = bootstrap::scaffold_presets_report();
+    assert_eq!(
+        output["presets"].as_array().unwrap().len(),
+        bootstrap::ScaffoldPreset::value_variants().len()
+    );
+
+    let summary = format_presets_human_summary(&output);
+
+    assert!(summary.contains("available presets"));
+    assert!(summary.contains("rust-react"));
+    assert!(summary.contains("Rust crate roots default to apps and crates."));
+    assert!(summary.contains("apps/<repo>-api"));
+    assert!(summary.contains("admin: Vite React admin app in admin-panel/"));
+    assert!(summary.contains("jig init ./my-app --preset rust-react"));
+    assert!(summary.contains("project-owned after creation"));
+    assert!(summary.contains("Presets are starter shapes, not long-term application frameworks."));
 }
 
 #[test]

@@ -11,6 +11,7 @@ fn missing_init_path_gets_actionable_hint() {
 
     assert!(hint.contains("jig init /path/to/new-repo"));
     assert!(hint.contains("--preset rust-react"));
+    assert!(hint.contains("jig presets"));
     assert!(hint.contains("jig adopt ."));
     assert!(hint.contains("jig adopt . --write"));
 }
@@ -39,6 +40,7 @@ fn missing_init_path_hint_examples_parse() {
         "web,landing,admin",
     ])
     .unwrap();
+    Cli::try_parse_from(["jig", "presets"]).unwrap();
     Cli::try_parse_from(["jig", "adopt", "."]).unwrap();
     Cli::try_parse_from(["jig", "adopt", ".", "--write"]).unwrap();
 }

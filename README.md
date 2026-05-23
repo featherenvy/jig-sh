@@ -67,6 +67,8 @@ jig init /path/to/target-repo \
   --rust-migration-dir migrations
 ```
 
+For greenfield app scaffolds, `jig presets` shows available presets, their defaults, frontend shorthands, generated layout, and ownership rules before you run `jig init`.
+
 For a greenfield Rust backend plus React frontends, let `init` scaffold the app shape and harness together:
 
 ```sh
@@ -77,6 +79,8 @@ jig init /path/to/target-repo \
 ```
 
 This creates a Cargo workspace with `apps/<repo>-api`, `crates/<repo>-core`, `crates/<repo>`, `crates/<repo>-test-support`, an optional `crates/<repo>-db`, and frontend apps such as Vite React `web` / `admin-panel` and Astro `landing`. The `admin` shorthand writes the `admin-panel/` app. The DB crate is a starting point; wire it into the API when the project is ready to use `DATABASE_URL` and migrations. The preset defaults generated Rust roots to `apps` and `crates`, uses `bun` for generated frontend checks unless overridden, and turns schema dumps off until the project provides a command. Prefer the comma-separated `--frontends` form in docs and scripts; repeat `--frontend name[:kind]` for one-off additions.
+
+Preset application code is generated once and then becomes project-owned. `jig update` keeps the Jig harness current; it does not migrate or overwrite scaffolded backend or frontend application source.
 
 For a tooling-only repo with no SQLx or migrations:
 
@@ -147,6 +151,9 @@ Use this path when you want the fastest successful loop on a new or adopted repo
 
    ```sh
    jig init /path/to/new-repo --repo-name new-repo --sqlx-enabled false
+   # or, for a generated Rust/API/frontend starter:
+   jig presets
+   jig init /path/to/new-repo --preset rust-react --frontends web,landing,admin
    # or, inside an existing repo:
    jig adopt .
    jig adopt . --write
@@ -163,11 +170,13 @@ Use this path when you want the fastest successful loop on a new or adopted repo
 
    ```sh
    scripts/jig bootstrap
-   scripts/jig check contract
-   # If doctor reports missing marketplace registration:
-   scripts/jig agent bootstrap
    scripts/jig doctor --summary
+   scripts/jig agent bootstrap
+   scripts/jig check contract
+   scripts/jig check test
    ```
+
+   Run `scripts/jig agent bootstrap` when doctor reports missing marketplace registration. `doctor --summary` is the readiness pass; it reports harness and contract status without recording gate evidence. `scripts/jig check contract` records the contract gate evidence expected by reviews and CI.
 
 4. Start structured work, run required gates, and close it only after fresh evidence exists.
 
