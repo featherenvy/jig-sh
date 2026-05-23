@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.2.0-beta.1 - 2026-05-15
+## v0.2.0-beta.1 - 2026-05-23
 
 ### Changed
 - Extract tests into dedicated modules
@@ -18,6 +18,31 @@
 - Upgrade jig contract to v2: command-based tools and enhanced validation
 - Add progress tracking to bootstrap operations with formatted terminal output
 - Add policy module for repository validation checks
+- Release v0.2.0-beta.1 with policy module and version management updates
+- Enhance CLI, agent runtime, and installation workflows
+- Add help text with examples to CLI commands
+- Add agent guides and improve launcher binary resolution
+- Improve CLI UX and developer onboarding experience
+- Add --print-plan-id and --no-receipt flags for improved CLI ergonomics
+- Consolidate check commands under unified check subcommand
+- Refactor CLI command handling, test organization, and runtime improvements
+- Implement Jig Vault - encrypted secret management and brokered execution
+- Refine jig work planning and gate handling
+- Improve harness-only defaults and work summaries
+- Hide SQLx unchecked queries TODO generator command from help
+- Split Jig feature metadata crates
+- Remove Makefile-backed jig runtime support
+- Improve Jig developer workflow diagnostics
+- Add developer workflow goal harness and enhance diagnostics
+- Improve jig adopt UX defaults
+- Improve adopt inference diagnostics
+- Improve adopt inference reporting
+- Improve adopt UX and embedded templates
+- Add Codex review gates and state archive
+- Improve adoption and work status UX
+- Improve adopt inference and reporting
+- Add rust-react scaffold templates
+- Improve init preset discovery UX
 
 ## Unreleased
 
