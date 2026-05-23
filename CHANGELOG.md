@@ -31,9 +31,9 @@
 - Enable the `dev-proxy` Cargo feature by default while preserving `--no-default-features` builds for contract/MCP-only consumers.
 
 ### Changed
-- Breaking: `jig adopt` now prints human-readable progress by default and only prints the full structured report when `--json` is supplied; `jig init` and `jig update` keep their existing JSON defaults.
+- Breaking: `jig init` and `jig adopt` now print human-readable summaries by default and only print their full structured reports when `--json` is supplied; `jig update` keeps its existing JSON default.
 - Default release builds of `jig init` and `jig adopt` to the official `jig-sh` template source pinned to the installed Jig version's release tag; unreleased or dirty local builds now use templates embedded in the binary when `--template` is omitted, with a checked-in snapshot for packaged builds and generated launchers that reuse a same-version `jig` on `PATH` and require `JIG_INSTALL_ALLOW_EMBEDDED_SOURCE_FALLBACK=1` before falling back to configured or official install sources. `--template /path/to/jig-sh` and `--vcs-ref <ref>` remain available for explicit checkout or remote template code.
-- Keep `jig adopt` terminal output human-oriented by default; scripts that consumed the previous implicit JSON output must now pass `jig adopt --json` for the full structured detection and adoption report. `jig adopt` now previews by default, returns `render_mode = "preview"` until `--write` applies files, confirms interactive writes unless `--defaults` or `--no-input` is supplied, records `.agent/state/adopt-last.json` with backups for overwritten managed files, and reports conflicts in preview instead of blocking before review. `jig init` and `jig update` continue to print JSON by default.
+- Keep `jig init` and `jig adopt` terminal output human-oriented by default; scripts that consumed the previous implicit JSON output must now pass `jig init --json` or `jig adopt --json` for the full structured bootstrap report. `jig adopt` now previews by default, returns `render_mode = "preview"` until `--write` applies files, confirms interactive writes unless `--defaults` or `--no-input` is supplied, records `.agent/state/adopt-last.json` with backups for overwritten managed files, and reports conflicts in preview instead of blocking before review. `jig update` continues to print JSON by default.
 - Stop generating placeholder crate-level `AGENTS.md` files during adoption; `scripts/jig check agent-guides` now validates existing crate guides instead of requiring low-signal stubs for every crate.
 - Remove generated Makefile support and hard cut the runtime to command-backed `scripts/jig` execution. Root `Makefile` files remain project-owned during adoption.
 - Route generated TypeScript/web checks through direct `scripts/jig check typescript-*` commands backed by `scripts/check-webapps.sh`.
@@ -64,7 +64,7 @@
 - `jig init` and `jig adopt --defaults` now default omitted SQLx answers to a tooling-only profile unless a migration directory is supplied, emit a note about that inference, and keep noninteractive adoption usable without extra SQLx flags.
 - Behavior change: SQLx adoption now leaves schema dumps disabled unless `schema_dump_enabled = true` or an explicit `schema_dump_command` is supplied, so first-run `scripts/jig doctor --summary` does not require a repo-owned `scripts/dump-schema.sh` before the repo has implemented one.
 - `jig adopt --json` now reports retired cleanup paths separately as `adoption_profile.retired_managed_files` instead of mixing them into active `managed_files`.
-- `jig init` and `jig adopt --json` now expose the managed-file summary as `render_report`.
+- `jig init --json` and `jig adopt --json` now expose the managed-file summary as `render_report`.
 - Backend-only adoption no longer writes disabled web workflow/scripts; previously generated backend-only web scaffolding is now treated as retired managed output during refresh.
 - Generated frontend coverage enforcement now uses `scripts/enforce-coverage.cjs` so ESM packages with `"type": "module"` can run the gate; old `scripts/enforce-coverage.js` is retired, and generated guidance now names the required `coverage/coverage-summary.json` artifact.
 - `jig adopt` now detects nested Rust crates even when a repo has no root `Cargo.toml`, and generated Rust check commands run each inferred nested manifest instead of reporting a false skip.
@@ -76,6 +76,8 @@
 - Vite proxy host support relies on Vite's `__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS` compatibility hook; configure Vite `server.allowedHosts` explicitly if a Vite release changes that hook.
 - Windows builds parse and run non-certificate proxy flows, but automatic HTTPS certificate generation/trust remains unsupported until owner-only ACL hardening for private key files is implemented.
 - Document `JIG_PROXY_STATE_DIR`, proxy CA trust scope, and local dev proxy usage more explicitly.
+- Generated `--preset rust-react` bootstrap commands now install generated frontend app dependencies before `scripts/jig dev` runs them.
+- Generated `--preset rust-react` frontend dev scripts now install missing app dependencies before launching the dev server, so a fresh scaffold can run `scripts/jig dev` even before an explicit `scripts/jig bootstrap`.
 
 ### Security
 - `vault run --file` writes each secret to a private Unix `0600` temp file under a `0700` temp directory, wipes brokered temp files before normal cleanup, and removes the temp directory when the brokered process exits; this promotes `tempfile` to a runtime dependency of `jig-vault`.

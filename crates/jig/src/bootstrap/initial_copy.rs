@@ -34,6 +34,7 @@ pub(super) struct BootstrapCopyRequest<'a> {
     pub(super) dry_run: bool,
     pub(super) backup_root: Option<PathBuf>,
     pub(super) seed_repo_path: Option<&'a Path>,
+    pub(super) reserved_output_paths: Vec<PathBuf>,
     pub(super) progress: CliProgress,
 }
 
@@ -99,6 +100,7 @@ pub(super) fn render_and_copy_bootstrap_template(
         "managed files",
         format!("{} path(s)", render_preview.managed_files.len()),
     );
+    reject_reserved_output_collisions(&staged.managed_paths, &request.reserved_output_paths)?;
 
     let apply_report = apply_staged_render(
         &staged,
@@ -131,6 +133,28 @@ pub(super) fn render_and_copy_bootstrap_template(
         apply_report,
         notes,
     })
+}
+
+fn reject_reserved_output_collisions(
+    managed_paths: &BTreeSet<PathBuf>,
+    reserved_output_paths: &[PathBuf],
+) -> Result<()> {
+    // This guards preset/template ownership bugs, so --force must not bypass it.
+    if reserved_output_paths.is_empty() {
+        return Ok(());
+    }
+    let collisions = reserved_output_paths
+        .iter()
+        .filter(|path| managed_paths.contains(path.as_path()))
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>();
+    if !collisions.is_empty() {
+        bail!(
+            "Internal scaffold/template path conflict (preset/template bug): {}",
+            collisions.join(", ")
+        );
+    }
+    Ok(())
 }
 
 impl AdoptionRenderPreview {
@@ -387,5 +411,25 @@ fn insert_string(mapping: &mut Table, key: &str, value: Option<&str>) {
 fn insert_bool(mapping: &mut Table, key: &str, value: Option<bool>) {
     if let Some(value) = value {
         mapping.insert(key.to_string(), TomlValue::Boolean(value));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_reserved_output_collisions_before_apply() {
+        let managed_paths = BTreeSet::from([PathBuf::from("Cargo.toml")]);
+        let error = reject_reserved_output_collisions(
+            &managed_paths,
+            &["Cargo.toml".into(), "apps/demo-api/src/main.rs".into()],
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains(
+            "Internal scaffold/template path conflict (preset/template bug): Cargo.toml"
+        ));
     }
 }

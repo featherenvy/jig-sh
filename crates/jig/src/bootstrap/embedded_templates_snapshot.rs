@@ -1,4 +1,7 @@
 // Generated from templates/project. Update with JIG_REFRESH_EMBEDDED_TEMPLATE_SNAPSHOT=1 cargo check -p jig-sh.
+#[cfg(test)]
+#[allow(dead_code)]
+pub(super) const EMBEDDED_TEMPLATE_FILES_FROM_SNAPSHOT: bool = true;
 pub(super) static EMBEDDED_TEMPLATE_FILES: &[EmbeddedTemplateFile] = &[
     EmbeddedTemplateFile { relative_path: ".agent/.cache/.gitignore.jinja", contents: r#"*
 !.gitignore

@@ -8,6 +8,7 @@ fn init_rejects_unsafe_frontend_app_values() {
 
     let bad_name = run_init(InitOpts {
         path: temp.path().join("bad-name"),
+        scaffold: ScaffoldOpts::default(),
         template: Some(template.path().display().to_string()),
         template_mode: None,
         vcs_ref: None,
@@ -32,6 +33,7 @@ fn init_rejects_unsafe_frontend_app_values() {
 
     let bad_dir = run_init(InitOpts {
         path: temp.path().join("bad-dir"),
+        scaffold: ScaffoldOpts::default(),
         template: Some(template.path().display().to_string()),
         template_mode: None,
         vcs_ref: None,
@@ -56,6 +58,7 @@ fn init_rejects_unsafe_frontend_app_values() {
 
     let dot_dir = run_init(InitOpts {
         path: temp.path().join("dot-dir"),
+        scaffold: ScaffoldOpts::default(),
         template: Some(template.path().display().to_string()),
         template_mode: None,
         vcs_ref: None,
@@ -80,6 +83,7 @@ fn init_rejects_unsafe_frontend_app_values() {
 
     let empty_segment_dir = run_init(InitOpts {
         path: temp.path().join("empty-segment-dir"),
+        scaffold: ScaffoldOpts::default(),
         template: Some(template.path().display().to_string()),
         template_mode: None,
         vcs_ref: None,
@@ -104,6 +108,7 @@ fn init_rejects_unsafe_frontend_app_values() {
 
     let absolute_dir = run_init(InitOpts {
         path: temp.path().join("absolute-dir"),
+        scaffold: ScaffoldOpts::default(),
         template: Some(template.path().display().to_string()),
         template_mode: None,
         vcs_ref: None,
@@ -128,6 +133,7 @@ fn init_rejects_unsafe_frontend_app_values() {
 
     let unsupported_dir = run_init(InitOpts {
         path: temp.path().join("unsupported-dir"),
+        scaffold: ScaffoldOpts::default(),
         template: Some(template.path().display().to_string()),
         template_mode: None,
         vcs_ref: None,
@@ -160,6 +166,7 @@ fn init_reports_and_preserves_legacy_dev_command_answer() {
     let repo = temp.path().join("repo");
     let output = run_init(InitOpts {
         path: repo.clone(),
+        scaffold: ScaffoldOpts::default(),
         template: Some(template.path().display().to_string()),
         template_mode: None,
         vcs_ref: None,
@@ -428,6 +435,7 @@ fn init_renders_web_commands_for_all_supported_package_managers() {
         let repo = temp.path().join(package_manager);
         run_init(InitOpts {
             path: repo.clone(),
+            scaffold: ScaffoldOpts::default(),
             template: Some(template.path().display().to_string()),
             template_mode: None,
             vcs_ref: None,

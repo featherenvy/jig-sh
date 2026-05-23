@@ -15,6 +15,7 @@ fn init_rejects_vcs_ref_for_non_git_local_template() {
 
     let error = run_init(InitOpts {
         path: destination,
+        scaffold: ScaffoldOpts::default(),
         template: Some(template.path().display().to_string()),
         template_mode: None,
         vcs_ref: Some("main".into()),

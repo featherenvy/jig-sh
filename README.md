@@ -38,7 +38,7 @@ Use `--value-prompt` for hidden terminal entry; interactive `secret set NAME` us
 
 ## Quick Start
 
-**Prerequisites:** Rust 1.85+, [Bun](https://bun.sh) (web targets), Postgres (when `sqlx_enabled = true`)
+**Prerequisites:** Rust 1.85+, [Bun](https://bun.sh) (web targets), and the selected database engine when SQLx is enabled
 
 ```sh
 cargo install jig-sh
@@ -66,6 +66,17 @@ jig init /path/to/target-repo \
   --repo-name target-repo \
   --rust-migration-dir migrations
 ```
+
+For a greenfield Rust backend plus React frontends, let `init` scaffold the app shape and harness together:
+
+```sh
+jig init /path/to/target-repo \
+  --preset rust-react \
+  --db postgres \
+  --frontends web,landing,admin
+```
+
+This creates a Cargo workspace with `apps/<repo>-api`, `crates/<repo>-core`, `crates/<repo>`, `crates/<repo>-test-support`, an optional `crates/<repo>-db`, and frontend apps such as Vite React `web` / `admin-panel` and Astro `landing`. The `admin` shorthand writes the `admin-panel/` app. The DB crate is a starting point; wire it into the API when the project is ready to use `DATABASE_URL` and migrations. The preset defaults generated Rust roots to `apps` and `crates`, uses `bun` for generated frontend checks unless overridden, and turns schema dumps off until the project provides a command. Prefer the comma-separated `--frontends` form in docs and scripts; repeat `--frontend name[:kind]` for one-off additions.
 
 For a tooling-only repo with no SQLx or migrations:
 
@@ -215,7 +226,7 @@ scripts/jig agent bootstrap
 
 For local dogfooding with an existing sibling `jig-skills` checkout, pass `--marketplace ../jig-skills` to `agent bootstrap`.
 
-The template does not generate application code, crate-level `AGENTS.md` files, or a schema dump implementation — those remain project-owned. SQLx and migration contract pieces are optional via `sqlx_enabled`; schema-check pieces are rendered only when schema dumps are enabled.
+By default, the template does not generate application code, crate-level `AGENTS.md` files, or a schema dump implementation; those remain project-owned. The `--preset rust-react` path is the exception: it writes starter Rust backend crates and frontend apps for a greenfield repo. SQLx and migration contract pieces are optional via `sqlx_enabled`; schema-check pieces are rendered only when schema dumps are enabled.
 
 For existing repositories, root `AGENTS.md` remains repo-owned. `jig adopt` inserts or updates only the marked Jig-managed block and preserves the rest of the file.
 
@@ -291,7 +302,7 @@ All generated repos are expected to use:
 When `sqlx_enabled` is `true`, repos are also expected to use:
 
 - SQLx workspace metadata in a shared directory such as `.sqlx/`
-- forward-only migration additions
+- repo-owned migration additions
 
 Optional web apps are expected to expose these package scripts in each configured app directory:
 

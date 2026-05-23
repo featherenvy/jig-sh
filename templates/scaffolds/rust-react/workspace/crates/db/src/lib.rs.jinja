@@ -1,0 +1,43 @@
+use std::time::Duration;
+
+use anyhow::Context;
+
+pub type DbPool = sqlx::<<[ db_pool ]>>;
+
+pub const DEFAULT_DB_TIMEOUT: Duration = Duration::from_secs(30);
+
+#[derive(Clone)]
+pub struct Db {
+    pool: DbPool,
+}
+
+impl Db {
+    pub async fn connect(database_url: &str) -> anyhow::Result<Self> {
+        Self::connect_with_timeout(database_url, DEFAULT_DB_TIMEOUT).await
+    }
+
+    pub async fn connect_with_timeout(
+        database_url: &str,
+        timeout_after: Duration,
+    ) -> anyhow::Result<Self> {
+        let pool = tokio::time::timeout(timeout_after, DbPool::connect(database_url))
+            .await
+            .with_context(|| format!("Timed out connecting to database after {timeout_after:?}"))??;
+        Ok(Self { pool })
+    }
+
+    pub fn pool(&self) -> &DbPool {
+        &self.pool
+    }
+
+    pub async fn migrate(&self) -> anyhow::Result<()> {
+        self.migrate_with_timeout(DEFAULT_DB_TIMEOUT).await
+    }
+
+    pub async fn migrate_with_timeout(&self, timeout_after: Duration) -> anyhow::Result<()> {
+        tokio::time::timeout(timeout_after, sqlx::migrate!("<<[ migration_path ]>>").run(&self.pool))
+            .await
+            .with_context(|| format!("Timed out running database migrations after {timeout_after:?}"))??;
+        Ok(())
+    }
+}

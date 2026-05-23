@@ -50,6 +50,7 @@ mod managed_paths;
 mod path;
 mod preview_seed;
 mod renderer;
+mod scaffold;
 mod staged_render;
 mod sync;
 mod template_source;
@@ -146,6 +147,8 @@ Examples:
 pub struct InitOpts {
     #[arg(help = "Destination directory to create or populate")]
     pub path: PathBuf,
+    #[command(flatten)]
+    pub scaffold: ScaffoldOpts,
     #[arg(
         long,
         value_name = "PATH_OR_GIT_URL",
@@ -162,7 +165,11 @@ pub struct InitOpts {
     pub template_mode: Option<TemplateMode>,
     #[arg(long, help = "Git revision to render from the template source")]
     pub vcs_ref: Option<String>,
-    #[arg(long, help = "Allow init to write into a non-empty destination")]
+    #[arg(
+        long,
+        help = "Allow init to write into a non-empty destination and overwrite existing scaffold files",
+        long_help = "Allow init to write into a non-empty destination and overwrite existing scaffold files. Template-to-scaffold path collisions are still rejected because they indicate a preset/template ownership bug."
+    )]
     pub force: bool,
     #[arg(long, help = "Use default answers for omitted configuration prompts")]
     pub defaults: bool,
@@ -275,6 +282,60 @@ pub enum TemplateMode {
     Committed,
 }
 
+#[derive(Args, Clone, Debug, Default)]
+pub struct ScaffoldOpts {
+    #[arg(
+        long,
+        value_enum,
+        help = "Project scaffold to generate alongside the Jig harness"
+    )]
+    pub preset: Option<ScaffoldPreset>,
+    #[arg(
+        long,
+        value_enum,
+        help = "Database scaffold for presets that support a Rust backend"
+    )]
+    pub db: Option<ScaffoldDb>,
+    #[arg(
+        long = "frontend",
+        value_parser = parse_scaffold_frontend,
+        help = "Frontend scaffold as name[:kind], e.g. web:spa, landing:astro, admin-panel:admin; may be repeated"
+    )]
+    pub frontends: Vec<ScaffoldFrontend>,
+    #[arg(
+        long = "frontends",
+        value_delimiter = ',',
+        value_parser = parse_scaffold_frontend,
+        help = "Comma-separated frontend scaffolds, e.g. web,landing,admin-panel"
+    )]
+    pub frontend_list: Vec<ScaffoldFrontend>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub enum ScaffoldPreset {
+    RustReact,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub enum ScaffoldDb {
+    None,
+    Postgres,
+    Sqlite,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ScaffoldFrontend {
+    name: String,
+    kind: ScaffoldFrontendKind,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ScaffoldFrontendKind {
+    Spa,
+    Admin,
+    Astro,
+}
+
 impl TemplateMode {
     pub(super) fn as_str(self) -> &'static str {
         match self {
@@ -290,6 +351,15 @@ pub fn run_init(opts: InitOpts) -> Result<Value> {
     progress.header_for_path("render harness into new repo", &destination);
     progress.step("validate destination", "empty directory or --force");
     progress.log_blocked_on_err(validate_init_destination(&destination, opts.force))?;
+    let scaffold_plan = progress.log_blocked_on_err(scaffold::InitScaffoldPlan::from_opts(
+        &opts.scaffold,
+        &opts.answers,
+        &destination,
+    ))?;
+    let mut answers = opts.answers.clone();
+    if let Some(plan) = &scaffold_plan {
+        plan.apply_answer_defaults(&mut answers);
+    }
     progress.step(
         "resolve template",
         template_progress_label(opts.template.as_deref()),
@@ -307,15 +377,28 @@ pub fn run_init(opts: InitOpts) -> Result<Value> {
     let copy_result = render_and_copy_bootstrap_template(BootstrapCopyRequest {
         destination: &destination,
         template: &template,
-        answers: &opts.answers,
+        answers: &answers,
         answer_input: None,
         use_defaults: opts.defaults,
         force: opts.force,
         dry_run: false,
         backup_root: None,
         seed_repo_path: None,
+        reserved_output_paths: scaffold_plan
+            .as_ref()
+            .map(scaffold::InitScaffoldPlan::output_paths)
+            .unwrap_or_default(),
         progress,
     })?;
+    let scaffold_report = if let Some(plan) = &scaffold_plan {
+        progress.step("scaffold project", plan.summary());
+        if let Some(note) = plan.sanitized_repo_name_note() {
+            progress.info("scaffold note", note);
+        }
+        Some(progress.log_blocked_on_err(plan.write(&destination, opts.force))?)
+    } else {
+        None
+    };
     let default_branch = copy_result
         .default_branch
         .as_ref()
@@ -333,9 +416,14 @@ pub fn run_init(opts: InitOpts) -> Result<Value> {
         "destination": destination.display().to_string(),
         "answers_file": ANSWERS_FILE,
         "git_initialized": git_initialized,
+        "scaffold": scaffold_report,
         "render_report": initial_render_report(&copy_result),
         "next_steps": initial_next_steps(InitialCommand::Init, &destination, &copy_result),
-        "notes": initial_notes(copy_result.notes, copy_result.frontend_apps_configured),
+        "notes": initial_notes(
+            copy_result.notes,
+            copy_result.frontend_apps_configured,
+            scaffold_plan.as_ref(),
+        ),
     }))
 }
 
@@ -394,6 +482,7 @@ pub fn run_adopt(opts: AdoptOpts) -> Result<Value> {
         dry_run: !opts.write,
         backup_root: backup_root.clone(),
         seed_repo_path: Some(&destination),
+        reserved_output_paths: Vec::new(),
         progress,
     })?;
     if opts.write {
@@ -430,7 +519,7 @@ pub fn run_adopt(opts: AdoptOpts) -> Result<Value> {
         "adoption_review": review.items,
         "render_report": initial_render_report(&copy_result),
         "next_steps": initial_next_steps(InitialCommand::Adopt, &destination, &copy_result),
-        "notes": initial_notes(copy_result.notes, copy_result.frontend_apps_configured),
+        "notes": initial_notes(copy_result.notes, copy_result.frontend_apps_configured, None),
     }))
 }
 
@@ -733,7 +822,11 @@ fn initial_next_steps(
     steps
 }
 
-fn initial_notes(extra_notes: Vec<String>, frontend_apps_configured: bool) -> Vec<String> {
+fn initial_notes(
+    extra_notes: Vec<String>,
+    frontend_apps_configured: bool,
+    scaffold_plan: Option<&scaffold::InitScaffoldPlan>,
+) -> Vec<String> {
     let mut notes = vec![
         "The first scripts/jig command may install or compile the pinned Jig runtime into this repo's local cache.".into(),
         "Adoption validates configured frontend app package scripts and lockfiles immediately.".into(),
@@ -744,6 +837,10 @@ fn initial_notes(extra_notes: Vec<String>, frontend_apps_configured: bool) -> Ve
             "Frontend coverage checks expect each test:coverage script to write coverage/coverage-summary.json in its app directory."
                 .into(),
         );
+    }
+    if let Some(note) = scaffold_plan.and_then(scaffold::InitScaffoldPlan::sanitized_repo_name_note)
+    {
+        notes.push(note);
     }
     notes.extend(extra_notes);
     notes
@@ -926,6 +1023,53 @@ fn parse_frontend_app(value: &str) -> Result<FrontendApp, String> {
         dir: parts[1].to_string(),
         coverage_threshold,
         kind: parts.get(3).copied().unwrap_or("vite").to_string(),
+    })
+}
+
+fn parse_scaffold_frontend(value: &str) -> Result<ScaffoldFrontend, String> {
+    let (raw_name, explicit_kind) = value
+        .split_once(':')
+        .map_or((value, None), |(name, kind)| (name, Some(kind)));
+    let name = match raw_name {
+        "admin" => "admin-panel",
+        other => other,
+    };
+    // Generated JS and HTML interpolate frontend titles directly, so these
+    // rules must stay narrow unless the scaffold templates add escaping.
+    if name.is_empty()
+        || !name
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+    {
+        return Err("frontend name must use ASCII letters, numbers, '-' or '_'".into());
+    }
+    if !name.chars().any(|ch| ch.is_ascii_alphanumeric()) {
+        return Err("frontend name must include at least one ASCII letter or number".into());
+    }
+    let kind = match explicit_kind {
+        Some(kind) => parse_scaffold_frontend_kind(kind)?,
+        None => match raw_name {
+            "admin" | "admin-panel" => ScaffoldFrontendKind::Admin,
+            "landing" | "marketing" | "astro" => ScaffoldFrontendKind::Astro,
+            _ => ScaffoldFrontendKind::Spa,
+        },
+    };
+    Ok(ScaffoldFrontend {
+        name: name.to_string(),
+        kind,
+    })
+}
+
+fn parse_scaffold_frontend_kind(value: &str) -> Result<ScaffoldFrontendKind, String> {
+    Ok(match value {
+        "web" | "spa" => ScaffoldFrontendKind::Spa,
+        "admin" | "admin-panel" => ScaffoldFrontendKind::Admin,
+        "landing" | "marketing" | "astro" => ScaffoldFrontendKind::Astro,
+        other => {
+            return Err(format!(
+                "unsupported frontend kind '{other}'. Expected spa, admin, or astro"
+            ));
+        }
     })
 }
 

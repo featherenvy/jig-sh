@@ -42,7 +42,15 @@ pub(crate) fn run() -> Result<()> {
     let cli = parse_cli();
     let json_output = cli.json;
     match cli.command {
-        CommandKind::Init(opts) => print_json(&bootstrap::run_init(opts)?),
+        CommandKind::Init(opts) => {
+            let output = bootstrap::run_init(opts)?;
+            if json_output {
+                print_json(&output)?;
+            } else {
+                print_init_human_summary(&output)?;
+            }
+            Ok(())
+        }
         CommandKind::Adopt(opts) => {
             let output = bootstrap::run_adopt(opts)?;
             if json_output {
@@ -281,6 +289,90 @@ fn require_vault_child_status_ok(output: &serde_json::Value) -> Result<()> {
     Ok(())
 }
 
+fn print_init_human_summary(output: &serde_json::Value) -> Result<()> {
+    let mut stdout = io::stdout().lock();
+    stdout.write_all(format_init_human_summary(output).as_bytes())?;
+    Ok(())
+}
+
+pub(super) fn format_init_human_summary(output: &serde_json::Value) -> String {
+    let mut summary = String::new();
+    summary.push_str("init summary\n");
+    push_summary_field(&mut summary, "target", output["destination"].as_str());
+    push_summary_field(&mut summary, "template", output["template"].as_str());
+
+    let report = &output["render_report"];
+    let created = array_len(&report["files_created"]);
+    let modified = array_len(&report["files_modified"]);
+    let removed = array_len(&report["files_removed"]);
+    summary.push_str(&format!(
+        "  managed files: {created} created, {modified} modified, {removed} removed\n"
+    ));
+
+    if let Some(scaffold) = output.get("scaffold").filter(|value| !value.is_null()) {
+        let preset = scaffold["preset"].as_str().unwrap_or("<unknown>");
+        let db = scaffold["db"].as_str().unwrap_or("<unknown>");
+        summary.push_str(&format!("  scaffold: {preset}"));
+        if let Some(repo_name) = scaffold["repo_name"].as_str() {
+            summary.push_str(&format!(" for {repo_name}"));
+        }
+        summary.push_str(&format!(" (db: {db})\n"));
+        let scaffold_created = array_len(&scaffold["files_created"]);
+        let scaffold_modified = array_len(&scaffold["files_modified"]);
+        let scaffold_unchanged = array_len(&scaffold["files_unchanged"]);
+        summary.push_str(&format!(
+            "  scaffold files: {scaffold_created} created, {scaffold_modified} modified, {scaffold_unchanged} unchanged\n"
+        ));
+
+        if let Some(frontends) = scaffold["frontends"].as_array()
+            && !frontends.is_empty()
+        {
+            let names = frontends
+                .iter()
+                .filter_map(|frontend| frontend["name"].as_str())
+                .collect::<Vec<_>>();
+            if !names.is_empty() {
+                summary.push_str(&format!("  frontends: {}\n", names.join(", ")));
+            }
+        }
+    }
+
+    if let Some(git_initialized) = output["git_initialized"].as_bool() {
+        summary.push_str(&format!(
+            "  git: {}\n",
+            if git_initialized {
+                "initialized"
+            } else {
+                "already present"
+            }
+        ));
+    }
+
+    if let Some(notes) = output["notes"].as_array()
+        && !notes.is_empty()
+    {
+        summary.push_str("  notes:\n");
+        for note in notes.iter().take(5).filter_map(serde_json::Value::as_str) {
+            summary.push_str(&format!("    - {note}\n"));
+        }
+        if notes.len() > 5 {
+            summary.push_str(&format!("    - and {} more\n", notes.len() - 5));
+        }
+    }
+
+    if let Some(steps) = output["next_steps"].as_array()
+        && !steps.is_empty()
+    {
+        summary.push_str("  next steps:\n");
+        for step in steps.iter().filter_map(serde_json::Value::as_str) {
+            summary.push_str(&format!("    - {step}\n"));
+        }
+    }
+
+    summary.push_str("  full report: rerun with --json\n");
+    summary
+}
+
 fn print_adopt_human_summary(output: &serde_json::Value) -> Result<()> {
     let mut stdout = io::stdout().lock();
     stdout.write_all(format_adopt_human_summary(output).as_bytes())?;
@@ -404,7 +496,37 @@ fn exit_with_cli_error(error: clap::Error) -> ! {
         process::exit(error.exit_code());
     }
 
+    if let Some(hint) = missing_init_path_hint(&error) {
+        let message = error.to_string();
+        // If stderr is closed, there is nowhere useful to report the parse hint.
+        let _ = writeln!(std::io::stderr(), "{message}\n{hint}");
+        process::exit(error.exit_code());
+    }
+
     error.exit();
+}
+
+fn missing_init_path_hint(error: &clap::Error) -> Option<&'static str> {
+    if error.kind() != ErrorKind::MissingRequiredArgument {
+        return None;
+    }
+
+    if !error.context().any(|(kind, value)| {
+        kind == ContextKind::Usage && context_contains(value, "jig init <PATH>")
+    }) {
+        return None;
+    }
+
+    Some(
+        "\
+`jig init` creates or populates a new destination directory.
+
+Use one of:
+  jig init /path/to/new-repo --repo-name new-repo --sqlx-enabled false
+  jig init /path/to/new-repo --preset rust-react --db postgres --frontends web,landing,admin
+  jig adopt .              # preview Jig adoption for this existing repo
+  jig adopt . --write      # apply Jig adoption to this existing repo",
+    )
 }
 
 pub(super) fn moved_check_command_hint(error: &clap::Error) -> Option<String> {
@@ -472,6 +594,18 @@ pub(super) fn should_add_template_hint(error: &clap::Error) -> bool {
     error
         .context()
         .any(|(kind, value)| kind == ContextKind::InvalidArg && context_mentions_template(value))
+}
+
+fn context_contains(value: &ContextValue, needle: &str) -> bool {
+    match value {
+        ContextValue::String(value) => value.contains(needle),
+        ContextValue::Strings(values) => values.iter().any(|value| value.contains(needle)),
+        ContextValue::StyledStr(value) => value.to_string().contains(needle),
+        ContextValue::StyledStrs(values) => values
+            .iter()
+            .any(|value| value.to_string().contains(needle)),
+        _ => false,
+    }
 }
 
 fn context_mentions_template(value: &ContextValue) -> bool {

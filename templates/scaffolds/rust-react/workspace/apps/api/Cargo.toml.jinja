@@ -1,0 +1,13 @@
+[package]
+name = "<<[ package_name ]>>-api"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+<<[ package_name ]>> = { path = "../../crates/<<[ package_name ]>>"[% if db_enabled %], features = ["db"][% endif %] }
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

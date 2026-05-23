@@ -1,5 +1,5 @@
 use super::*;
-use crate::cli::run::format_adopt_human_summary;
+use crate::cli::run::{format_adopt_human_summary, format_init_human_summary};
 #[test]
 fn template_errors_get_hint() {
     let missing_template_value =
@@ -180,6 +180,54 @@ fn adopt_human_summary_includes_reviewable_next_steps() {
 }
 
 #[test]
+fn init_human_summary_includes_scaffold_and_next_steps() {
+    let output = serde_json::json!({
+        "destination": "/tmp/repo",
+        "template": "embedded",
+        "git_initialized": true,
+        "scaffold": {
+            "preset": "rust-react",
+            "repo_name": "demo",
+            "db": "postgres",
+            "frontends": [
+                { "name": "web", "dir": "web", "kind": "vite" },
+                { "name": "landing", "dir": "landing", "kind": "astro" },
+                { "name": "admin-panel", "dir": "admin-panel", "kind": "vite" }
+            ],
+            "files_created": ["Cargo.toml", "web/package.json"],
+            "files_modified": [],
+            "files_unchanged": ["landing/package.json"]
+        },
+        "render_report": {
+            "files_created": ["scripts/jig", ".jig.toml"],
+            "files_modified": [],
+            "files_removed": []
+        },
+        "notes": [
+            "SQLx disabled by default until configured."
+        ],
+        "next_steps": [
+            "cd /tmp/repo",
+            "scripts/jig doctor --summary"
+        ]
+    });
+
+    let summary = format_init_human_summary(&output);
+
+    assert!(summary.contains("init summary"));
+    assert!(summary.contains("target: /tmp/repo"));
+    assert!(summary.contains("template: embedded"));
+    assert!(summary.contains("managed files: 2 created, 0 modified, 0 removed"));
+    assert!(summary.contains("scaffold: rust-react for demo (db: postgres)"));
+    assert!(summary.contains("scaffold files: 2 created, 0 modified, 1 unchanged"));
+    assert!(summary.contains("frontends: web, landing, admin-panel"));
+    assert!(summary.contains("git: initialized"));
+    assert!(summary.contains("SQLx disabled by default"));
+    assert!(summary.contains("scripts/jig doctor --summary"));
+    assert!(summary.contains("full report: rerun with --json"));
+}
+
+#[test]
 fn adopt_and_init_default_to_official_template() {
     let adopt = Cli::try_parse_from(["jig", "adopt", ".", "--repo-name", "demo"]).unwrap();
     match adopt.command {
@@ -204,6 +252,14 @@ fn adopt_accepts_json_after_subcommand() {
 
     assert!(adopt.json);
     assert!(matches!(adopt.command, CommandKind::Adopt(_)));
+}
+
+#[test]
+fn init_accepts_json_after_subcommand() {
+    let init = Cli::try_parse_from(["jig", "init", "/tmp/demo", "--json"]).unwrap();
+
+    assert!(init.json);
+    assert!(matches!(init.command, CommandKind::Init(_)));
 }
 
 #[test]
@@ -238,6 +294,32 @@ fn parses_init_command_with_repeatable_flags() {
             assert_eq!(template_mode, Some(bootstrap::TemplateMode::Committed));
             assert_eq!(answers.rust_crate_roots, vec!["crates", "libs"]);
             assert_eq!(answers.frontend_apps.len(), 1);
+        }
+        other => panic!("expected init command, got {other:?}"),
+    }
+}
+
+#[test]
+fn parses_init_scaffold_preset_frontends_and_db() {
+    let cli = Cli::try_parse_from([
+        "jig",
+        "init",
+        "demo",
+        "--preset",
+        "rust-react",
+        "--db",
+        "postgres",
+        "--frontends",
+        "web,landing,admin",
+    ])
+    .unwrap();
+
+    match cli.command {
+        CommandKind::Init(bootstrap::InitOpts { scaffold, .. }) => {
+            assert_eq!(scaffold.preset, Some(bootstrap::ScaffoldPreset::RustReact));
+            assert_eq!(scaffold.db, Some(bootstrap::ScaffoldDb::Postgres));
+            assert!(scaffold.frontends.is_empty());
+            assert_eq!(scaffold.frontend_list.len(), 3);
         }
         other => panic!("expected init command, got {other:?}"),
     }

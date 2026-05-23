@@ -84,12 +84,22 @@ fn add_git_rerun_inputs(manifest_dir: &str) {
     }
 }
 
-fn generate_embedded_template_manifest(manifest_dir: &str) {
-    let template_root = Path::new(manifest_dir).join("../../templates/project");
+struct EmbeddedTemplateManifest<'a> {
+    root: &'a str,
+    output_file: &'a str,
+    snapshot_file: &'a str,
+    static_name: &'a str,
+    entry_type: &'a str,
+    from_snapshot_const: &'a str,
+    snapshot_comment: &'a str,
+}
+
+fn generate_embedded_template_manifest(manifest_dir: &str, manifest: EmbeddedTemplateManifest<'_>) {
+    let template_root = Path::new(manifest_dir).join(manifest.root);
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR is set by Cargo"));
-    let output_path = out_dir.join("embedded_templates.rs");
+    let output_path = out_dir.join(manifest.output_file);
     if env::var_os("JIG_EMBEDDED_TEMPLATE_SNAPSHOT").is_some() || !template_root.is_dir() {
-        let snapshot = Path::new(manifest_dir).join("src/bootstrap/embedded_templates_snapshot.rs");
+        let snapshot = Path::new(manifest_dir).join(manifest.snapshot_file);
         println!("cargo:rerun-if-changed={}", snapshot.display());
         fs::copy(&snapshot, &output_path).unwrap_or_else(|error| {
             panic!(
@@ -107,10 +117,10 @@ fn generate_embedded_template_manifest(manifest_dir: &str) {
     templates.sort_by(|left, right| left.0.cmp(&right.0));
 
     if env::var_os("JIG_REFRESH_EMBEDDED_TEMPLATE_SNAPSHOT").is_some() {
-        let snapshot = Path::new(manifest_dir).join("src/bootstrap/embedded_templates_snapshot.rs");
+        let snapshot = Path::new(manifest_dir).join(manifest.snapshot_file);
         replace_file(
             &snapshot,
-            render_embedded_template_snapshot(&templates).as_bytes(),
+            render_embedded_template_snapshot(&templates, &manifest).as_bytes(),
         );
         println!(
             "cargo:warning=refreshed embedded template snapshot {}",
@@ -118,15 +128,45 @@ fn generate_embedded_template_manifest(manifest_dir: &str) {
         );
     }
 
-    let output = render_embedded_template_entries(&templates, |path| {
-        format!("include_str!({:?})", path.display().to_string())
-    });
+    let output = render_embedded_template_entries(
+        &templates,
+        |path| format!("include_str!({:?})", path.display().to_string()),
+        &manifest,
+        false,
+    );
     fs::write(&output_path, output).unwrap_or_else(|error| {
         panic!(
             "failed to write embedded template manifest {}: {error}",
             output_path.display()
         )
     });
+}
+
+fn generate_embedded_template_manifests(manifest_dir: &str) {
+    generate_embedded_template_manifest(
+        manifest_dir,
+        EmbeddedTemplateManifest {
+            root: "../../templates/project",
+            output_file: "embedded_templates.rs",
+            snapshot_file: "src/bootstrap/embedded_templates_snapshot.rs",
+            static_name: "EMBEDDED_TEMPLATE_FILES",
+            entry_type: "EmbeddedTemplateFile",
+            from_snapshot_const: "EMBEDDED_TEMPLATE_FILES_FROM_SNAPSHOT",
+            snapshot_comment: "// Generated from templates/project. Update with JIG_REFRESH_EMBEDDED_TEMPLATE_SNAPSHOT=1 cargo check -p jig-sh.\n",
+        },
+    );
+    generate_embedded_template_manifest(
+        manifest_dir,
+        EmbeddedTemplateManifest {
+            root: "../../templates/scaffolds",
+            output_file: "embedded_scaffold_templates.rs",
+            snapshot_file: "src/bootstrap/scaffold/embedded_templates_snapshot.rs",
+            static_name: "EMBEDDED_SCAFFOLD_TEMPLATE_FILES",
+            entry_type: "EmbeddedScaffoldTemplateFile",
+            from_snapshot_const: "EMBEDDED_SCAFFOLD_TEMPLATE_FILES_FROM_SNAPSHOT",
+            snapshot_comment: "// Generated from templates/scaffolds. Update with JIG_REFRESH_EMBEDDED_TEMPLATE_SNAPSHOT=1 cargo check -p jig-sh.\n",
+        },
+    );
 }
 
 fn collect_template_files(root: &Path, current: &Path, templates: &mut Vec<(String, PathBuf)>) {
@@ -175,28 +215,52 @@ fn collect_template_files(root: &Path, current: &Path, templates: &mut Vec<(Stri
     }
 }
 
-fn render_embedded_template_snapshot(templates: &[(String, PathBuf)]) -> String {
+fn render_embedded_template_snapshot(
+    templates: &[(String, PathBuf)],
+    manifest: &EmbeddedTemplateManifest<'_>,
+) -> String {
     let mut output = String::new();
-    output
-        .push_str("// Generated from templates/project. Update with JIG_REFRESH_EMBEDDED_TEMPLATE_SNAPSHOT=1 cargo check -p jig-sh.\n");
-    output.push_str(&render_embedded_template_entries(templates, |path| {
-        let contents = fs::read_to_string(path)
-            .unwrap_or_else(|error| panic!("failed to read template {}: {error}", path.display()));
-        raw_string_literal(&contents)
-    }));
+    output.push_str(manifest.snapshot_comment);
+    output.push_str(&render_embedded_template_entries(
+        templates,
+        |path| {
+            let contents = fs::read_to_string(path).unwrap_or_else(|error| {
+                panic!("failed to read template {}: {error}", path.display())
+            });
+            raw_string_literal(&contents)
+        },
+        manifest,
+        true,
+    ));
     output
 }
 
 fn render_embedded_template_entries(
     templates: &[(String, PathBuf)],
     mut contents_expr: impl FnMut(&Path) -> String,
+    manifest: &EmbeddedTemplateManifest<'_>,
+    from_snapshot: bool,
 ) -> String {
     let mut output = String::new();
-    output.push_str("pub(super) static EMBEDDED_TEMPLATE_FILES: &[EmbeddedTemplateFile] = &[\n");
+    // The generated snapshot modules include the same marker for fallback builds,
+    // but only the live module marker is used by drift tests.
+    writeln!(
+        output,
+        "#[cfg(test)]\n#[allow(dead_code)]\npub(super) const {}: bool = {};",
+        manifest.from_snapshot_const, from_snapshot
+    )
+    .expect("writing generated template entries to string cannot fail");
+    writeln!(
+        output,
+        "pub(super) static {}: &[{}] = &[",
+        manifest.static_name, manifest.entry_type
+    )
+    .expect("writing generated template entries to string cannot fail");
     for (relative, path) in templates {
         writeln!(
             output,
-            "    EmbeddedTemplateFile {{ relative_path: {relative:?}, contents: {} }},",
+            "    {} {{ relative_path: {relative:?}, contents: {} }},",
+            manifest.entry_type,
             contents_expr(path),
         )
         .expect("writing generated template entries to string cannot fail");
@@ -367,7 +431,7 @@ fn main() {
     let assume_release = env::var_os("JIG_ASSUME_RELEASE_BUILD").is_some();
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set by Cargo");
     add_git_rerun_inputs(&manifest_dir);
-    generate_embedded_template_manifest(&manifest_dir);
+    generate_embedded_template_manifests(&manifest_dir);
 
     let detected_policy = detect_template_pin_policy(&manifest_dir);
     let policy = if assume_release {

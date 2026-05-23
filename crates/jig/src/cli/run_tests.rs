@@ -5,6 +5,58 @@ use crate::cli::output::format_work_review_summary;
 use super::*;
 
 #[test]
+fn missing_init_path_gets_actionable_hint() {
+    let error = Cli::try_parse_from(["jig", "init"]).unwrap_err();
+    let hint = missing_init_path_hint(&error).unwrap();
+
+    assert!(hint.contains("jig init /path/to/new-repo"));
+    assert!(hint.contains("--preset rust-react"));
+    assert!(hint.contains("jig adopt ."));
+    assert!(hint.contains("jig adopt . --write"));
+}
+
+#[test]
+fn missing_init_path_hint_examples_parse() {
+    Cli::try_parse_from([
+        "jig",
+        "init",
+        "/path/to/new-repo",
+        "--repo-name",
+        "new-repo",
+        "--sqlx-enabled",
+        "false",
+    ])
+    .unwrap();
+    Cli::try_parse_from([
+        "jig",
+        "init",
+        "/path/to/new-repo",
+        "--preset",
+        "rust-react",
+        "--db",
+        "postgres",
+        "--frontends",
+        "web,landing,admin",
+    ])
+    .unwrap();
+    Cli::try_parse_from(["jig", "adopt", "."]).unwrap();
+    Cli::try_parse_from(["jig", "adopt", ".", "--write"]).unwrap();
+}
+
+#[test]
+fn unrelated_parse_errors_do_not_get_missing_init_path_hint() {
+    let missing_proxy_args = Cli::try_parse_from(["jig", "proxy", "run"]).unwrap_err();
+    assert_eq!(
+        missing_proxy_args.kind(),
+        clap::error::ErrorKind::MissingRequiredArgument
+    );
+    assert!(missing_init_path_hint(&missing_proxy_args).is_none());
+
+    let invalid_subcommand = Cli::try_parse_from(["jig", "not-a-command"]).unwrap_err();
+    assert!(missing_init_path_hint(&invalid_subcommand).is_none());
+}
+
+#[test]
 fn vault_run_summary_reports_status_and_redacted_output() {
     let summary = format_vault_run_summary(&json!({
         "result": {

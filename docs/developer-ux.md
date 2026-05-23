@@ -47,6 +47,17 @@ For greenfield repositories, `jig init` gives developers an immediate typed cont
 jig init /path/to/new-repo --repo-name new-repo --sqlx-enabled false
 ```
 
+When the repo should start with an app, use a preset. The Rust + React preset creates the Jig harness, Rust workspace, API binary, core crate, main backend crate, test-support crate, optional SQLx DB crate, and requested frontend apps in one pass:
+
+```sh
+jig init /path/to/new-repo \
+  --preset rust-react \
+  --db postgres \
+  --frontends web,landing,admin
+```
+
+`web` and `admin` generate Vite React apps, with `admin` normalized to the `admin-panel` directory; `landing` generates an Astro marketing app. The DB crate is generated as a starting point and is not connected to API startup until the project wires in `DATABASE_URL` and migration policy. The generated `.jig.toml` wires those apps into `scripts/jig dev` and the TypeScript/web check gates, defaults Rust roots to `apps` and `crates`, uses `bun` unless a package manager is supplied, and leaves schema dumps disabled until the project provides a command. Use `--frontends` as the canonical multi-app form; repeat `--frontend name[:kind]` for one-off additions.
+
 Rust backend repos can opt into migration and SQLx checks from the start:
 
 ```sh

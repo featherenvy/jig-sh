@@ -1,0 +1,54 @@
+use axum::{Json, Router, extract::State, routing::get};
+use <<[ module_name ]>>_core::AppVersion;
+[% if db_enabled %]
+#[cfg(feature = "db")]
+pub use <<[ module_name ]>>_db as db;
+[% endif %]
+
+#[derive(Clone, Debug)]
+pub struct AppState {
+    version: AppVersion,
+}
+
+impl AppState {
+    pub fn new() -> Self {
+        Self::new_with_version(env!("CARGO_PKG_VERSION"))
+    }
+
+    pub fn new_with_version(version: impl Into<String>) -> Self {
+        Self {
+            version: AppVersion::new(version),
+        }
+    }
+}
+
+impl Default for AppState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub fn router(state: AppState) -> Router {
+    Router::new()
+        .route("/health", get(health))
+        .route("/api/version", get(version))
+        .with_state(state)
+}
+
+async fn health() -> &'static str {
+    "ok"
+}
+
+async fn version(State(state): State<AppState>) -> Json<AppVersion> {
+    Json(state.version)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn app_state_uses_current_version() {
+        assert_eq!(AppState::new().version.name, <<[ module_name ]>>_core::APP_NAME);
+    }
+}

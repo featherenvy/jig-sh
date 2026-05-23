@@ -14,16 +14,17 @@ mod snapshot {
 
 #[cfg(test)]
 mod tests {
-    use super::{EMBEDDED_TEMPLATE_FILES, snapshot};
+    use super::{EMBEDDED_TEMPLATE_FILES, EMBEDDED_TEMPLATE_FILES_FROM_SNAPSHOT, snapshot};
 
     const REFRESH_COMMAND: &str = "JIG_REFRESH_EMBEDDED_TEMPLATE_SNAPSHOT=1 cargo check -p jig-sh";
 
     #[test]
     fn embedded_template_snapshot_matches_live_templates() {
-        assert!(
-            std::env::var_os("JIG_EMBEDDED_TEMPLATE_SNAPSHOT").is_none(),
-            "JIG_EMBEDDED_TEMPLATE_SNAPSHOT makes live embedded templates come from the snapshot; unset it to run the snapshot drift test"
-        );
+        if EMBEDDED_TEMPLATE_FILES_FROM_SNAPSHOT {
+            panic!(
+                "embedded templates were compiled from the snapshot; unset JIG_EMBEDDED_TEMPLATE_SNAPSHOT and rebuild before running the snapshot drift test"
+            );
+        }
         assert_eq!(
             EMBEDDED_TEMPLATE_FILES.len(),
             snapshot::EMBEDDED_TEMPLATE_FILES.len(),

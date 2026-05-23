@@ -19,6 +19,41 @@ fn parses_frontend_app_flag() {
 }
 
 #[test]
+fn parses_scaffold_frontend_aliases_and_explicit_kinds() {
+    let admin = parse_scaffold_frontend("admin").unwrap();
+    assert_eq!(admin.name, "admin-panel");
+    assert_eq!(admin.kind, ScaffoldFrontendKind::Admin);
+
+    let docs = parse_scaffold_frontend("docs:astro").unwrap();
+    assert_eq!(docs.name, "docs");
+    assert_eq!(docs.kind, ScaffoldFrontendKind::Astro);
+
+    let operations = parse_scaffold_frontend("operations:admin").unwrap();
+    assert_eq!(operations.name, "operations");
+    assert_eq!(operations.kind, ScaffoldFrontendKind::Admin);
+
+    let billing = parse_scaffold_frontend("billing").unwrap();
+    assert_eq!(billing.name, "billing");
+    assert_eq!(billing.kind, ScaffoldFrontendKind::Spa);
+
+    assert!(
+        parse_scaffold_frontend("bad/name")
+            .unwrap_err()
+            .contains("frontend name must use ASCII")
+    );
+    assert!(
+        parse_scaffold_frontend("-")
+            .unwrap_err()
+            .contains("frontend name must include at least one ASCII letter or number")
+    );
+    assert!(
+        parse_scaffold_frontend("web:unknown")
+            .unwrap_err()
+            .contains("unsupported frontend kind 'unknown'")
+    );
+}
+
+#[test]
 fn seed_answers_only_serializes_provided_values() {
     let toml = seed_answers_toml(
         &AnswerOpts {
@@ -543,6 +578,7 @@ fn run_init_uses_native_renderer_and_git() {
     let destination = temp.path().join("repo");
     let output = run_init(InitOpts {
         path: destination.clone(),
+        scaffold: ScaffoldOpts::default(),
         template: Some(template.path().display().to_string()),
         template_mode: None,
         vcs_ref: None,
@@ -576,6 +612,7 @@ fn run_init_sqlx_disabled_defaults_to_harness_only_safe_commands() {
 
     run_init(InitOpts {
         path: destination.clone(),
+        scaffold: ScaffoldOpts::default(),
         template: Some(template.path().display().to_string()),
         template_mode: None,
         vcs_ref: None,
@@ -596,6 +633,859 @@ fn run_init_sqlx_disabled_defaults_to_harness_only_safe_commands() {
     assert!(answers.contains("Command values are project-owned."));
     assert!(answers.contains("No Cargo.toml found; skipping cargo bootstrap."));
     assert!(answers.contains("No Cargo.toml found; skipping cargo test."));
+}
+
+#[test]
+fn run_init_rust_react_scaffold_generates_backend_and_frontends() {
+    let _guard = lock_env();
+    let temp = tempdir().unwrap();
+    let template = materialize_template_worktree();
+    let destination = temp.path().join("my-app");
+
+    let output = run_init(InitOpts {
+        path: destination.clone(),
+        scaffold: ScaffoldOpts {
+            preset: Some(ScaffoldPreset::RustReact),
+            db: Some(ScaffoldDb::Postgres),
+            frontends: Vec::new(),
+            frontend_list: vec![
+                parse_scaffold_frontend("web").unwrap(),
+                parse_scaffold_frontend("landing").unwrap(),
+                parse_scaffold_frontend("admin").unwrap(),
+            ],
+        },
+        template: Some(template.path().display().to_string()),
+        template_mode: None,
+        vcs_ref: None,
+        force: false,
+        defaults: true,
+        no_input: true,
+        answers: AnswerOpts::default(),
+    })
+    .unwrap();
+
+    assert_eq!(output["scaffold"]["preset"], "rust-react");
+    assert_eq!(output["scaffold"]["db"], "postgres");
+    assert!(destination.join("Cargo.toml").exists());
+    assert!(destination.join("apps/my-app-api/src/main.rs").exists());
+    assert!(destination.join("crates/my-app-core/src/lib.rs").exists());
+    assert!(destination.join("crates/my-app/src/lib.rs").exists());
+    assert!(destination.join("crates/my-app-db/src/lib.rs").exists());
+    assert!(
+        destination
+            .join("crates/my-app-test-support/src/lib.rs")
+            .exists()
+    );
+    assert!(destination.join("web/package.json").exists());
+    assert!(destination.join("landing/astro.config.mjs").exists());
+    assert!(destination.join("admin-panel/package.json").exists());
+    let web_package = fs::read_to_string(destination.join("web/package.json")).unwrap();
+    assert!(web_package.contains(r#""dev": "bun install && vite""#));
+    let web_vite_config = fs::read_to_string(destination.join("web/vite.config.ts")).unwrap();
+    assert!(web_vite_config.contains("const devPort = Number(process.env.PORT);"));
+    assert!(web_vite_config.contains(r#"host: "127.0.0.1""#));
+    assert!(web_vite_config.contains("clientPort: devPort"));
+    let landing_package = fs::read_to_string(destination.join("landing/package.json")).unwrap();
+    assert!(landing_package.contains(
+        r#""dev": "bun install && astro dev --host ${HOST:-127.0.0.1} --port ${PORT:-4321}""#
+    ));
+
+    let api_main = fs::read_to_string(destination.join("apps/my-app-api/src/main.rs")).unwrap();
+    assert!(api_main.contains("use anyhow::Context;"));
+    assert!(api_main.contains("AppState::new_with_version(env!(\"CARGO_PKG_VERSION\"))"));
+    assert!(api_main.contains("Failed to parse BIND_ADDR"));
+    assert!(api_main.contains("Failed to bind API listener"));
+    assert!(api_main.contains("API server exited with an error"));
+    assert!(api_main.contains("SignalKind::terminate"));
+    assert!(api_main.contains("failed to listen for Ctrl-C"));
+    let app_lib = fs::read_to_string(destination.join("crates/my-app/src/lib.rs")).unwrap();
+    assert!(app_lib.contains("pub fn new_with_version(version: impl Into<String>)"));
+    let test_support_cargo =
+        fs::read_to_string(destination.join("crates/my-app-test-support/Cargo.toml")).unwrap();
+    assert!(test_support_cargo.contains(r#"my-app = { path = "../my-app" }"#));
+    let db_lib = fs::read_to_string(destination.join("crates/my-app-db/src/lib.rs")).unwrap();
+    assert!(db_lib.contains("PgPool"));
+    assert!(db_lib.contains("DEFAULT_DB_TIMEOUT"));
+    assert!(db_lib.contains("connect_with_timeout"));
+    assert!(db_lib.contains("migrate_with_timeout"));
+
+    let answers = fs::read_to_string(destination.join(".jig.toml")).unwrap();
+    assert!(answers.contains("repo_name = \"my-app\""));
+    assert!(answers.contains("sqlx_enabled = true"));
+    assert!(answers.contains("rust_migration_dir = \"migrations\""));
+    assert!(answers.contains("rust_sqlx_metadata_dir = \".sqlx\""));
+    assert!(answers.contains("schema_dump_enabled = false"));
+    assert!(answers.contains("rust_crate_roots = [\"apps\", \"crates\"]"));
+    assert!(answers.contains("web_package_manager = \"bun\""));
+    assert!(answers.contains("bootstrap_command = \"if [ -f Cargo.toml ]; then cargo fetch;"));
+    assert!(answers.contains("&& (cd web && bun install)"));
+    assert!(answers.contains("&& (cd landing && bun install)"));
+    assert!(answers.contains("&& (cd admin-panel && bun install)"));
+    assert!(answers.contains("name = \"web\""));
+    assert!(answers.contains("dir = \"landing\""));
+    assert!(answers.contains("kind = \"env-port\""));
+    assert!(answers.contains("name = \"admin-panel\""));
+}
+
+#[test]
+fn scaffold_options_require_preset() {
+    let temp = tempdir().unwrap();
+    let error = scaffold::InitScaffoldPlan::from_opts(
+        &ScaffoldOpts {
+            preset: None,
+            db: Some(ScaffoldDb::Sqlite),
+            frontends: Vec::new(),
+            frontend_list: Vec::new(),
+        },
+        &AnswerOpts::default(),
+        temp.path(),
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("Scaffold options require --preset rust-react"));
+}
+
+#[test]
+fn run_init_rejects_invalid_frontend_package_names_before_writes() {
+    let temp = tempdir().unwrap();
+    let destination = temp.path().join("repo");
+
+    let error = run_init(InitOpts {
+        path: destination.clone(),
+        scaffold: ScaffoldOpts {
+            preset: Some(ScaffoldPreset::RustReact),
+            db: None,
+            frontends: vec![ScaffoldFrontend {
+                name: "-".into(),
+                kind: ScaffoldFrontendKind::Spa,
+            }],
+            frontend_list: Vec::new(),
+        },
+        template: None,
+        template_mode: None,
+        vcs_ref: None,
+        force: false,
+        defaults: true,
+        no_input: true,
+        answers: AnswerOpts {
+            repo_name: Some("demo".into()),
+            ..AnswerOpts::default()
+        },
+    })
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("Scaffold frontend name must contain"));
+    assert!(!destination.exists());
+}
+
+#[test]
+fn scaffold_defaults_to_web_frontend_and_no_db() {
+    let temp = tempdir().unwrap();
+    let plan = scaffold::InitScaffoldPlan::from_opts(
+        &ScaffoldOpts {
+            preset: Some(ScaffoldPreset::RustReact),
+            db: None,
+            frontends: Vec::new(),
+            frontend_list: Vec::new(),
+        },
+        &AnswerOpts::default(),
+        temp.path(),
+    )
+    .unwrap()
+    .unwrap();
+
+    let report = plan.write(temp.path(), false).unwrap();
+
+    assert_eq!(report["db"], "none");
+    assert_eq!(report["frontends"][0]["name"], "web");
+    assert_eq!(report["frontends"][0]["kind"], "spa");
+    assert!(temp.path().join("web/package.json").exists());
+    let has_db_crate = fs::read_dir(temp.path().join("crates"))
+        .unwrap()
+        .any(|entry| {
+            entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .ends_with("-db")
+        });
+    assert!(!has_db_crate);
+    let cargo_toml = fs::read_to_string(temp.path().join("Cargo.toml")).unwrap();
+    assert!(!cargo_toml.contains("sqlx ="));
+    assert!(cargo_toml.contains("\"signal\", \"time\""));
+    assert!(cargo_toml.ends_with('\n'));
+}
+
+#[test]
+fn scaffold_db_defaults_set_sqlx_metadata_and_disable_schema_dump() {
+    let temp = tempdir().unwrap();
+    let plan = scaffold::InitScaffoldPlan::from_opts(
+        &ScaffoldOpts {
+            preset: Some(ScaffoldPreset::RustReact),
+            db: Some(ScaffoldDb::Postgres),
+            frontends: Vec::new(),
+            frontend_list: Vec::new(),
+        },
+        &AnswerOpts::default(),
+        temp.path(),
+    )
+    .unwrap()
+    .unwrap();
+    let mut answers = AnswerOpts::default();
+
+    plan.apply_answer_defaults(&mut answers);
+
+    assert_eq!(answers.rust_sqlx_metadata_dir.as_deref(), Some(".sqlx"));
+    assert_eq!(answers.schema_dump_enabled, Some(false));
+}
+
+#[test]
+fn scaffold_bootstrap_command_uses_configured_frontend_package_managers() {
+    let temp = tempdir().unwrap();
+    let plan = scaffold::InitScaffoldPlan::from_opts(
+        &ScaffoldOpts {
+            preset: Some(ScaffoldPreset::RustReact),
+            db: None,
+            frontends: vec![
+                parse_scaffold_frontend("web").unwrap(),
+                parse_scaffold_frontend("landing").unwrap(),
+            ],
+            frontend_list: Vec::new(),
+        },
+        &AnswerOpts {
+            repo_name: Some("demo".into()),
+            ..AnswerOpts::default()
+        },
+        temp.path(),
+    )
+    .unwrap()
+    .unwrap();
+
+    for (package_manager, install_command) in [
+        ("bun", "bun install"),
+        ("npm", "npm install"),
+        ("pnpm", "pnpm install"),
+        ("yarn", "yarn install"),
+    ] {
+        let mut answers = AnswerOpts {
+            web_package_manager: Some(package_manager.into()),
+            ..AnswerOpts::default()
+        };
+        plan.apply_answer_defaults(&mut answers);
+        let bootstrap_command = answers.bootstrap_command.unwrap();
+        assert!(bootstrap_command.contains(&format!("(cd web && {install_command})")));
+        assert!(bootstrap_command.contains(&format!("(cd landing && {install_command})")));
+    }
+
+    let mut default_answers = AnswerOpts::default();
+    plan.apply_answer_defaults(&mut default_answers);
+    assert_eq!(default_answers.web_package_manager.as_deref(), Some("bun"));
+    assert!(
+        default_answers
+            .bootstrap_command
+            .unwrap()
+            .contains("(cd web && bun install)")
+    );
+}
+
+#[test]
+fn scaffold_frontend_dev_scripts_install_dependencies_before_launch() {
+    for (package_manager, install_command) in [
+        ("bun", "bun install"),
+        ("npm", "npm install"),
+        ("pnpm", "pnpm install"),
+        ("yarn", "yarn install"),
+    ] {
+        let temp = tempdir().unwrap();
+        let plan = scaffold::InitScaffoldPlan::from_opts(
+            &ScaffoldOpts {
+                preset: Some(ScaffoldPreset::RustReact),
+                db: None,
+                frontends: vec![
+                    parse_scaffold_frontend("web").unwrap(),
+                    parse_scaffold_frontend("landing").unwrap(),
+                ],
+                frontend_list: Vec::new(),
+            },
+            &AnswerOpts {
+                repo_name: Some("demo".into()),
+                web_package_manager: Some(package_manager.into()),
+                ..AnswerOpts::default()
+            },
+            temp.path(),
+        )
+        .unwrap()
+        .unwrap();
+
+        plan.write(temp.path(), false).unwrap();
+
+        let web_package = fs::read_to_string(temp.path().join("web/package.json")).unwrap();
+        assert!(
+            web_package.contains(&format!(r#""dev": "{install_command} && vite""#)),
+            "missing Vite dev install command for {package_manager}"
+        );
+        let landing_package = fs::read_to_string(temp.path().join("landing/package.json")).unwrap();
+        assert!(
+            landing_package.contains(&format!(
+                r#""dev": "{install_command} && astro dev --host ${{HOST:-127.0.0.1}} --port ${{PORT:-4321}}""#
+            )),
+            "missing Astro dev install command for {package_manager}"
+        );
+    }
+}
+
+#[test]
+fn scaffold_uses_existing_frontend_app_kind() {
+    let temp = tempdir().unwrap();
+    let plan = scaffold::InitScaffoldPlan::from_opts(
+        &ScaffoldOpts {
+            preset: Some(ScaffoldPreset::RustReact),
+            db: None,
+            frontends: Vec::new(),
+            frontend_list: Vec::new(),
+        },
+        &AnswerOpts {
+            repo_name: Some("demo".into()),
+            frontend_apps: vec![
+                FrontendApp {
+                    name: "docs".into(),
+                    dir: "docs-site".into(),
+                    coverage_threshold: 0,
+                    kind: "env-port".into(),
+                },
+                FrontendApp {
+                    name: "marketing".into(),
+                    dir: "marketing".into(),
+                    coverage_threshold: 0,
+                    kind: "vite".into(),
+                },
+            ],
+            ..AnswerOpts::default()
+        },
+        temp.path(),
+    )
+    .unwrap()
+    .unwrap();
+
+    let report = plan.write(temp.path(), false).unwrap();
+    assert_eq!(report["frontends"][0]["kind"], "astro");
+    assert_eq!(report["frontends"][1]["kind"], "spa");
+    assert!(temp.path().join("docs-site/astro.config.mjs").exists());
+    assert!(temp.path().join("marketing/vite.config.ts").exists());
+
+    let mut answers = AnswerOpts::default();
+    plan.apply_answer_defaults(&mut answers);
+    assert_eq!(answers.frontend_apps[0].name, "docs");
+    assert_eq!(answers.frontend_apps[0].dir, "docs-site");
+    assert_eq!(answers.frontend_apps[0].kind, "env-port");
+    assert_eq!(answers.frontend_apps[1].name, "marketing");
+    assert_eq!(answers.frontend_apps[1].dir, "marketing");
+    assert_eq!(answers.frontend_apps[1].kind, "vite");
+}
+
+#[test]
+fn scaffold_rejects_duplicate_and_unsafe_frontend_app_dirs() {
+    let temp = tempdir().unwrap();
+    let duplicate = scaffold::InitScaffoldPlan::from_opts(
+        &ScaffoldOpts {
+            preset: Some(ScaffoldPreset::RustReact),
+            db: None,
+            frontends: vec![parse_scaffold_frontend("web").unwrap()],
+            frontend_list: vec![parse_scaffold_frontend("web").unwrap()],
+        },
+        &AnswerOpts::default(),
+        temp.path(),
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(duplicate.contains("Duplicate scaffold frontend 'web'"));
+
+    let duplicate_dir = scaffold::InitScaffoldPlan::from_opts(
+        &ScaffoldOpts {
+            preset: Some(ScaffoldPreset::RustReact),
+            db: None,
+            frontends: Vec::new(),
+            frontend_list: Vec::new(),
+        },
+        &AnswerOpts {
+            frontend_apps: vec![
+                FrontendApp {
+                    name: "docs".into(),
+                    dir: "shared".into(),
+                    coverage_threshold: 0,
+                    kind: "env-port".into(),
+                },
+                FrontendApp {
+                    name: "marketing".into(),
+                    dir: "shared".into(),
+                    coverage_threshold: 0,
+                    kind: "env-port".into(),
+                },
+            ],
+            ..AnswerOpts::default()
+        },
+        temp.path(),
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(duplicate_dir.contains("Duplicate scaffold frontend dir 'shared'"));
+
+    let unsafe_dir = scaffold::InitScaffoldPlan::from_opts(
+        &ScaffoldOpts {
+            preset: Some(ScaffoldPreset::RustReact),
+            db: None,
+            frontends: Vec::new(),
+            frontend_list: Vec::new(),
+        },
+        &AnswerOpts {
+            frontend_apps: vec![FrontendApp {
+                name: "web".into(),
+                dir: "../web".into(),
+                coverage_threshold: 80,
+                kind: "vite".into(),
+            }],
+            ..AnswerOpts::default()
+        },
+        temp.path(),
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(unsafe_dir.contains("Scaffold frontend dir must not contain '.' or '..'"));
+
+    let empty_segment_dir = scaffold::InitScaffoldPlan::from_opts(
+        &ScaffoldOpts {
+            preset: Some(ScaffoldPreset::RustReact),
+            db: None,
+            frontends: Vec::new(),
+            frontend_list: Vec::new(),
+        },
+        &AnswerOpts {
+            frontend_apps: vec![FrontendApp {
+                name: "web".into(),
+                dir: "web//app".into(),
+                coverage_threshold: 80,
+                kind: "vite".into(),
+            }],
+            ..AnswerOpts::default()
+        },
+        temp.path(),
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(empty_segment_dir.contains("must not contain empty path segments"));
+
+    let rust_root_dir = scaffold::InitScaffoldPlan::from_opts(
+        &ScaffoldOpts {
+            preset: Some(ScaffoldPreset::RustReact),
+            db: None,
+            frontends: Vec::new(),
+            frontend_list: Vec::new(),
+        },
+        &AnswerOpts {
+            frontend_apps: vec![FrontendApp {
+                name: "ui".into(),
+                dir: "crates/ui".into(),
+                coverage_threshold: 80,
+                kind: "vite".into(),
+            }],
+            ..AnswerOpts::default()
+        },
+        temp.path(),
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(rust_root_dir.contains("uses reserved directory 'crates/ui'"));
+}
+
+#[test]
+fn scaffold_rejects_mixed_scaffold_and_existing_frontend_app_inputs() {
+    let temp = tempdir().unwrap();
+    let error = scaffold::InitScaffoldPlan::from_opts(
+        &ScaffoldOpts {
+            preset: Some(ScaffoldPreset::RustReact),
+            db: None,
+            frontends: vec![parse_scaffold_frontend("web").unwrap()],
+            frontend_list: Vec::new(),
+        },
+        &AnswerOpts {
+            frontend_apps: vec![FrontendApp {
+                name: "admin".into(),
+                dir: "admin".into(),
+                coverage_threshold: 80,
+                kind: "vite".into(),
+            }],
+            ..AnswerOpts::default()
+        },
+        temp.path(),
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("cannot be combined with --frontend-app"));
+}
+
+#[test]
+fn scaffold_rejects_frontend_dirs_reserved_for_rust_roots() {
+    let temp = tempdir().unwrap();
+    let error = scaffold::InitScaffoldPlan::from_opts(
+        &ScaffoldOpts {
+            preset: Some(ScaffoldPreset::RustReact),
+            db: None,
+            frontends: vec![parse_scaffold_frontend("apps").unwrap()],
+            frontend_list: Vec::new(),
+        },
+        &AnswerOpts::default(),
+        temp.path(),
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("uses reserved directory 'apps'"));
+}
+
+#[test]
+fn scaffold_db_rejects_explicit_sqlx_disabled_answer() {
+    let temp = tempdir().unwrap();
+    let error = scaffold::InitScaffoldPlan::from_opts(
+        &ScaffoldOpts {
+            preset: Some(ScaffoldPreset::RustReact),
+            db: Some(ScaffoldDb::Postgres),
+            frontends: Vec::new(),
+            frontend_list: Vec::new(),
+        },
+        &AnswerOpts {
+            sqlx_enabled: Some(false),
+            ..AnswerOpts::default()
+        },
+        temp.path(),
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("Scaffold --db requires SQLx"));
+}
+
+#[test]
+fn scaffold_prefixes_repo_names_that_are_invalid_rust_crate_identifiers() {
+    let temp = tempdir().unwrap();
+    let plan = scaffold::InitScaffoldPlan::from_opts(
+        &ScaffoldOpts {
+            preset: Some(ScaffoldPreset::RustReact),
+            db: None,
+            frontends: Vec::new(),
+            frontend_list: Vec::new(),
+        },
+        &AnswerOpts {
+            repo_name: Some("123-type".into()),
+            ..AnswerOpts::default()
+        },
+        temp.path(),
+    )
+    .unwrap()
+    .unwrap();
+
+    assert!(plan.summary().contains("repo name app-123-type"));
+    assert!(
+        plan.sanitized_repo_name_note()
+            .unwrap()
+            .contains("normalized to 'app-123-type'")
+    );
+    plan.write(temp.path(), false).unwrap();
+
+    assert!(
+        temp.path()
+            .join("apps/app-123-type-api/src/main.rs")
+            .exists()
+    );
+    let main_rs =
+        fs::read_to_string(temp.path().join("apps/app-123-type-api/src/main.rs")).unwrap();
+    assert!(main_rs.contains("app_123_type::router"));
+    let core_lib =
+        fs::read_to_string(temp.path().join("crates/app-123-type-core/src/lib.rs")).unwrap();
+    assert!(core_lib.contains("APP_NAME: &str = \"app-123-type\""));
+
+    let mixed_case = scaffold::InitScaffoldPlan::from_opts(
+        &ScaffoldOpts {
+            preset: Some(ScaffoldPreset::RustReact),
+            db: None,
+            frontends: Vec::new(),
+            frontend_list: Vec::new(),
+        },
+        &AnswerOpts {
+            repo_name: Some("MyApp".into()),
+            ..AnswerOpts::default()
+        },
+        temp.path(),
+    )
+    .unwrap()
+    .unwrap();
+    assert!(
+        mixed_case
+            .sanitized_repo_name_note()
+            .unwrap()
+            .contains("normalized to 'myapp'")
+    );
+}
+
+#[test]
+fn run_init_scaffold_writes_sanitized_repo_name_answer() {
+    let _guard = lock_env();
+    let temp = tempdir().unwrap();
+    let template = materialize_template_worktree();
+    let destination = temp.path().join("repo");
+
+    let output = run_init(InitOpts {
+        path: destination.clone(),
+        scaffold: ScaffoldOpts {
+            preset: Some(ScaffoldPreset::RustReact),
+            db: None,
+            frontends: Vec::new(),
+            frontend_list: Vec::new(),
+        },
+        template: Some(template.path().display().to_string()),
+        template_mode: None,
+        vcs_ref: None,
+        force: false,
+        defaults: true,
+        no_input: true,
+        answers: AnswerOpts {
+            repo_name: Some("123-type".into()),
+            ..AnswerOpts::default()
+        },
+    })
+    .unwrap();
+
+    assert_eq!(output["scaffold"]["repo_name"], "app-123-type");
+    assert_eq!(output["scaffold"]["repo_name_sanitized_from"], "123-type");
+    assert!(output["notes"].as_array().unwrap().iter().any(|note| {
+        note.as_str()
+            .unwrap()
+            .contains("requested repo name '123-type' was normalized")
+    }));
+    let answers = fs::read_to_string(destination.join(".jig.toml")).unwrap();
+    assert!(answers.contains("repo_name = \"app-123-type\""));
+    assert!(
+        destination
+            .join("apps/app-123-type-api/src/main.rs")
+            .exists()
+    );
+}
+
+#[test]
+fn scaffold_sqlite_branch_generates_sqlite_db_helper() {
+    let temp = tempdir().unwrap();
+    let plan = scaffold::InitScaffoldPlan::from_opts(
+        &ScaffoldOpts {
+            preset: Some(ScaffoldPreset::RustReact),
+            db: Some(ScaffoldDb::Sqlite),
+            frontends: Vec::new(),
+            frontend_list: Vec::new(),
+        },
+        &AnswerOpts {
+            repo_name: Some("demo".into()),
+            rust_migration_dir: Some("db/migrations".into()),
+            ..AnswerOpts::default()
+        },
+        temp.path(),
+    )
+    .unwrap()
+    .unwrap();
+
+    let report = plan.write(temp.path(), false).unwrap();
+
+    assert_eq!(report["db"], "sqlite");
+    let cargo_toml = fs::read_to_string(temp.path().join("Cargo.toml")).unwrap();
+    assert!(cargo_toml.contains("\"sqlite\""));
+    assert!(cargo_toml.contains("\"signal\", \"time\""));
+    assert!(cargo_toml.ends_with('\n'));
+    let db_cargo = fs::read_to_string(temp.path().join("crates/demo-db/Cargo.toml")).unwrap();
+    assert!(db_cargo.contains("anyhow.workspace = true"));
+    assert!(db_cargo.contains("tokio.workspace = true"));
+    let db_lib = fs::read_to_string(temp.path().join("crates/demo-db/src/lib.rs")).unwrap();
+    assert!(db_lib.contains("SqlitePool"));
+    assert!(db_lib.contains(r#"sqlx::migrate!("../../db/migrations")"#));
+    assert!(db_lib.contains("DEFAULT_DB_TIMEOUT"));
+    assert!(db_lib.contains("connect_with_timeout"));
+    assert!(db_lib.contains("migrate_with_timeout"));
+    assert!(temp.path().join("db/migrations/.gitkeep").exists());
+}
+
+#[test]
+fn scaffold_output_paths_include_template_collision_candidates() {
+    let temp = tempdir().unwrap();
+    let plan = scaffold::InitScaffoldPlan::from_opts(
+        &ScaffoldOpts {
+            preset: Some(ScaffoldPreset::RustReact),
+            db: Some(ScaffoldDb::Postgres),
+            frontends: Vec::new(),
+            frontend_list: vec![
+                parse_scaffold_frontend("web").unwrap(),
+                parse_scaffold_frontend("landing").unwrap(),
+                parse_scaffold_frontend("admin").unwrap(),
+            ],
+        },
+        &AnswerOpts {
+            repo_name: Some("demo".into()),
+            ..AnswerOpts::default()
+        },
+        temp.path(),
+    )
+    .unwrap()
+    .unwrap();
+
+    let paths = plan.output_paths();
+    for expected in [
+        "Cargo.toml",
+        "crates/demo-db/Cargo.toml",
+        "crates/demo-db/src/lib.rs",
+        "migrations/.gitkeep",
+        "web/package.json",
+        "web/src/App.tsx",
+        "landing/package.json",
+        "landing/src/pages/index.astro",
+        "admin-panel/package.json",
+        "admin-panel/src/App.tsx",
+    ] {
+        assert!(
+            paths.iter().any(|path| path == Path::new(expected)),
+            "missing output path {expected}"
+        );
+    }
+}
+
+#[test]
+fn scaffold_rejects_unsupported_package_manager_before_scripts_render() {
+    let temp = tempdir().unwrap();
+    let error = scaffold::InitScaffoldPlan::from_opts(
+        &ScaffoldOpts {
+            preset: Some(ScaffoldPreset::RustReact),
+            db: None,
+            frontends: Vec::new(),
+            frontend_list: Vec::new(),
+        },
+        &AnswerOpts {
+            repo_name: Some("demo".into()),
+            web_package_manager: Some("cargo".into()),
+            ..AnswerOpts::default()
+        },
+        temp.path(),
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("Unsupported web_package_manager 'cargo'"));
+}
+
+#[test]
+fn scaffold_generated_rust_workspace_has_valid_cargo_metadata() {
+    let temp = tempdir().unwrap();
+    let plan = scaffold::InitScaffoldPlan::from_opts(
+        &ScaffoldOpts {
+            preset: Some(ScaffoldPreset::RustReact),
+            db: Some(ScaffoldDb::Postgres),
+            frontends: Vec::new(),
+            frontend_list: Vec::new(),
+        },
+        &AnswerOpts {
+            repo_name: Some("demo".into()),
+            ..AnswerOpts::default()
+        },
+        temp.path(),
+    )
+    .unwrap()
+    .unwrap();
+    plan.write(temp.path(), false).unwrap();
+
+    let output = std::process::Command::new("cargo")
+        .args(["metadata", "--no-deps", "--format-version", "1"])
+        .current_dir(temp.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "cargo metadata failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let metadata: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let package_names = metadata["packages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|package| package["name"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    for expected in [
+        "demo",
+        "demo-api",
+        "demo-core",
+        "demo-db",
+        "demo-test-support",
+    ] {
+        assert!(
+            package_names.contains(&expected),
+            "missing package {expected}"
+        );
+    }
+}
+
+#[test]
+fn scaffold_rejects_conflicting_file_unless_forced_and_reports_rerun() {
+    let temp = tempdir().unwrap();
+    let plan = scaffold::InitScaffoldPlan::from_opts(
+        &ScaffoldOpts {
+            preset: Some(ScaffoldPreset::RustReact),
+            db: None,
+            frontends: Vec::new(),
+            frontend_list: Vec::new(),
+        },
+        &AnswerOpts {
+            repo_name: Some("demo".into()),
+            ..AnswerOpts::default()
+        },
+        temp.path(),
+    )
+    .unwrap()
+    .unwrap();
+
+    plan.write(temp.path(), false).unwrap();
+    fs::write(temp.path().join("Cargo.toml"), "project-owned\n").unwrap();
+
+    let error = plan.write(temp.path(), false).unwrap_err().to_string();
+    assert!(error.contains("already exist and differ"));
+    assert!(error.contains("pass --force"));
+
+    let preflight = tempdir().unwrap();
+    fs::write(preflight.path().join("Cargo.toml"), "project-owned\n").unwrap();
+    let error = plan.write(preflight.path(), false).unwrap_err().to_string();
+    assert!(error.contains("Cargo.toml"));
+    assert!(
+        !preflight.path().join("web/package.json").exists(),
+        "scaffold conflict preflight should fail before writing later files"
+    );
+
+    let forced = plan.write(temp.path(), true).unwrap();
+    assert!(
+        forced["files_modified"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|path| path == "Cargo.toml")
+    );
+    assert_ne!(
+        fs::read_to_string(temp.path().join("Cargo.toml")).unwrap(),
+        "project-owned\n"
+    );
+
+    let rerun = plan.write(temp.path(), false).unwrap();
+    assert!(
+        rerun["files_unchanged"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|path| path == "Cargo.toml")
+    );
 }
 
 #[test]
@@ -2124,6 +3014,7 @@ fn init_and_adopt_resolve_relative_bootstrap_paths_from_invocation_cwd() {
 
     run_init(InitOpts {
         path: PathBuf::from("new-repo"),
+        scaffold: ScaffoldOpts::default(),
         template: Some("template".into()),
         template_mode: None,
         vcs_ref: None,
@@ -2172,6 +3063,7 @@ fn run_init_rejects_schema_dumps_when_sqlx_is_disabled() {
 
     let error = run_init(InitOpts {
         path: destination,
+        scaffold: ScaffoldOpts::default(),
         template: Some(template.path().display().to_string()),
         template_mode: None,
         vcs_ref: None,
@@ -2212,6 +3104,7 @@ marketplaces = []
 
     run_init(InitOpts {
         path: destination.clone(),
+        scaffold: ScaffoldOpts::default(),
         template: Some(template.path().display().to_string()),
         template_mode: None,
         vcs_ref: None,
@@ -2253,6 +3146,7 @@ plugins = []
 
     run_init(InitOpts {
         path: destination.clone(),
+        scaffold: ScaffoldOpts::default(),
         template: Some(template.path().display().to_string()),
         template_mode: None,
         vcs_ref: None,
@@ -2302,6 +3196,7 @@ fn run_init_falls_back_only_for_unsupported_git_branch_flag() {
     let destination = temp.path().join("repo");
     let output = run_init(InitOpts {
         path: destination,
+        scaffold: ScaffoldOpts::default(),
         template: Some(template.path().display().to_string()),
         template_mode: None,
         vcs_ref: None,
@@ -2352,6 +3247,7 @@ fn run_init_surfaces_git_branch_init_failures() {
     let template = materialize_template_worktree();
     let error = run_init(InitOpts {
         path: temp.path().join("repo"),
+        scaffold: ScaffoldOpts::default(),
         template: Some(template.path().display().to_string()),
         template_mode: None,
         vcs_ref: None,
