@@ -35,9 +35,7 @@ validate_backend_fixture() {
     scripts/jig check rust-file-loc --all >/dev/null
     scripts/jig check migration-immutability --changed-against HEAD >/dev/null
     scripts/jig check sqlx-unchecked-non-test >/dev/null
-    coverage_dir="$(mktemp -d)"
-    COVERAGE_DIR="$coverage_dir" COVERAGE_THRESHOLD=0 node scripts/enforce-coverage.js >/dev/null
-    rm -rf "$coverage_dir"
+    [[ ! -f scripts/enforce-coverage.cjs ]]
     perl -0pi -e 's/default_branch = "main"/default_branch = "dev"/' .jig.toml
     git add .jig.toml
     git commit -m "change answers" >/dev/null
@@ -99,9 +97,7 @@ validate_tooling_only_fixture() {
     scripts/jig check agent-map >/dev/null
     scripts/jig check agent-guides >/dev/null
     scripts/jig check rust-file-loc --all >/dev/null
-    coverage_dir="$(mktemp -d)"
-    COVERAGE_DIR="$coverage_dir" COVERAGE_THRESHOLD=0 node scripts/enforce-coverage.js >/dev/null
-    rm -rf "$coverage_dir"
+    [[ ! -f scripts/enforce-coverage.cjs ]]
     [[ ! -f scripts/add-migration.sh ]]
     [[ ! -f scripts/check-migration-immutability.sh ]]
     [[ ! -f scripts/check-schema-dump.sh ]]
