@@ -30,6 +30,7 @@ fn dispatch_vault_run_injects_redacts_and_verifies_audit() {
         crate::command::VaultInitRequest {
             vault: crate::command::VaultRuntimeOptions {
                 home: Some(vault_home.clone()),
+                ..Default::default()
             },
         },
     ))
@@ -57,6 +58,7 @@ fn dispatch_vault_run_injects_redacts_and_verifies_audit() {
             ],
             vault: crate::command::VaultRuntimeOptions {
                 home: Some(vault_home.clone()),
+                ..Default::default()
             },
         },
     ))
@@ -76,6 +78,7 @@ fn dispatch_vault_run_injects_redacts_and_verifies_audit() {
         crate::command::VaultAuditCommand::Verify(crate::command::VaultAuditVerifyRequest {
             vault: crate::command::VaultRuntimeOptions {
                 home: Some(vault_home),
+                ..Default::default()
             },
         }),
     ))
@@ -115,6 +118,7 @@ fn dispatch_vault_run_delivers_secret_file() {
             ],
             vault: crate::command::VaultRuntimeOptions {
                 home: Some(vault_home),
+                ..Default::default()
             },
         },
     ))
@@ -153,6 +157,7 @@ fn dispatch_vault_run_records_failure_audit_event() {
             command: vec!["definitely-not-a-jig-vault-test-command".into()],
             vault: crate::command::VaultRuntimeOptions {
                 home: Some(vault_home.clone()),
+                ..Default::default()
             },
         },
     ))

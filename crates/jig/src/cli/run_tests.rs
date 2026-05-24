@@ -1,6 +1,9 @@
 use serde_json::json;
 
 use crate::cli::output::format_work_review_summary;
+use crate::command::{
+    VaultRepoScope, VaultRuntimeOptions, VaultScopeSelection, VaultStatusRequest,
+};
 
 use super::*;
 
@@ -13,6 +16,82 @@ fn missing_init_path_gets_actionable_hint() {
     assert!(hint.contains("--preset rust-react"));
     assert!(hint.contains("jig adopt ."));
     assert!(hint.contains("jig adopt . --write"));
+}
+
+#[test]
+fn repo_vault_scope_is_applied_to_auto_options() {
+    let mut options = VaultRuntimeOptions::default();
+
+    apply_repo_vault_scope_to_options(&mut options, Some("scope_1"), "demo", false).unwrap();
+
+    match options.scope {
+        VaultScopeSelection::Repo(VaultRepoScope {
+            scope_id,
+            repo_name,
+        }) => {
+            assert_eq!(scope_id, "scope_1");
+            assert_eq!(repo_name, "demo");
+        }
+        other => panic!("expected repo scope, got {other:?}"),
+    }
+}
+
+#[test]
+fn repo_vault_scope_rejects_global_when_disallowed() {
+    let mut options = VaultRuntimeOptions {
+        home: None,
+        scope: VaultScopeSelection::Global,
+    };
+
+    let error = apply_repo_vault_scope_to_options(&mut options, Some("scope_1"), "demo", false)
+        .unwrap_err();
+
+    assert!(error.to_string().contains("allow_global is false"));
+}
+
+#[test]
+fn bootstrap_vault_capture_is_deferred_only_for_interactive_prompts() {
+    assert!(!should_pre_capture_bootstrap_vault(
+        true, false, false, true
+    ));
+    assert!(should_pre_capture_bootstrap_vault(true, true, false, true));
+    assert!(should_pre_capture_bootstrap_vault(true, false, true, true));
+    assert!(should_pre_capture_bootstrap_vault(
+        true, false, false, false
+    ));
+    assert!(!should_pre_capture_bootstrap_vault(
+        false, true, true, false
+    ));
+}
+
+#[test]
+fn no_input_bootstrap_vault_requires_env_passphrase() {
+    reject_missing_no_input_vault_passphrase(true, true, true).unwrap();
+    reject_missing_no_input_vault_passphrase(false, true, false).unwrap();
+    reject_missing_no_input_vault_passphrase(true, false, false).unwrap();
+
+    let error = reject_missing_no_input_vault_passphrase(true, true, false)
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("JIG_VAULT_PASSPHRASE is required"));
+    assert!(error.contains("--no-vault"));
+}
+
+#[test]
+fn vault_options_mut_reaches_nested_status_command() {
+    let mut command = crate::command::VaultCommand::Status(VaultStatusRequest {
+        vault: VaultRuntimeOptions::default(),
+    });
+
+    vault_options_mut(&mut command).scope = VaultScopeSelection::Global;
+
+    match command {
+        crate::command::VaultCommand::Status(request) => {
+            assert!(matches!(request.vault.scope, VaultScopeSelection::Global));
+        }
+        other => panic!("expected status command, got {other:?}"),
+    }
 }
 
 #[test]
@@ -70,6 +149,34 @@ fn vault_run_summary_reports_status_and_redacted_output() {
     assert!(summary.contains("Vault run: exit 2"));
     assert!(summary.contains("stdout: redacted stdout"));
     assert!(summary.contains("stderr: redacted stderr"));
+}
+
+#[test]
+fn adopt_human_summary_includes_notes() {
+    let summary = format_adopt_human_summary(&json!({
+        "render_mode": "preview",
+        "destination": "/tmp/repo",
+        "render_report": {
+            "files_created": [],
+            "files_modified": [],
+            "files_removed": [],
+            "conflicts": []
+        },
+        "vault": {
+            "requested": false
+        },
+        "adoption_review": [],
+        "notes": [
+            "Existing .jig.toml had no [vault] block, so Jig added a new repo-scoped vault scope."
+        ],
+        "detection_report": {
+            "warnings": []
+        },
+        "next_steps": []
+    }));
+
+    assert!(summary.contains("notes:"));
+    assert!(summary.contains("repo-scoped vault scope"));
 }
 
 #[test]

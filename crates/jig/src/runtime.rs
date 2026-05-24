@@ -95,6 +95,14 @@ pub(crate) fn capture_new_vault_passphrase() -> Result<()> {
     vault::capture_new_passphrase()
 }
 
+pub(crate) fn vault_passphrase_prompt_available() -> bool {
+    vault::passphrase_prompt_available()
+}
+
+pub(crate) fn vault_passphrase_env_present() -> bool {
+    vault::passphrase_env_present()
+}
+
 fn dispatch_check(ctx: &RepoContext, command: CheckCommand) -> Result<Value> {
     match command {
         CheckCommand::Fmt(opts) => {

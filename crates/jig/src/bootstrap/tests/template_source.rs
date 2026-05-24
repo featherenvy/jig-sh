@@ -51,6 +51,7 @@ exit 0
         write: true,
         defaults: true,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts {
             repo_name: Some("demo".into()),
             sqlx_enabled: Some(false),
@@ -144,6 +145,7 @@ fn run_adopt_uses_embedded_template_for_unreleased_build_policy() {
             write: true,
             defaults: true,
             no_input: true,
+            no_vault: true,
             answers: AnswerOpts {
                 repo_name: Some("demo".into()),
                 sqlx_enabled: Some(false),
@@ -184,6 +186,7 @@ fn update_uses_stored_embedded_template_by_default() {
             write: true,
             defaults: true,
             no_input: true,
+            no_vault: true,
             answers: AnswerOpts {
                 repo_name: Some("demo".into()),
                 sqlx_enabled: Some(false),
@@ -418,6 +421,7 @@ fn default_template_mode_rejects_local_only_mode_before_clone() {
         write: true,
         defaults: true,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts {
             repo_name: Some("demo".into()),
             sqlx_enabled: Some(false),
@@ -476,6 +480,7 @@ exit 0
         write: true,
         defaults: true,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts {
             repo_name: Some("demo".into()),
             sqlx_enabled: Some(false),
@@ -528,6 +533,7 @@ exit 0
         write: true,
         defaults: true,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts {
             repo_name: Some("demo".into()),
             sqlx_enabled: Some(false),

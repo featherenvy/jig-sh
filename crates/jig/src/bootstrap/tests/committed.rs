@@ -22,6 +22,7 @@ fn init_rejects_vcs_ref_for_non_git_local_template() {
         force: false,
         defaults: true,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts {
             repo_name: Some("demo".into()),
             sqlx_enabled: Some(false),
@@ -55,6 +56,7 @@ fn update_allows_embedded_source_to_switch_to_committed_checkout() {
             write: true,
             defaults: true,
             no_input: true,
+            no_vault: true,
             answers: AnswerOpts {
                 repo_name: Some("demo".into()),
                 sqlx_enabled: Some(false),

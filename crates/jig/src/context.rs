@@ -106,6 +106,8 @@ struct RepoConfig {
     #[serde(default)]
     frontend_apps: Vec<FrontendAppConfig>,
     #[serde(default)]
+    vault: VaultConfig,
+    #[serde(default)]
     dev: DevConfig,
     #[serde(default)]
     work: WorkConfig,
@@ -122,6 +124,33 @@ pub(crate) struct FrontendAppConfig {
     #[allow(dead_code)]
     #[serde(default)]
     pub(crate) coverage_threshold: u32,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct VaultConfig {
+    #[serde(default)]
+    pub(crate) scope: VaultScopeConfig,
+    #[serde(default)]
+    pub(crate) scope_id: Option<String>,
+    #[serde(default)]
+    pub(crate) allow_global: bool,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum VaultScopeConfig {
+    #[default]
+    Legacy,
+    Repo,
+}
+
+impl VaultConfig {
+    pub(crate) fn repo_scope_id(&self) -> Option<&str> {
+        (self.scope == VaultScopeConfig::Repo)
+            .then_some(self.scope_id.as_deref())
+            .flatten()
+    }
 }
 
 #[cfg_attr(not(feature = "dev-proxy"), allow(dead_code))]
@@ -429,6 +458,10 @@ impl RepoContext {
         &self.config.frontend_apps
     }
 
+    pub(crate) fn vault_config(&self) -> &VaultConfig {
+        &self.config.vault
+    }
+
     #[cfg_attr(not(feature = "dev-proxy"), allow(dead_code))]
     pub(crate) fn dev_config(&self) -> &DevConfig {
         &self.config.dev
@@ -551,6 +584,7 @@ pub(crate) fn default_codex_marketplace_plugins() -> Vec<String> {
 fn validate_config(config: &RepoConfig) -> Result<()> {
     validate_command_map(&config.commands)?;
     validate_web_package_manager(&config.web_package_manager)?;
+    validate_vault_config(config)?;
     validate_dev_config(config)?;
     validate_work_config(config)
 }
@@ -587,6 +621,32 @@ pub(crate) fn validate_web_package_manager(value: &str) -> Result<()> {
         "Unsupported web_package_manager '{value}'. Expected one of: {}.",
         SUPPORTED_WEB_PACKAGE_MANAGERS.join(", ")
     )
+}
+
+fn validate_vault_config(config: &RepoConfig) -> Result<()> {
+    match config.vault.scope {
+        VaultScopeConfig::Legacy => {
+            if config.vault.scope_id.is_some() {
+                bail!("[vault].scope_id requires scope = \"repo\"");
+            }
+        }
+        VaultScopeConfig::Repo => {
+            let Some(scope_id) = config.vault.scope_id.as_deref() else {
+                bail!("[vault].scope_id is required when scope = \"repo\"");
+            };
+            validate_vault_scope_id(scope_id)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_vault_scope_id(scope_id: &str) -> Result<()> {
+    if !crate::command::is_valid_vault_scope_id(scope_id) {
+        bail!(
+            "[vault].scope_id must be 1 to 128 bytes and may only contain letters, digits, '_', or '-'"
+        );
+    }
+    Ok(())
 }
 
 fn validate_dev_config(config: &RepoConfig) -> Result<()> {

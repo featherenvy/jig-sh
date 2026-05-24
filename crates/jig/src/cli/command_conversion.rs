@@ -128,7 +128,14 @@ impl From<VaultSecretCommand> for command::VaultSecretCommand {
 
 impl From<VaultRuntimeOpts> for command::VaultRuntimeOptions {
     fn from(opts: VaultRuntimeOpts) -> Self {
-        Self { home: opts.home }
+        Self {
+            home: opts.home,
+            scope: if opts.global {
+                command::VaultScopeSelection::Global
+            } else {
+                command::VaultScopeSelection::Auto
+            },
+        }
     }
 }
 

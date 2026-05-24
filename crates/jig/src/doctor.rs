@@ -12,7 +12,9 @@ use serde_json::{Value, json};
 
 #[cfg(feature = "dev-proxy")]
 use crate::command::{ProxyCommand, ProxyListRequest, ProxyRuntimeOptions};
-use crate::command::{VaultCommand, VaultRuntimeOptions, VaultStatusRequest};
+use crate::command::{
+    VaultCommand, VaultRepoScope, VaultRuntimeOptions, VaultScopeSelection, VaultStatusRequest,
+};
 use crate::context::{RepoContext, find_repo_root_from_or_env};
 use crate::tool_defs::tool;
 
@@ -123,7 +125,7 @@ pub(crate) fn run() -> Result<Value> {
         }
     }
 
-    checks.push(vault_check());
+    checks.push(vault_check(ctx_result.as_ref().ok()));
 
     Ok(output(
         Some(json!({
@@ -619,11 +621,11 @@ fn proxy_detail(configured: bool, running: bool, output: &Value) -> String {
     }
 }
 
-fn vault_check() -> DoctorCheck {
+fn vault_check(ctx: Option<&RepoContext>) -> DoctorCheck {
     // Vault status is intentionally a cheap metadata probe and must not prompt
     // for a passphrase; doctor relies on that non-authenticated boundary.
     match crate::runtime::dispatch_vault(VaultCommand::Status(VaultStatusRequest {
-        vault: VaultRuntimeOptions::default(),
+        vault: vault_options_for_context(ctx),
     })) {
         Ok(output) => {
             let initialized = output["exists"].as_bool().unwrap_or(false);
@@ -637,10 +639,7 @@ fn vault_check() -> DoctorCheck {
                 } else {
                     "not initialized"
                 },
-                format!(
-                    "vault_home={}",
-                    output["vault_home"].as_str().unwrap_or("<unknown>")
-                ),
+                vault_detail(&output),
             )
             .with_optional_fix((!initialized).then_some("Run `scripts/jig vault init`."))
             .with_data(output)
@@ -648,6 +647,36 @@ fn vault_check() -> DoctorCheck {
         Err(error) => check("vault", "Vault", false, false, "error", error.to_string())
             .with_fix("Run `scripts/jig vault status` for vault diagnostics."),
     }
+}
+
+fn vault_options_for_context(ctx: Option<&RepoContext>) -> VaultRuntimeOptions {
+    let Some(ctx) = ctx else {
+        return VaultRuntimeOptions::default();
+    };
+    let Some(scope_id) = ctx.vault_config().repo_scope_id() else {
+        return VaultRuntimeOptions::default();
+    };
+    VaultRuntimeOptions {
+        home: None,
+        scope: VaultScopeSelection::Repo(VaultRepoScope {
+            scope_id: scope_id.to_string(),
+            repo_name: ctx.repo_name().to_string(),
+        }),
+    }
+}
+
+fn vault_detail(output: &Value) -> String {
+    let mut detail = format!(
+        "vault_home={}",
+        output["vault_home"].as_str().unwrap_or("<unknown>")
+    );
+    if let Some(scope) = output["vault_scope"].as_str() {
+        detail.push_str(&format!(" scope={scope}"));
+    }
+    if let Some(scope_id) = output["vault_scope_id"].as_str() {
+        detail.push_str(&format!(" scope_id={scope_id}"));
+    }
+    detail
 }
 
 #[derive(Clone, Debug, Serialize)]

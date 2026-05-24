@@ -17,6 +17,7 @@ fn adopt_local_git_template_defaults_to_committed_mode() {
         write: true,
         defaults: true,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts {
             repo_name: Some("demo".into()),
             sqlx_enabled: Some(false),
@@ -56,6 +57,7 @@ fn adopt_local_git_template_rejects_dirty_committed_source() {
         write: true,
         defaults: true,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts {
             repo_name: Some("demo".into()),
             sqlx_enabled: Some(false),

@@ -2,6 +2,7 @@ use std::ffi::OsString;
 use std::io::{IsTerminal, Read};
 #[cfg(unix)]
 use std::os::unix::ffi::OsStringExt;
+use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard};
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -12,11 +13,12 @@ use zeroize::Zeroizing;
 
 use crate::command::{
     VaultAuditCommand, VaultCommand, VaultInitRequest, VaultRunRequest, VaultRuntimeOptions,
-    VaultSecretCommand, VaultSecretListRequest, VaultSecretRemoveRequest, VaultSecretSetRequest,
-    VaultSecretValueSource, VaultStatusRequest,
+    VaultScopeSelection, VaultSecretCommand, VaultSecretListRequest, VaultSecretRemoveRequest,
+    VaultSecretSetRequest, VaultSecretValueSource, VaultStatusRequest,
 };
 
 const PASSPHRASE_ENV: &str = "JIG_VAULT_PASSPHRASE";
+const VAULT_HOME_ENV: &str = "JIG_VAULT_HOME";
 static CAPTURED_PASSPHRASE: Mutex<Option<SecretString>> = Mutex::new(None);
 
 pub(crate) fn dispatch(command: VaultCommand) -> Result<Value> {
@@ -36,44 +38,54 @@ pub(crate) fn dispatch(command: VaultCommand) -> Result<Value> {
 }
 
 fn init(request: VaultInitRequest) -> Result<Value> {
-    let vault = vault(&request.vault)?;
+    let resolved = resolve_vault_runtime(&request.vault)?;
+    let vault = vault(&resolved)?;
     let passphrase = passphrase()?;
     vault.init(&passphrase)?;
-    Ok(json!({
+    let mut output = json!({
         "ok": true,
         "command": "vault init",
         "vault_home": vault.root().display().to_string(),
         "created": true,
-    }))
+    });
+    add_vault_scope_fields(&mut output, &resolved);
+    Ok(output)
 }
 
 fn status(request: VaultStatusRequest) -> Result<Value> {
-    let status = Vault::status(request.vault.home)?;
-    Ok(json!({
+    let resolved = resolve_vault_runtime(&request.vault)?;
+    let status = Vault::status(resolved.home.clone())?;
+    let mut output = json!({
         "ok": true,
         "command": "vault status",
         "vault_home": status.root.display().to_string(),
         "exists": status.exists,
         "vault_file_exists": status.exists,
-    }))
+    });
+    add_vault_scope_fields(&mut output, &resolved);
+    Ok(output)
 }
 
 fn verify_audit(request: crate::command::VaultAuditVerifyRequest) -> Result<Value> {
-    let vault = vault(&request.vault)?;
+    let resolved = resolve_vault_runtime(&request.vault)?;
+    let vault = vault(&resolved)?;
     let passphrase = passphrase()?;
     let verification = vault.verify_audit(&passphrase)?;
-    Ok(json!({
+    let mut output = json!({
         "ok": true,
         "command": "vault audit verify",
         "vault_home": vault.root().display().to_string(),
         "event_count": verification.event_count,
         "latest_mac": verification.latest_mac,
         "torn_tail_bytes": verification.torn_tail_bytes,
-    }))
+    });
+    add_vault_scope_fields(&mut output, &resolved);
+    Ok(output)
 }
 
 fn list(request: VaultSecretListRequest) -> Result<Value> {
-    let vault = vault(&request.vault)?;
+    let resolved = resolve_vault_runtime(&request.vault)?;
+    let vault = vault(&resolved)?;
     let passphrase = passphrase()?;
     let secrets: Vec<Value> = vault
         .list(&passphrase)?
@@ -87,16 +99,19 @@ fn list(request: VaultSecretListRequest) -> Result<Value> {
             })
         })
         .collect();
-    Ok(json!({
+    let mut output = json!({
         "ok": true,
         "command": "vault secret list",
         "vault_home": vault.root().display().to_string(),
         "secrets": secrets,
-    }))
+    });
+    add_vault_scope_fields(&mut output, &resolved);
+    Ok(output)
 }
 
 fn set(request: VaultSecretSetRequest) -> Result<Value> {
-    let vault = vault(&request.vault)?;
+    let resolved = resolve_vault_runtime(&request.vault)?;
+    let vault = vault(&resolved)?;
     let passphrase = passphrase()?;
     let value = match request.value_source {
         VaultSecretValueSource::Auto => {
@@ -120,29 +135,35 @@ fn set(request: VaultSecretSetRequest) -> Result<Value> {
         VaultSecretValueSource::Prompt => read_secret_value_from_prompt()?,
     };
     vault.set_secret(&passphrase, &request.name, value)?;
-    Ok(json!({
+    let mut output = json!({
         "ok": true,
         "command": "vault secret set",
         "vault_home": vault.root().display().to_string(),
         "name": request.name,
-    }))
+    });
+    add_vault_scope_fields(&mut output, &resolved);
+    Ok(output)
 }
 
 fn remove(request: VaultSecretRemoveRequest) -> Result<Value> {
-    let vault = vault(&request.vault)?;
+    let resolved = resolve_vault_runtime(&request.vault)?;
+    let vault = vault(&resolved)?;
     let passphrase = passphrase()?;
     let removed = vault.remove_secret(&passphrase, &request.name)?;
-    Ok(json!({
+    let mut output = json!({
         "ok": true,
         "command": "vault secret remove",
         "vault_home": vault.root().display().to_string(),
         "name": request.name,
         "removed": removed,
-    }))
+    });
+    add_vault_scope_fields(&mut output, &resolved);
+    Ok(output)
 }
 
 fn run(request: VaultRunRequest) -> Result<Value> {
-    let vault = vault(&request.vault)?;
+    let resolved = resolve_vault_runtime(&request.vault)?;
+    let vault = vault(&resolved)?;
     let passphrase = passphrase()?;
     let env = parse_env_mappings(&request.env)?;
     let files = parse_file_mappings(&request.files)?;
@@ -152,7 +173,7 @@ fn run(request: VaultRunRequest) -> Result<Value> {
         &passphrase,
         BrokeredRun::with_files(request.command, env, files)?,
     )?;
-    Ok(json!({
+    let mut output = json!({
         "ok": output.exit_status == 0,
         "command": "vault run",
         "vault_home": vault.root().display().to_string(),
@@ -164,11 +185,82 @@ fn run(request: VaultRunRequest) -> Result<Value> {
             "stdout": output.stdout,
             "stderr": output.stderr,
         },
-    }))
+    });
+    add_vault_scope_fields(&mut output, &resolved);
+    Ok(output)
 }
 
-fn vault(options: &VaultRuntimeOptions) -> Result<Vault> {
-    Ok(Vault::resolve(options.home.clone())?)
+fn vault(resolved: &ResolvedVaultRuntime) -> Result<Vault> {
+    Ok(Vault::resolve(resolved.home.clone())?)
+}
+
+#[derive(Clone, Debug)]
+struct ResolvedVaultRuntime {
+    home: Option<PathBuf>,
+    scope: &'static str,
+    scope_id: Option<String>,
+    repo_name: Option<String>,
+}
+
+fn resolve_vault_runtime(options: &VaultRuntimeOptions) -> Result<ResolvedVaultRuntime> {
+    if let Some(home) = &options.home {
+        return Ok(ResolvedVaultRuntime {
+            home: Some(home.clone()),
+            scope: "explicit-home",
+            scope_id: None,
+            repo_name: None,
+        });
+    }
+
+    match &options.scope {
+        VaultScopeSelection::Repo(scope) => Ok(ResolvedVaultRuntime {
+            home: Some(scoped_vault_home(&scope.scope_id)?),
+            scope: "repo",
+            scope_id: Some(scope.scope_id.clone()),
+            repo_name: Some(scope.repo_name.clone()),
+        }),
+        VaultScopeSelection::Global => Ok(ResolvedVaultRuntime {
+            home: None,
+            scope: "global",
+            scope_id: None,
+            repo_name: None,
+        }),
+        VaultScopeSelection::Auto => Ok(ResolvedVaultRuntime {
+            home: None,
+            scope: "legacy",
+            scope_id: None,
+            repo_name: None,
+        }),
+    }
+}
+
+fn scoped_vault_home(scope_id: &str) -> Result<PathBuf> {
+    if !crate::command::is_valid_vault_scope_id(scope_id) {
+        bail!("invalid repo vault scope id '{scope_id}'");
+    }
+    Ok(vault_base_home()?.join("scopes").join(scope_id))
+}
+
+fn vault_base_home() -> Result<PathBuf> {
+    match std::env::var_os(VAULT_HOME_ENV) {
+        Some(value) if value.is_empty() => bail!("{VAULT_HOME_ENV} must not be empty"),
+        Some(value) => Ok(PathBuf::from(value)),
+        None => Ok(dirs::home_dir()
+            .context("could not resolve home directory for Jig vault")?
+            .join(".jig/vault")),
+    }
+}
+
+fn add_vault_scope_fields(output: &mut Value, resolved: &ResolvedVaultRuntime) {
+    output["vault_scope"] = json!(resolved.scope);
+    output["vault_scope_id"] = resolved
+        .scope_id
+        .as_deref()
+        .map_or(Value::Null, |scope_id| json!(scope_id));
+    output["vault_repo_name"] = resolved
+        .repo_name
+        .as_deref()
+        .map_or(Value::Null, |repo_name| json!(repo_name));
 }
 
 pub(crate) fn capture_passphrase() -> Result<()> {
@@ -177,6 +269,23 @@ pub(crate) fn capture_passphrase() -> Result<()> {
 
 pub(crate) fn capture_new_passphrase() -> Result<()> {
     capture_passphrase_with_prompt(PromptKind::NewVault)
+}
+
+fn require_captured_passphrase() -> Result<()> {
+    if captured_passphrase_lock()?.is_some() {
+        return Ok(());
+    }
+    Err(anyhow!(
+        "{PASSPHRASE_ENV} is required for non-interactive `jig vault` commands; run from a terminal to be prompted, or export {PASSPHRASE_ENV}. Command-line passphrases are intentionally unsupported"
+    ))
+}
+
+pub(crate) fn passphrase_prompt_available() -> bool {
+    hidden_terminal_input_available()
+}
+
+pub(crate) fn passphrase_env_present() -> bool {
+    std::env::var_os(PASSPHRASE_ENV).is_some()
 }
 
 fn capture_passphrase_with_prompt(kind: PromptKind) -> Result<()> {
@@ -189,7 +298,8 @@ fn capture_passphrase_with_prompt(kind: PromptKind) -> Result<()> {
         set_captured_passphrase(passphrase)?;
         return Ok(());
     }
-    capture_passphrase_from_env()
+    capture_passphrase_from_env()?;
+    require_captured_passphrase()
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -453,6 +563,7 @@ mod tests {
         let output = status(VaultStatusRequest {
             vault: VaultRuntimeOptions {
                 home: Some(home.clone()),
+                ..Default::default()
             },
         })
         .unwrap();
@@ -472,10 +583,41 @@ mod tests {
             ))
             .unwrap();
         let output = status(VaultStatusRequest {
-            vault: VaultRuntimeOptions { home: Some(home) },
+            vault: VaultRuntimeOptions {
+                home: Some(home),
+                ..Default::default()
+            },
         })
         .unwrap();
         assert_eq!(output["exists"], true);
         assert_eq!(output["vault_file_exists"], true);
+    }
+
+    #[test]
+    fn repo_scope_resolves_under_vault_base_home() {
+        let _env = lock_env();
+        let temp = tempdir().unwrap();
+        let base = temp.path().join("vault-base");
+        let _home = EnvVarGuard::set(VAULT_HOME_ENV, &base);
+
+        let output = status(VaultStatusRequest {
+            vault: VaultRuntimeOptions {
+                home: None,
+                scope: VaultScopeSelection::Repo(crate::command::VaultRepoScope {
+                    scope_id: "scope_123".into(),
+                    repo_name: "demo".into(),
+                }),
+            },
+        })
+        .unwrap();
+
+        assert_eq!(output["vault_scope"], "repo");
+        assert_eq!(output["vault_scope_id"], "scope_123");
+        assert_eq!(output["vault_repo_name"], "demo");
+        assert_eq!(
+            output["vault_home"],
+            base.join("scopes/scope_123").display().to_string()
+        );
+        assert!(!base.exists());
     }
 }

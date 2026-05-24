@@ -4,6 +4,7 @@
 
 ### Changed
 - Extract tests into dedicated modules
+- Default new and adopted repos to repo-scoped local vaults with `--no-vault` and explicit `--global` escape hatches; in scoped repos, `JIG_VAULT_HOME` is now a vault base and resolves to `$JIG_VAULT_HOME/scopes/<scope_id>`.
 
 ### Other
 - Implement scripts/jig agent doctor/bootstrap for Jig skills setup

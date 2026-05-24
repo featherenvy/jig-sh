@@ -5,7 +5,9 @@ use std::path::Path;
 use anyhow::Result;
 use serde_json::{Value, json};
 
-use crate::command::{VaultCommand, VaultRuntimeOptions, VaultStatusRequest};
+use crate::command::{
+    VaultCommand, VaultRepoScope, VaultRuntimeOptions, VaultScopeSelection, VaultStatusRequest,
+};
 use crate::context::{DevAppConfig, RepoContext, WorkGate};
 
 const COMMAND: &str = "info";
@@ -60,7 +62,7 @@ pub(crate) fn format_summary(value: &Value) -> String {
 }
 
 fn repo_info(ctx: &RepoContext) -> Value {
-    repo_info_with_vault(ctx, vault_capability())
+    repo_info_with_vault(ctx, vault_capability(ctx))
 }
 
 fn repo_info_with_vault(ctx: &RepoContext, vault: VaultCapability) -> Value {
@@ -105,6 +107,8 @@ fn repo_info_with_vault(ctx: &RepoContext, vault: VaultCapability) -> Value {
             "vault_available": vault.available,
             "vault_initialized": vault.initialized,
             "vault_home": vault.home,
+            "vault_scope": vault.scope,
+            "vault_scope_id": vault.scope_id,
             "vault_error": vault.error,
         },
         "check_tools": ctx.work_check_tools(),
@@ -138,26 +142,45 @@ struct VaultCapability {
     available: bool,
     initialized: bool,
     home: Option<String>,
+    scope: Option<String>,
+    scope_id: Option<String>,
     error: Option<String>,
 }
 
-fn vault_capability() -> VaultCapability {
+fn vault_capability(ctx: &RepoContext) -> VaultCapability {
     let command = VaultCommand::Status(VaultStatusRequest {
-        vault: VaultRuntimeOptions::default(),
+        vault: vault_options_for_context(ctx),
     });
     match crate::runtime::dispatch_vault(command) {
         Ok(output) => VaultCapability {
             available: true,
             initialized: output["exists"].as_bool().unwrap_or(false),
             home: output["vault_home"].as_str().map(str::to_string),
+            scope: output["vault_scope"].as_str().map(str::to_string),
+            scope_id: output["vault_scope_id"].as_str().map(str::to_string),
             error: None,
         },
         Err(error) => VaultCapability {
             available: false,
             initialized: false,
             home: None,
+            scope: None,
+            scope_id: None,
             error: Some(format!("{error:#}")),
         },
+    }
+}
+
+fn vault_options_for_context(ctx: &RepoContext) -> VaultRuntimeOptions {
+    let Some(scope_id) = ctx.vault_config().repo_scope_id() else {
+        return VaultRuntimeOptions::default();
+    };
+    VaultRuntimeOptions {
+        home: None,
+        scope: VaultScopeSelection::Repo(VaultRepoScope {
+            scope_id: scope_id.to_string(),
+            repo_name: ctx.repo_name().to_string(),
+        }),
     }
 }
 
@@ -351,6 +374,8 @@ mod tests {
                 available: true,
                 initialized: true,
                 home: Some("/tmp/vault".into()),
+                scope: Some("repo".into()),
+                scope_id: Some("scope_1".into()),
                 error: None,
             },
         );
@@ -367,6 +392,8 @@ mod tests {
         assert_eq!(output["capabilities"]["vault_available"], true);
         assert_eq!(output["capabilities"]["vault_initialized"], true);
         assert_eq!(output["capabilities"]["vault_home"], "/tmp/vault");
+        assert_eq!(output["capabilities"]["vault_scope"], "repo");
+        assert_eq!(output["capabilities"]["vault_scope_id"], "scope_1");
         assert_eq!(output["check_tools"][0], "jig.test");
         assert_eq!(output["work_gates"][0]["id"], "tests");
         assert_eq!(output["dev_apps"][0]["name"], "web");
@@ -394,6 +421,8 @@ mod tests {
                 available: true,
                 initialized: false,
                 home: Some("/tmp/vault".into()),
+                scope: Some("repo".into()),
+                scope_id: Some("scope_1".into()),
                 error: None,
             },
         );
@@ -418,6 +447,8 @@ mod tests {
                 available: false,
                 initialized: false,
                 home: None,
+                scope: None,
+                scope_id: None,
                 error: Some("vault status failed".into()),
             },
         );

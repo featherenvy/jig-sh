@@ -42,6 +42,7 @@ pub(super) struct RenderAnswers {
     typescript_build_command: String,
     typescript_coverage_command: String,
     frontend_apps: Vec<FrontendApp>,
+    vault: VaultAnswers,
     agent_tooling: AgentToolingAnswers,
 }
 
@@ -158,6 +159,7 @@ impl AnswerResolution {
     ) -> Result<Self> {
         let mut raw = input.raw;
         raw.merge_opts(opts);
+        let vault_note = raw.apply_existing_vault_default(destination)?;
         let sqlx_defaulted_to_tooling_only = if use_defaults {
             raw.apply_sqlx_default_for_cli_defaults()
         } else {
@@ -170,6 +172,9 @@ impl AnswerResolution {
                 "SQLx answers were omitted under --defaults, so Jig rendered a tooling-only profile. Pass --sqlx-enabled true --rust-migration-dir <dir> for SQLx repos, or pass --sqlx-enabled false for tooling-only repos."
                     .into(),
             );
+        }
+        if let Some(note) = vault_note {
+            notes.push(note);
         }
         Ok(Self { answers, notes })
     }
@@ -253,7 +258,15 @@ struct RawAnswers {
     rust_test_locked_command: Option<String>,
     web_package_manager: Option<String>,
     frontend_apps: Option<Vec<FrontendApp>>,
+    vault: Option<VaultAnswers>,
     agent_tooling: Option<AgentToolingAnswers>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+struct VaultAnswers {
+    scope: String,
+    scope_id: String,
+    allow_global: bool,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -394,6 +407,61 @@ impl RawAnswers {
         false
     }
 
+    fn apply_existing_vault_default(&mut self, destination: &Path) -> Result<Option<String>> {
+        if self.vault.is_some() {
+            return Ok(None);
+        }
+        let path = destination.join(super::ANSWERS_FILE);
+        let text = match fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => {
+                return Err(error).with_context(|| format!("Failed to read {}", path.display()));
+            }
+        };
+        let value = toml::from_str::<toml::Value>(&text)
+            .with_context(|| format!("Failed to parse {}", path.display()))?;
+        let Some(vault) = value.get("vault") else {
+            return Ok(Some(
+                "Existing .jig.toml had no [vault] block, so Jig added a new repo-scoped vault scope. Existing legacy global vault secrets are not migrated automatically."
+                    .into(),
+            ));
+        };
+        let Some(table) = vault.as_table() else {
+            return Ok(Some(
+                "Existing .jig.toml had no usable [vault] table, so Jig added a new repo-scoped vault scope. Existing legacy global vault secrets are not migrated automatically."
+                    .into(),
+            ));
+        };
+        if table.get("scope").and_then(toml::Value::as_str) != Some("repo") {
+            return Ok(Some(
+                "Existing .jig.toml had no repo [vault] scope, so Jig added a new repo-scoped vault scope. Existing legacy global vault secrets are not migrated automatically."
+                    .into(),
+            ));
+        }
+        let Some(scope_id) = table.get("scope_id").and_then(toml::Value::as_str) else {
+            bail!(
+                "[vault].scope_id is required in {} when [vault].scope = \"repo\"",
+                path.display()
+            );
+        };
+        if !crate::command::is_valid_vault_scope_id(scope_id) {
+            bail!(
+                "Invalid [vault].scope_id in {}: must be 1 to 128 bytes and may only contain letters, digits, '_', or '-'",
+                path.display()
+            );
+        }
+        self.vault = Some(VaultAnswers {
+            scope: "repo".into(),
+            scope_id: scope_id.into(),
+            allow_global: table
+                .get("allow_global")
+                .and_then(toml::Value::as_bool)
+                .unwrap_or(false),
+        });
+        Ok(None)
+    }
+
     fn resolve(self, default_repo_name: Option<String>) -> Result<RenderAnswers> {
         let repo_name = self
             .repo_name
@@ -415,6 +483,8 @@ impl RawAnswers {
 
         let frontend_apps = self.frontend_apps.unwrap_or_default();
         validate_frontend_apps(&frontend_apps)?;
+        let vault = self.vault.unwrap_or_else(default_vault_answers);
+        validate_vault_answers(&vault)?;
         let legacy_dev_command = self.dev_command.filter(|value| !value.trim().is_empty());
 
         let web_package_manager = self.web_package_manager.unwrap_or_else(|| "bun".into());
@@ -490,9 +560,33 @@ impl RawAnswers {
             typescript_build_command: "scripts/check-webapps.sh build".into(),
             typescript_coverage_command: "scripts/check-webapps.sh coverage".into(),
             frontend_apps,
+            vault,
             agent_tooling: self.agent_tooling.unwrap_or_default(),
         })
     }
+}
+
+fn default_vault_answers() -> VaultAnswers {
+    VaultAnswers {
+        scope: "repo".into(),
+        scope_id: ulid::Ulid::new().to_string(),
+        allow_global: false,
+    }
+}
+
+fn validate_vault_answers(vault: &VaultAnswers) -> Result<()> {
+    if vault.scope != "repo" {
+        bail!(
+            "Unsupported vault.scope '{}'. Expected 'repo'.",
+            vault.scope
+        );
+    }
+    if !crate::command::is_valid_vault_scope_id(&vault.scope_id) {
+        bail!(
+            "vault.scope_id must be 1 to 128 bytes and may only contain letters, digits, '_', or '-'"
+        );
+    }
+    Ok(())
 }
 
 fn answer_opts_has_sqlx_shape(answers: &AnswerOpts) -> bool {

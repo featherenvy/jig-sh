@@ -135,9 +135,15 @@ pub struct InitOpts {
     #[arg(
         long,
         help_heading = "Automation",
-        help = "Fail instead of prompting for missing answers"
+        help = "Fail instead of prompting for missing answers; vault setup requires JIG_VAULT_PASSPHRASE or --no-vault"
     )]
     pub no_input: bool,
+    #[arg(
+        long,
+        help_heading = "Vault",
+        help = "Skip initial passphrase setup; generated repo metadata still declares a vault scope"
+    )]
+    pub no_vault: bool,
     #[command(flatten)]
     pub answers: AnswerOpts,
 }
@@ -190,9 +196,14 @@ pub struct AdoptOpts {
     pub defaults: bool,
     #[arg(
         long,
-        help = "Fail instead of prompting for missing answers and skip adopt write confirmation"
+        help = "Fail instead of prompting for missing answers and skip adopt write confirmation; vault setup requires JIG_VAULT_PASSPHRASE or --no-vault"
     )]
     pub no_input: bool,
+    #[arg(
+        long,
+        help = "Skip initial passphrase setup when --write is supplied; generated repo metadata still declares a vault scope"
+    )]
+    pub no_vault: bool,
     #[command(flatten)]
     pub answers: AnswerOpts,
 }

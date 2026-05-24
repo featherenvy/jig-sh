@@ -1,6 +1,12 @@
 use super::*;
 use crate::test_env::CurrentDirGuard;
 
+fn rendered_vault_scope_id(repo: &std::path::Path) -> String {
+    let text = fs::read_to_string(repo.join(".jig.toml")).unwrap();
+    let value = toml::from_str::<toml::Value>(&text).unwrap();
+    value["vault"]["scope_id"].as_str().unwrap().to_string()
+}
+
 #[test]
 fn parses_frontend_app_flag() {
     let app = parse_frontend_app("frontend:web:40").unwrap();
@@ -571,6 +577,7 @@ fn run_init_uses_native_renderer_and_git() {
         force: false,
         defaults: false,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts {
             repo_name: Some("demo".into()),
             rust_migration_dir: Some("migrations".into()),
@@ -584,6 +591,10 @@ fn run_init_uses_native_renderer_and_git() {
     assert!(log.contains("git init -b main"));
     assert!(destination.exists());
     assert!(destination.join(".jig.toml").exists());
+    let answers = fs::read_to_string(destination.join(".jig.toml")).unwrap();
+    assert!(answers.contains("[vault]"));
+    assert!(answers.contains("scope = \"repo\""));
+    assert!(answers.contains("allow_global = false"));
     let gitignore = fs::read_to_string(destination.join(".gitignore")).unwrap();
     assert!(gitignore.contains("node_modules/"));
     assert!(gitignore.contains("target/"));
@@ -610,6 +621,7 @@ fn run_init_sqlx_disabled_defaults_to_harness_only_safe_commands() {
         force: false,
         defaults: true,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts {
             repo_name: Some("demo".into()),
             sqlx_enabled: Some(false),
@@ -651,6 +663,7 @@ fn run_init_rust_react_scaffold_generates_backend_and_frontends() {
         force: false,
         defaults: true,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts::default(),
     })
     .unwrap();
@@ -759,6 +772,7 @@ fn run_init_rejects_invalid_frontend_package_names_before_writes() {
         force: false,
         defaults: true,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts {
             repo_name: Some("demo".into()),
             ..AnswerOpts::default()
@@ -1241,6 +1255,7 @@ fn run_init_scaffold_writes_sanitized_repo_name_answer() {
         force: false,
         defaults: true,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts {
             repo_name: Some("123-type".into()),
             ..AnswerOpts::default()
@@ -1496,6 +1511,7 @@ fn adopt_defaults_to_tooling_only_when_sqlx_answers_are_omitted() {
         write: true,
         defaults: true,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts::default(),
     })
     .unwrap();
@@ -1539,6 +1555,142 @@ fn adopt_defaults_to_tooling_only_when_sqlx_answers_are_omitted() {
 }
 
 #[test]
+fn adopt_preserves_existing_vault_scope_id() {
+    let _guard = lock_env();
+    let temp = tempdir().unwrap();
+    let template = materialize_template_worktree();
+    let repo = temp.path().join("repo");
+    fs::create_dir_all(&repo).unwrap();
+
+    run_adopt(AdoptOpts {
+        path: repo.clone(),
+        template: Some(template.path().display().to_string()),
+        template_mode: None,
+        vcs_ref: None,
+        force: false,
+        write: true,
+        defaults: true,
+        no_input: true,
+        no_vault: true,
+        answers: AnswerOpts::default(),
+    })
+    .unwrap();
+    let first_scope = rendered_vault_scope_id(&repo);
+
+    run_adopt(AdoptOpts {
+        path: repo.clone(),
+        template: Some(template.path().display().to_string()),
+        template_mode: None,
+        vcs_ref: None,
+        force: false,
+        write: true,
+        defaults: true,
+        no_input: true,
+        no_vault: true,
+        answers: AnswerOpts::default(),
+    })
+    .unwrap();
+
+    assert_eq!(rendered_vault_scope_id(&repo), first_scope);
+}
+
+#[test]
+fn adopt_reports_legacy_vault_scope_migration_note() {
+    let _guard = lock_env();
+    let temp = tempdir().unwrap();
+    let template = materialize_template_worktree();
+    let repo = temp.path().join("repo");
+    fs::create_dir_all(&repo).unwrap();
+    fs::write(
+        repo.join(".jig.toml"),
+        r#"repo_name = "repo"
+default_branch = "main"
+ci_github_runner = "ubuntu-latest"
+jig_version = "0.1.0"
+template_source_url = "https://github.com/bpcakes/jig-sh.git"
+sqlx_enabled = false
+schema_dump_enabled = false
+bootstrap_command = "cargo fetch"
+rust_fmt_check_command = "cargo fmt --all -- --check"
+rust_clippy_command = "cargo clippy --workspace --all-targets --locked -- -D warnings"
+rust_test_command = "cargo test --workspace"
+rust_test_locked_command = "cargo test --workspace --locked"
+web_package_manager = "bun"
+frontend_apps = []
+"#,
+    )
+    .unwrap();
+
+    let output = run_adopt(AdoptOpts {
+        path: repo,
+        template: Some(template.path().display().to_string()),
+        template_mode: None,
+        vcs_ref: None,
+        force: true,
+        write: false,
+        defaults: true,
+        no_input: true,
+        no_vault: true,
+        answers: AnswerOpts::default(),
+    })
+    .unwrap();
+
+    assert!(output["notes"].as_array().unwrap().iter().any(|note| {
+        note.as_str()
+            .unwrap()
+            .contains("Existing .jig.toml had no [vault] block")
+    }));
+}
+
+#[test]
+fn adopt_rejects_existing_repo_vault_scope_without_scope_id() {
+    let _guard = lock_env();
+    let temp = tempdir().unwrap();
+    let template = materialize_template_worktree();
+    let repo = temp.path().join("repo");
+    fs::create_dir_all(&repo).unwrap();
+    fs::write(
+        repo.join(".jig.toml"),
+        r#"repo_name = "repo"
+default_branch = "main"
+ci_github_runner = "ubuntu-latest"
+jig_version = "0.1.0"
+template_source_url = "https://github.com/bpcakes/jig-sh.git"
+sqlx_enabled = false
+schema_dump_enabled = false
+bootstrap_command = "cargo fetch"
+rust_fmt_check_command = "cargo fmt --all -- --check"
+rust_clippy_command = "cargo clippy --workspace --all-targets --locked -- -D warnings"
+rust_test_command = "cargo test --workspace"
+rust_test_locked_command = "cargo test --workspace --locked"
+web_package_manager = "bun"
+frontend_apps = []
+
+[vault]
+scope = "repo"
+"#,
+    )
+    .unwrap();
+
+    let error = run_adopt(AdoptOpts {
+        path: repo,
+        template: Some(template.path().display().to_string()),
+        template_mode: None,
+        vcs_ref: None,
+        force: true,
+        write: false,
+        defaults: true,
+        no_input: true,
+        no_vault: true,
+        answers: AnswerOpts::default(),
+    })
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("[vault].scope_id is required"));
+}
+
+#[test]
 fn adopt_previews_by_default_without_writing_files() {
     let _guard = lock_env();
     let temp = tempdir().unwrap();
@@ -1557,6 +1709,7 @@ fn adopt_previews_by_default_without_writing_files() {
         write: false,
         defaults: true,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts::default(),
     })
     .unwrap();
@@ -1606,6 +1759,7 @@ fn adopt_preview_reports_conflicts_without_overwriting() {
         write: true,
         defaults: true,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts::default(),
     })
     .unwrap();
@@ -1620,6 +1774,7 @@ fn adopt_preview_reports_conflicts_without_overwriting() {
         write: false,
         defaults: true,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts::default(),
     })
     .unwrap();
@@ -1662,6 +1817,7 @@ fn adopt_preserves_repo_gitattributes_while_adding_jig_block() {
         write: true,
         defaults: true,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts::default(),
     })
     .unwrap();
@@ -1696,6 +1852,7 @@ fn adopt_write_records_backup_receipt_for_overwritten_managed_files() {
         write: true,
         defaults: true,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts::default(),
     })
     .unwrap();
@@ -1710,6 +1867,7 @@ fn adopt_write_records_backup_receipt_for_overwritten_managed_files() {
         write: true,
         defaults: true,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts::default(),
     })
     .unwrap();
@@ -1848,6 +2006,7 @@ sqlx = { workspace = true }
         write: true,
         defaults: false,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts::default(),
     })
     .unwrap();
@@ -2071,6 +2230,7 @@ edition = "2024"
         write: true,
         defaults: false,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts::default(),
     })
     .unwrap();
@@ -2133,6 +2293,7 @@ fn adopt_reports_sources_for_multiple_migration_dirs() {
         write: true,
         defaults: false,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts::default(),
     })
     .unwrap();
@@ -2240,6 +2401,7 @@ test-locked:
         write: true,
         defaults: false,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts::default(),
     })
     .unwrap();
@@ -2316,6 +2478,7 @@ test-locked:
         write: true,
         defaults: false,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts::default(),
     })
     .unwrap();
@@ -2380,6 +2543,7 @@ edition = "2024"
         write: true,
         defaults: false,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts::default(),
     })
     .unwrap();
@@ -2421,6 +2585,7 @@ edition = "2024"
         write: true,
         defaults: false,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts::default(),
     })
     .unwrap();
@@ -2473,6 +2638,7 @@ fmt-check:
         write: true,
         defaults: false,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts::default(),
     })
     .unwrap();
@@ -2511,6 +2677,7 @@ edition = "2024"
         write: true,
         defaults: false,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts::default(),
     })
     .unwrap();
@@ -2582,6 +2749,7 @@ frontend_apps = []
         write: true,
         defaults: false,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts {
             answers_file: Some(answers_file),
             repo_name: Some("from-cli".into()),
@@ -2654,6 +2822,7 @@ rust_migration_dir = "migrations"
         write: true,
         defaults: false,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts {
             answers_file: Some(answers_file),
             ..AnswerOpts::default()
@@ -2694,6 +2863,7 @@ sqlx_enabled = false
         write: true,
         defaults: false,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts {
             answers_file: Some(answers_file),
             ..AnswerOpts::default()
@@ -2731,6 +2901,7 @@ schema_dump_enabled = false
         write: true,
         defaults: false,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts {
             answers_file: Some(answers_file),
             ..AnswerOpts::default()
@@ -2768,6 +2939,7 @@ schema_dump_enabled = true
         write: true,
         defaults: false,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts {
             answers_file: Some(answers_file),
             ..AnswerOpts::default()
@@ -2798,6 +2970,7 @@ fn adopt_cli_sqlx_metadata_dir_blocks_inferred_no_sqlx_profile() {
         write: true,
         defaults: false,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts {
             rust_sqlx_metadata_dir: Some(".sqlx".into()),
             ..AnswerOpts::default()
@@ -2843,6 +3016,7 @@ fn adopt_infers_root_frontend_app() {
         write: true,
         defaults: false,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts::default(),
     })
     .unwrap();
@@ -2873,6 +3047,7 @@ fn adopt_defaults_with_migration_dir_keeps_sqlx_enabled() {
         write: true,
         defaults: true,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts {
             rust_migration_dir: Some("migrations".into()),
             ..AnswerOpts::default()
@@ -2904,6 +3079,7 @@ fn adopt_schema_dump_command_opts_into_schema_dumps() {
         write: true,
         defaults: true,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts {
             rust_migration_dir: Some("migrations".into()),
             schema_dump_command: Some("scripts/custom-dump-schema.sh".into()),
@@ -2935,6 +3111,7 @@ fn adopt_defaults_with_schema_dump_enabled_still_requires_sqlx_migration_answer(
         write: true,
         defaults: true,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts {
             schema_dump_enabled: Some(true),
             ..AnswerOpts::default()
@@ -2964,6 +3141,7 @@ fn adopt_no_input_without_defaults_uses_inferred_no_sqlx_profile() {
         write: true,
         defaults: false,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts::default(),
     })
     .unwrap();
@@ -3012,6 +3190,7 @@ fn init_and_adopt_resolve_relative_bootstrap_paths_from_invocation_cwd() {
         force: false,
         defaults: true,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts::default(),
     })
     .unwrap();
@@ -3027,6 +3206,7 @@ fn init_and_adopt_resolve_relative_bootstrap_paths_from_invocation_cwd() {
         write: true,
         defaults: true,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts::default(),
     })
     .unwrap();
@@ -3061,6 +3241,7 @@ fn run_init_rejects_schema_dumps_when_sqlx_is_disabled() {
         force: false,
         defaults: true,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts {
             repo_name: Some("demo".into()),
             sqlx_enabled: Some(false),
@@ -3102,6 +3283,7 @@ marketplaces = []
         force: false,
         defaults: false,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts {
             answers_file: Some(answers_file),
             ..AnswerOpts::default()
@@ -3144,6 +3326,7 @@ plugins = []
         force: false,
         defaults: false,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts {
             answers_file: Some(answers_file),
             ..AnswerOpts::default()
@@ -3194,6 +3377,7 @@ fn run_init_falls_back_only_for_unsupported_git_branch_flag() {
         force: false,
         defaults: false,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts {
             repo_name: Some("demo".into()),
             default_branch: Some("trunk".into()),
@@ -3245,6 +3429,7 @@ fn run_init_surfaces_git_branch_init_failures() {
         force: false,
         defaults: false,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts {
             repo_name: Some("demo".into()),
             sqlx_enabled: Some(false),
@@ -3278,6 +3463,7 @@ fn adopt_with_real_template_runs_destination_tasks() {
         write: true,
         defaults: true,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts {
             repo_name: Some("demo".into()),
             sqlx_enabled: Some(false),
@@ -3319,6 +3505,7 @@ fn adopt_keeps_project_owned_makefile() {
         write: true,
         defaults: true,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts {
             repo_name: Some("demo".into()),
             sqlx_enabled: Some(false),
@@ -3366,6 +3553,7 @@ fn adopt_appends_jig_block_to_existing_root_agents() {
         write: true,
         defaults: true,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts {
             repo_name: Some("demo".into()),
             sqlx_enabled: Some(false),
@@ -3418,6 +3606,7 @@ fn adopt_refuses_to_replace_symlinked_root_agents_without_force() {
         write: true,
         defaults: true,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts {
             repo_name: Some("demo".into()),
             sqlx_enabled: Some(false),
@@ -3449,6 +3638,7 @@ fn adopt_refuses_to_replace_symlinked_root_agents_without_force() {
         write: true,
         defaults: true,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts {
             repo_name: Some("demo".into()),
             sqlx_enabled: Some(false),
@@ -3490,6 +3680,7 @@ fn adopt_rejects_malformed_existing_root_agents_jig_block() {
         write: true,
         defaults: true,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts {
             repo_name: Some("demo".into()),
             sqlx_enabled: Some(false),
@@ -3520,6 +3711,7 @@ fn adopt_with_real_template_keeps_sqlx_files_when_enabled() {
         write: true,
         defaults: true,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts {
             repo_name: Some("demo".into()),
             sqlx_enabled: Some(true),
@@ -3574,6 +3766,7 @@ fn adopt_with_sqlx_and_schema_dumps_disabled_hides_schema_dump_target() {
         write: true,
         defaults: true,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts {
             repo_name: Some("demo".into()),
             sqlx_enabled: Some(true),

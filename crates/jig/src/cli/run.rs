@@ -1,11 +1,12 @@
 use std::io::{self, Write};
 use std::process;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{
     Parser,
     error::{ContextKind, ContextValue, ErrorKind},
 };
+use serde_json::json;
 
 use super::output::{HumanOutput, print_json, print_output};
 #[cfg(test)]
@@ -43,7 +44,25 @@ pub(crate) fn run() -> Result<()> {
     let json_output = cli.json;
     match cli.command {
         CommandKind::Init(opts) => {
-            let output = bootstrap::run_init(opts)?;
+            let should_ensure_vault = !opts.no_vault;
+            let pre_capture_vault = should_pre_capture_bootstrap_vault(
+                should_ensure_vault,
+                opts.no_input,
+                opts.defaults,
+                runtime::vault_passphrase_prompt_available(),
+            );
+            reject_missing_no_input_vault_passphrase(
+                should_ensure_vault,
+                opts.no_input,
+                runtime::vault_passphrase_env_present(),
+            )?;
+            if pre_capture_vault {
+                runtime::capture_new_vault_passphrase()?;
+            }
+            let mut output = bootstrap::run_init(opts)?;
+            output["vault"] =
+                ensure_bootstrap_vault(&output, should_ensure_vault, !pre_capture_vault)
+                    .context("vault auto-init failed after repo files were written; rerun `jig vault init` from the repo after fixing the reported vault/config issue")?;
             if json_output {
                 print_json(&output)?;
             } else {
@@ -61,7 +80,25 @@ pub(crate) fn run() -> Result<()> {
             Ok(())
         }
         CommandKind::Adopt(opts) => {
-            let output = bootstrap::run_adopt(opts)?;
+            let should_ensure_vault = opts.write && !opts.no_vault;
+            let pre_capture_vault = should_pre_capture_bootstrap_vault(
+                should_ensure_vault,
+                opts.no_input,
+                opts.defaults,
+                runtime::vault_passphrase_prompt_available(),
+            );
+            reject_missing_no_input_vault_passphrase(
+                should_ensure_vault,
+                opts.no_input,
+                runtime::vault_passphrase_env_present(),
+            )?;
+            if pre_capture_vault {
+                runtime::capture_new_vault_passphrase()?;
+            }
+            let mut output = bootstrap::run_adopt(opts)?;
+            output["vault"] =
+                ensure_bootstrap_vault(&output, should_ensure_vault, !pre_capture_vault)
+                    .context("vault auto-init failed after repo files were written; rerun `jig vault init` from the repo after fixing the reported vault/config issue")?;
             if json_output {
                 print_json(&output)?;
             } else {
@@ -158,17 +195,19 @@ pub(crate) fn run() -> Result<()> {
         ),
         CommandKind::Vault(command) => {
             let vault_run_summary = matches!(&command, VaultCommand::Run(opts) if opts.summary);
-            let is_run = matches!(command, VaultCommand::Run(_));
-            if vault_command_requires_passphrase(&command) {
+            let mut runtime_command: crate::command::VaultCommand = command.into();
+            apply_repo_vault_scope(&mut runtime_command)?;
+            let is_run = matches!(runtime_command, crate::command::VaultCommand::Run(_));
+            if vault_command_requires_passphrase(&runtime_command) {
                 // Invariant: capture and clear the process environment copy
                 // before vault runtime code can start background threads.
-                if matches!(command, VaultCommand::Init(_)) {
+                if matches!(runtime_command, crate::command::VaultCommand::Init(_)) {
                     runtime::capture_new_vault_passphrase()?;
                 } else {
                     runtime::capture_vault_passphrase()?;
                 }
             }
-            let output = runtime::dispatch_vault(command.into())?;
+            let output = runtime::dispatch_vault(runtime_command)?;
             print_output(
                 vault_run_summary.then_some(HumanOutput::VaultRunSummary),
                 &output,
@@ -215,20 +254,165 @@ pub(super) fn test_command_reports_failure_with_ok(command: &CommandKind) -> boo
     // missing or unregistered.
     match command {
         CommandKind::Doctor(_) | CommandKind::Dev(_) | CommandKind::Proxy(_) => true,
-        CommandKind::Vault(command) => vault_command_reports_failure_with_ok(command),
+        CommandKind::Vault(command) => matches!(command, VaultCommand::Run(_)),
         CommandKind::Agent(command) => agent_command_reports_failure_with_ok(command),
         CommandKind::Check(command) => check_command_reports_failure_with_ok(command),
         _ => false,
     }
 }
 
-#[cfg(test)]
-fn vault_command_reports_failure_with_ok(command: &VaultCommand) -> bool {
-    matches!(command, VaultCommand::Run(_))
+fn vault_command_requires_passphrase(command: &crate::command::VaultCommand) -> bool {
+    !matches!(command, crate::command::VaultCommand::Status(_))
 }
 
-fn vault_command_requires_passphrase(command: &VaultCommand) -> bool {
-    !matches!(command, VaultCommand::Status(_))
+fn should_pre_capture_bootstrap_vault(
+    requested: bool,
+    no_input: bool,
+    defaults: bool,
+    prompt_available: bool,
+) -> bool {
+    // `--defaults` is treated as automation intent for vault setup even though
+    // it can still leave ordinary answer prompts interactive.
+    requested && (no_input || defaults || !prompt_available)
+}
+
+fn reject_missing_no_input_vault_passphrase(
+    requested: bool,
+    no_input: bool,
+    env_present: bool,
+) -> Result<()> {
+    if requested && no_input && !env_present {
+        anyhow::bail!(
+            "JIG_VAULT_PASSPHRASE is required when --no-input initializes a vault; export JIG_VAULT_PASSPHRASE or pass --no-vault to skip initial vault setup"
+        );
+    }
+    Ok(())
+}
+
+fn apply_repo_vault_scope(command: &mut crate::command::VaultCommand) -> Result<()> {
+    let Some(ctx) = RepoContext::load_optional()? else {
+        return Ok(());
+    };
+    let vault = ctx.vault_config();
+    let repo_scope_id = vault.repo_scope_id().map(str::to_string);
+    apply_repo_vault_scope_to_options(
+        vault_options_mut(command),
+        repo_scope_id.as_deref(),
+        ctx.repo_name(),
+        vault.allow_global,
+    )
+}
+
+fn vault_options_mut(
+    command: &mut crate::command::VaultCommand,
+) -> &mut crate::command::VaultRuntimeOptions {
+    match command {
+        crate::command::VaultCommand::Audit(command) => match command {
+            crate::command::VaultAuditCommand::Verify(request) => &mut request.vault,
+        },
+        crate::command::VaultCommand::Init(request) => &mut request.vault,
+        crate::command::VaultCommand::Status(request) => &mut request.vault,
+        crate::command::VaultCommand::Secret(command) => match command {
+            crate::command::VaultSecretCommand::List(request) => &mut request.vault,
+            crate::command::VaultSecretCommand::Set(request) => &mut request.vault,
+            crate::command::VaultSecretCommand::Remove(request) => &mut request.vault,
+        },
+        crate::command::VaultCommand::Run(request) => &mut request.vault,
+    }
+}
+
+fn apply_repo_vault_scope_to_options(
+    options: &mut crate::command::VaultRuntimeOptions,
+    repo_scope_id: Option<&str>,
+    repo_name: &str,
+    allow_global: bool,
+) -> Result<()> {
+    if options.home.is_some() {
+        return Ok(());
+    }
+    match &options.scope {
+        crate::command::VaultScopeSelection::Auto => {
+            if let Some(scope_id) = repo_scope_id {
+                options.scope =
+                    crate::command::VaultScopeSelection::Repo(crate::command::VaultRepoScope {
+                        scope_id: scope_id.to_string(),
+                        repo_name: repo_name.to_string(),
+                    });
+            }
+            Ok(())
+        }
+        crate::command::VaultScopeSelection::Global if !allow_global && repo_scope_id.is_some() => {
+            anyhow::bail!(
+                "This repo is configured for repo-scoped vault access and [vault].allow_global is false; remove --global or set allow_global = true after reviewing the risk."
+            )
+        }
+        _ => Ok(()),
+    }
+}
+
+fn ensure_bootstrap_vault(
+    output: &serde_json::Value,
+    requested: bool,
+    capture_passphrase: bool,
+) -> Result<serde_json::Value> {
+    let destination = output["destination"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("bootstrap output did not include destination"))?;
+    if !requested {
+        return Ok(json!({
+            "requested": false,
+            "initialized": false,
+            "created": false,
+            "skipped_reason": "disabled",
+        }));
+    }
+
+    let ctx = RepoContext::load_from_root(std::path::PathBuf::from(destination))?;
+    let Some(scope_id) = ctx.vault_config().repo_scope_id() else {
+        return Ok(json!({
+            "requested": true,
+            "initialized": false,
+            "created": false,
+            "skipped_reason": "repo has no [vault] scope",
+        }));
+    };
+    let vault = crate::command::VaultRuntimeOptions {
+        home: None,
+        scope: crate::command::VaultScopeSelection::Repo(crate::command::VaultRepoScope {
+            scope_id: scope_id.to_string(),
+            repo_name: ctx.repo_name().to_string(),
+        }),
+    };
+    let status = runtime::dispatch_vault(crate::command::VaultCommand::Status(
+        crate::command::VaultStatusRequest {
+            vault: vault.clone(),
+        },
+    ))?;
+    if status["exists"].as_bool().unwrap_or(false) {
+        return Ok(json!({
+            "requested": true,
+            "initialized": true,
+            "created": false,
+            "vault_home": status["vault_home"],
+            "vault_scope": status["vault_scope"],
+            "vault_scope_id": status["vault_scope_id"],
+        }));
+    }
+
+    if capture_passphrase {
+        runtime::capture_new_vault_passphrase()?;
+    }
+    let init = runtime::dispatch_vault(crate::command::VaultCommand::Init(
+        crate::command::VaultInitRequest { vault },
+    ))?;
+    Ok(json!({
+        "requested": true,
+        "initialized": true,
+        "created": true,
+        "vault_home": init["vault_home"],
+        "vault_scope": init["vault_scope"],
+        "vault_scope_id": init["vault_scope_id"],
+    }))
 }
 
 fn agent_command_reports_failure_with_ok(command: &AgentCommand) -> bool {
@@ -433,6 +617,8 @@ pub(super) fn format_init_human_summary(output: &serde_json::Value) -> String {
         ));
     }
 
+    push_vault_summary(&mut summary, &output["vault"]);
+
     if let Some(notes) = output["notes"].as_array()
         && !notes.is_empty()
     {
@@ -478,12 +664,26 @@ pub(super) fn format_adopt_human_summary(output: &serde_json::Value) -> String {
         "  managed files: {created} created, {modified} modified, {removed} removed\n"
     ));
 
+    push_vault_summary(&mut summary, &output["vault"]);
+
     if let Some(review) = output["adoption_review"].as_array()
         && !review.is_empty()
     {
         summary.push_str("  review:\n");
         for item in review.iter().filter_map(serde_json::Value::as_str) {
             summary.push_str(&format!("    - {item}\n"));
+        }
+    }
+
+    if let Some(notes) = output["notes"].as_array()
+        && !notes.is_empty()
+    {
+        summary.push_str("  notes:\n");
+        for note in notes.iter().take(8).filter_map(serde_json::Value::as_str) {
+            summary.push_str(&format!("    - {note}\n"));
+        }
+        if notes.len() > 8 {
+            summary.push_str(&format!("    - and {} more\n", notes.len() - 8));
         }
     }
 
@@ -530,6 +730,33 @@ pub(super) fn format_adopt_human_summary(output: &serde_json::Value) -> String {
         }
     }
     summary
+}
+
+fn push_vault_summary(summary: &mut String, vault: &serde_json::Value) {
+    if vault.is_null() {
+        return;
+    }
+    let requested = vault["requested"].as_bool().unwrap_or(false);
+    if !requested {
+        summary.push_str("  vault: skipped\n");
+        return;
+    }
+    if let Some(reason) = vault["skipped_reason"].as_str() {
+        summary.push_str(&format!("  vault: skipped ({reason})\n"));
+        return;
+    }
+    let status = if vault["created"].as_bool().unwrap_or(false) {
+        "created"
+    } else if vault["initialized"].as_bool().unwrap_or(false) {
+        "already initialized"
+    } else {
+        "not initialized"
+    };
+    summary.push_str(&format!("  vault: {status}"));
+    if let Some(scope) = vault["vault_scope"].as_str() {
+        summary.push_str(&format!(" ({scope})"));
+    }
+    summary.push('\n');
 }
 
 fn push_summary_field(summary: &mut String, label: &str, value: Option<&str>) {

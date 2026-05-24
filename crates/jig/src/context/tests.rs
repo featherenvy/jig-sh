@@ -107,6 +107,47 @@ typescript_typecheck_command = "scripts/check-webapps.sh typecheck"
 }
 
 #[test]
+fn repo_vault_config_is_loaded() {
+    let config: RepoConfig = toml::from_str(
+        r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.2.0-beta.1"
+
+[vault]
+scope = "repo"
+scope_id = "scope_1"
+allow_global = true
+"#,
+    )
+    .unwrap();
+
+    validate_config(&config).unwrap();
+    assert_eq!(config.vault.repo_scope_id(), Some("scope_1"));
+    assert!(config.vault.allow_global);
+}
+
+#[test]
+fn repo_vault_config_requires_scope_id() {
+    let config: RepoConfig = toml::from_str(
+        r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.2.0-beta.1"
+
+[vault]
+scope = "repo"
+"#,
+    )
+    .unwrap();
+
+    let error = validate_config(&config).unwrap_err().to_string();
+    assert!(error.contains("scope_id is required"));
+}
+
+#[test]
 fn dynamic_command_map_extends_contract_command_keys() {
     let temp = tempdir().unwrap();
     fs::create_dir_all(temp.path().join(".agent")).unwrap();

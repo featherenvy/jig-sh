@@ -134,6 +134,29 @@ pub(crate) enum VaultSecretCommand {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct VaultRuntimeOptions {
     pub(crate) home: Option<PathBuf>,
+    pub(crate) scope: VaultScopeSelection,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) enum VaultScopeSelection {
+    #[default]
+    Auto,
+    Repo(VaultRepoScope),
+    Global,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct VaultRepoScope {
+    pub(crate) scope_id: String,
+    pub(crate) repo_name: String,
+}
+
+pub(crate) fn is_valid_vault_scope_id(scope_id: &str) -> bool {
+    !scope_id.is_empty()
+        && scope_id.len() <= 128
+        && scope_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
 }
 
 #[derive(Debug)]

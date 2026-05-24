@@ -73,11 +73,12 @@ Contracts that declare `"kind": "native"` tools require the repo's pinned `scrip
 
 ## Accepted Key Summary
 
-Jig rejects unknown `.jig.toml` keys so stale template answers fail early. The accepted top-level keys are `_src_path`, `_commit`, `_template_mode`, `_template_local_path`, `repo_name`, `default_branch`, `ci_github_runner`, `jig_version`, `template_source_url`, `sqlx_enabled`, `rust_crate_roots`, `rust_migration_dir`, `rust_sqlx_metadata_dir`, `schema_dump_enabled`, `schema_dump_command`, `schema_check_command`, `sqlx_check_command`, `migration_add_command`, `bootstrap_command`, `contract_check_command`, `dev_command`, `rust_fmt_check_command`, `rust_clippy_command`, `rust_test_command`, `rust_test_locked_command`, `web_package_manager`, `frontend_apps`, `dev`, `work`, and `agent_tooling`. `schema_check_command`, `migration_add_command`, and `contract_check_command` are legacy accepted keys for older rendered repos; new renders use native binary implementations. Older hand-edited v2 manifests that still list these legacy command keys must either keep the matching `.jig.toml` values until updated, or switch the corresponding tools to their native forms.
+Jig rejects unknown `.jig.toml` keys so stale template answers fail early. The accepted top-level keys are `_src_path`, `_commit`, `_template_mode`, `_template_local_path`, `repo_name`, `default_branch`, `ci_github_runner`, `jig_version`, `template_source_url`, `sqlx_enabled`, `rust_crate_roots`, `rust_migration_dir`, `rust_sqlx_metadata_dir`, `schema_dump_enabled`, `schema_dump_command`, `schema_check_command`, `sqlx_check_command`, `migration_add_command`, `bootstrap_command`, `contract_check_command`, `dev_command`, `rust_fmt_check_command`, `rust_clippy_command`, `rust_test_command`, `rust_test_locked_command`, `web_package_manager`, `frontend_apps`, `vault`, `dev`, `work`, and `agent_tooling`. `schema_check_command`, `migration_add_command`, and `contract_check_command` are legacy accepted keys for older rendered repos; new renders use native binary implementations. Older hand-edited v2 manifests that still list these legacy command keys must either keep the matching `.jig.toml` values until updated, or switch the corresponding tools to their native forms.
 
 Nested accepted keys are:
 
 - `[[frontend_apps]]`: `name`, `dir`, `coverage_threshold`
+- `[vault]`: `scope`, `scope_id`, `allow_global`
 - `[dev]`: `proxy_port`, `https_port`, `https`, `http2`, `lan`, `tld`, `workspace_discovery`, `apps`
 - `[[dev.apps]]`: `name`, `dir`, `kind`, `command`, `argv`, `port`, `host`, `proxy`
 - `[work]`: `checks`, `gates`, `refinements`
@@ -353,15 +354,31 @@ scripts/jig vault run --file TOKEN_FILE=api_token -- sh -c 'cat "$TOKEN_FILE"'
 scripts/jig vault audit verify
 ```
 
+`jig init` and `jig adopt --write` initialize a repo-scoped local vault by default. Pass `--no-vault` to skip that local setup. `jig adopt` without `--write` remains a side-effect-free preview and does not create vault state.
+
 At a glance:
 
 - Terminal commands prompt for the vault passphrase; non-interactive commands use `JIG_VAULT_PASSPHRASE`.
+- `jig init --no-input` and `jig adopt --write --no-input` never prompt for the vault passphrase; export `JIG_VAULT_PASSPHRASE` or pass `--no-vault`.
+- Generated repos default to a repo scope declared in `[vault]`; `--global` is an explicit logical escape hatch and is rejected unless `[vault].allow_global = true`.
+- `--home` is an explicit physical vault-home override for diagnostics and tests; it bypasses repo scoping and `[vault].allow_global`.
 - `vault secret set NAME` defaults to the hidden prompt when run from an interactive terminal; `--value-stdin` is the byte-exact automation path for piped or redirected stdin.
 - On Unix, `vault run --file VAR=SECRET` writes a secret to a private `0600` temporary file and passes the path through `VAR`; non-Unix platforms reject `--file`.
 - `vault run` returns redacted JSON and mirrors the child process exit status, but output is buffered before display.
 - Vault reduces accidental secret exposure; it is not a child-process sandbox.
 
-`scripts/jig vault ...` manages machine-local encrypted secret state. Vault state is runtime-owned and deliberately lives outside `.agent/state`; by default it uses `~/.jig/vault`, or `JIG_VAULT_HOME` when set. Jig creates or tightens the vault home to owner-only permissions, so do not point `JIG_VAULT_HOME` at a shared directory. The vault derives its passphrase wrapping key with Argon2id using 128 MiB memory, 3 iterations, 4 lanes, and a 32-byte output. New vault passphrases must be at least 12 bytes; Jig enforces a floor, not a password-strength meter, so operators are still responsible for choosing high-entropy passphrases. Passphrases are byte-exact after UTF-8 capture: Jig does not trim whitespace, strip trailing newlines, normalize Unicode, or otherwise rewrite prompt or `JIG_VAULT_PASSPHRASE` input. Terminal use prompts for hidden passphrase entry. Non-interactive use reads the unlock passphrase from `JIG_VAULT_PASSPHRASE` and clears that child-process environment variable after successful capture; this is best-effort process hygiene and does not prove the OS or C runtime overwrote every previous environment backing byte. Command-line passphrases are intentionally unsupported because they leak through shell history and process listings.
+`scripts/jig vault ...` manages machine-local encrypted secret state. Vault state is runtime-owned and deliberately lives outside `.agent/state`. Generated repos store non-secret scope metadata in `.jig.toml`:
+
+```toml
+[vault]
+scope = "repo"
+scope_id = "01J..."
+allow_global = false
+```
+
+When a command runs inside a repo with `scope = "repo"`, Jig resolves secrets from `~/.jig/vault/scopes/<scope_id>` by default. If `JIG_VAULT_HOME` is set, it is treated as the local vault base for repo scopes, so the scoped home becomes `$JIG_VAULT_HOME/scopes/<scope_id>`. Repos without `[vault]` keep legacy user-level behavior and resolve the physical vault home directly from `--home`, `JIG_VAULT_HOME`, or `~/.jig/vault`. Re-adopting a legacy repo adds a new repo scope and reports that migration in the command notes; existing global-vault secrets are not copied automatically. The `--home` flag is an explicit physical-home override for diagnostics and tests and bypasses repo scoping plus `[vault].allow_global`; use it only when you intentionally want a specific vault directory. The `--global` flag selects the user-level global vault, but scoped repos reject it unless `[vault].allow_global = true`.
+
+Jig creates or tightens vault directories to owner-only permissions, so do not point `JIG_VAULT_HOME` at a shared directory. The vault derives its passphrase wrapping key with Argon2id using 128 MiB memory, 3 iterations, 4 lanes, and a 32-byte output. New vault passphrases must be at least 12 bytes; Jig enforces a floor, not a password-strength meter, so operators are still responsible for choosing high-entropy passphrases. Passphrases are byte-exact after UTF-8 capture: Jig does not trim whitespace, strip trailing newlines, normalize Unicode, or otherwise rewrite prompt or `JIG_VAULT_PASSPHRASE` input. Terminal use prompts for hidden passphrase entry. Non-interactive use reads the unlock passphrase from `JIG_VAULT_PASSPHRASE` and clears that child-process environment variable after successful capture; this is best-effort process hygiene and does not prove the OS or C runtime overwrote every previous environment backing byte. Command-line passphrases are intentionally unsupported because they leak through shell history and process listings.
 
 Keep `JIG_VAULT_PASSPHRASE` exported or re-export it for every non-interactive command that unlocks the vault, including `secret list`, `run`, and `audit verify`; `vault status` is the only vault command that does not require the passphrase. `vault status` is a non-creating probe: it refuses a symlinked vault home, but it does not create missing directories or tighten permissions. Its `exists` and `vault_file_exists` fields report whether `vault.json` exists, not whether the home directory exists.
 

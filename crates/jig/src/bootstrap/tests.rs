@@ -121,6 +121,7 @@ fn adopt_repo_for_test(repo: &Path, template: &Path, template_mode: TemplateMode
         write: true,
         defaults: true,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts {
             repo_name: Some("demo".into()),
             sqlx_enabled: Some(false),

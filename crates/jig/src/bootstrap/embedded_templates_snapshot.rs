@@ -743,6 +743,11 @@ coverage_threshold = <<[ app.coverage_threshold ]>>
 [% endfor %]
 [% endif %]
 
+[vault]
+scope = "<<[ vault.scope | replace("\\", "\\\\") | replace("\"", "\\\"") ]>>"
+scope_id = "<<[ vault.scope_id | replace("\\", "\\\\") | replace("\"", "\\\"") ]>>"
+allow_global = [% if vault.allow_global %]true[% else %]false[% endif %]
+
 [% if frontend_apps | length > 0 %]
 # Extra command keys must use *_command names so contract required_commands
 # stay distinct from tool names and gate ids. Entries here override same-named

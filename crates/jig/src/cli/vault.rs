@@ -84,9 +84,15 @@ pub(crate) enum VaultSecretCommand {
 pub(crate) struct VaultRuntimeOpts {
     #[arg(
         long,
-        help = "Vault home directory; defaults to JIG_VAULT_HOME or ~/.jig/vault"
+        help = "Vault home directory; explicit physical override that bypasses repo scoping and allow_global checks"
     )]
     pub(crate) home: Option<PathBuf>,
+    #[arg(
+        long,
+        conflicts_with = "home",
+        help = "Use the user-level global vault instead of the current repo vault scope"
+    )]
+    pub(crate) global: bool,
 }
 
 #[derive(Args, Debug, Default)]

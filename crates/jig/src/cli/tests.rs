@@ -263,6 +263,24 @@ fn init_accepts_json_after_subcommand() {
 }
 
 #[test]
+fn init_and_adopt_parse_no_vault() {
+    let init = Cli::try_parse_from(["jig", "init", "/tmp/demo", "--no-vault"]).unwrap();
+    match init.command {
+        CommandKind::Init(opts) => assert!(opts.no_vault),
+        other => panic!("expected init command, got {other:?}"),
+    }
+
+    let adopt = Cli::try_parse_from(["jig", "adopt", ".", "--write", "--no-vault"]).unwrap();
+    match adopt.command {
+        CommandKind::Adopt(opts) => {
+            assert!(opts.write);
+            assert!(opts.no_vault);
+        }
+        other => panic!("expected adopt command, got {other:?}"),
+    }
+}
+
+#[test]
 fn parses_init_command_with_repeatable_flags() {
     let cli = Cli::try_parse_from([
         "jig",
@@ -657,6 +675,14 @@ fn parses_vault_commands() {
             assert_eq!(opts.vault.home, Some(PathBuf::from("/tmp/jig-vault")));
         }
         other => panic!("expected vault init command, got {other:?}"),
+    }
+
+    let global_status = Cli::try_parse_from(["jig", "vault", "status", "--global"]).unwrap();
+    match global_status.command {
+        CommandKind::Vault(VaultCommand::Status(opts)) => {
+            assert!(opts.vault.global);
+        }
+        other => panic!("expected vault status command, got {other:?}"),
     }
 
     let set = Cli::try_parse_from([

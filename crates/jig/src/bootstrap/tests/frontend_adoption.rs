@@ -15,6 +15,7 @@ fn init_rejects_unsafe_frontend_app_values() {
         force: false,
         defaults: true,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts {
             repo_name: Some("demo".into()),
             sqlx_enabled: Some(false),
@@ -40,6 +41,7 @@ fn init_rejects_unsafe_frontend_app_values() {
         force: false,
         defaults: true,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts {
             repo_name: Some("demo".into()),
             sqlx_enabled: Some(false),
@@ -65,6 +67,7 @@ fn init_rejects_unsafe_frontend_app_values() {
         force: false,
         defaults: true,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts {
             repo_name: Some("demo".into()),
             sqlx_enabled: Some(false),
@@ -90,6 +93,7 @@ fn init_rejects_unsafe_frontend_app_values() {
         force: false,
         defaults: true,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts {
             repo_name: Some("demo".into()),
             sqlx_enabled: Some(false),
@@ -115,6 +119,7 @@ fn init_rejects_unsafe_frontend_app_values() {
         force: false,
         defaults: true,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts {
             repo_name: Some("demo".into()),
             sqlx_enabled: Some(false),
@@ -140,6 +145,7 @@ fn init_rejects_unsafe_frontend_app_values() {
         force: false,
         defaults: true,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts {
             repo_name: Some("demo".into()),
             sqlx_enabled: Some(false),
@@ -173,6 +179,7 @@ fn init_reports_and_preserves_legacy_dev_command_answer() {
         force: false,
         defaults: true,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts {
             repo_name: Some("demo".into()),
             sqlx_enabled: Some(false),
@@ -232,6 +239,7 @@ fn adopt_accepts_npm_frontend_app_and_renders_current_web_and_dev_config() {
         write: true,
         defaults: true,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts {
             repo_name: Some("demo".into()),
             sqlx_enabled: Some(false),
@@ -383,6 +391,7 @@ fn adopt_with_project_owned_makefile_keeps_file_and_emits_direct_typescript_gate
         write: true,
         defaults: true,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts {
             repo_name: Some("demo".into()),
             sqlx_enabled: Some(false),
@@ -442,6 +451,7 @@ fn init_renders_web_commands_for_all_supported_package_managers() {
             force: false,
             defaults: true,
             no_input: true,
+            no_vault: true,
             answers: AnswerOpts {
                 repo_name: Some(format!("demo-{package_manager}")),
                 sqlx_enabled: Some(false),
@@ -522,6 +532,7 @@ fn adopt_rejects_frontend_app_missing_required_ci_scripts() {
         write: true,
         defaults: true,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts {
             repo_name: Some("demo".into()),
             sqlx_enabled: Some(false),
@@ -574,6 +585,7 @@ fn adopt_rejects_frontend_app_without_repo_or_app_lockfile() {
         write: true,
         defaults: true,
         no_input: true,
+        no_vault: true,
         answers: AnswerOpts {
             repo_name: Some("demo".into()),
             sqlx_enabled: Some(false),

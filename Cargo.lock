@@ -874,6 +874,7 @@ version = "0.2.0-beta.1"
 dependencies = [
  "anyhow",
  "clap",
+ "dirs",
  "fs4",
  "jig-contract",
  "jig-dev-proxy",

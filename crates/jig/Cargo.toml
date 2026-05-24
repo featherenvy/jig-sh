@@ -28,6 +28,7 @@ dev-proxy = ["dep:jig-dev-proxy"]
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
+dirs.workspace = true
 fs4.workspace = true
 jig-contract.workspace = true
 jig-dev-proxy = { workspace = true, optional = true }
