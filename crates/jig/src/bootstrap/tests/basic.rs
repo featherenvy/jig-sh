@@ -100,6 +100,7 @@ fn initial_next_steps_and_notes_are_tailored_to_rendered_config() {
         default_branch: Some("main".into()),
         bootstrap_command_configured: true,
         frontend_apps_configured: true,
+        dev_apps_configured: true,
         codex_skills_configured: true,
         sqlx_enabled: true,
         schema_dump_enabled: true,
@@ -154,6 +155,7 @@ fn initial_next_steps_and_notes_are_tailored_to_rendered_config() {
             default_branch: Some("main".into()),
             bootstrap_command_configured: true,
             frontend_apps_configured: true,
+            dev_apps_configured: true,
             codex_skills_configured: true,
             sqlx_enabled: true,
             schema_dump_enabled: true,
@@ -188,6 +190,7 @@ fn initial_next_steps_and_notes_are_tailored_to_rendered_config() {
             default_branch: Some("main".into()),
             bootstrap_command_configured: true,
             frontend_apps_configured: false,
+            dev_apps_configured: false,
             codex_skills_configured: false,
             sqlx_enabled: false,
             schema_dump_enabled: false,
@@ -205,6 +208,7 @@ fn initial_next_steps_and_notes_are_tailored_to_rendered_config() {
             default_branch: Some("main".into()),
             bootstrap_command_configured: false,
             frontend_apps_configured: false,
+            dev_apps_configured: false,
             codex_skills_configured: false,
             sqlx_enabled: false,
             schema_dump_enabled: false,
@@ -687,6 +691,11 @@ fn run_init_rust_react_scaffold_generates_backend_and_frontends() {
     assert!(web_package.contains(r#""dev": "bun install && vite""#));
     let web_vite_config = fs::read_to_string(destination.join("web/vite.config.ts")).unwrap();
     assert!(web_vite_config.contains("const devPort = Number(process.env.PORT);"));
+    assert!(web_vite_config.contains("process.env.API_ORIGIN"));
+    assert!(web_vite_config.contains("process.env.JIG_DEV_API_ORIGIN"));
+    assert!(web_vite_config.contains(r#""http://api.my-app.localhost:1355""#));
+    assert!(web_vite_config.contains(r#""/api""#));
+    assert!(web_vite_config.contains(r#"target: apiOrigin"#));
     assert!(web_vite_config.contains(r#"host: "127.0.0.1""#));
     assert!(web_vite_config.contains("clientPort: devPort"));
     let landing_package = fs::read_to_string(destination.join("landing/package.json")).unwrap();
@@ -696,12 +705,25 @@ fn run_init_rust_react_scaffold_generates_backend_and_frontends() {
 
     let api_main = fs::read_to_string(destination.join("apps/my-app-api/src/main.rs")).unwrap();
     assert!(api_main.contains("use anyhow::Context;"));
+    assert!(api_main.contains(r#""127.0.0.1:0""#));
+    assert!(api_main.contains("let bound_addr = listener"));
+    assert!(api_main.contains("Failed to read API listener address after bind"));
+    assert!(api_main.contains("tracing::info!(%bound_addr, \"listening\")"));
     assert!(api_main.contains("AppState::new_with_version(env!(\"CARGO_PKG_VERSION\"))"));
     assert!(api_main.contains("Failed to parse BIND_ADDR"));
     assert!(api_main.contains("Failed to bind API listener"));
     assert!(api_main.contains("API server exited with an error"));
     assert!(api_main.contains("SignalKind::terminate"));
     assert!(api_main.contains("failed to listen for Ctrl-C"));
+    let jig_toml = fs::read_to_string(destination.join(".jig.toml")).unwrap();
+    assert!(jig_toml.contains("[[dev.apps]]\nname = \"api\""));
+    assert!(jig_toml.contains("kind = \"env-port\""));
+    assert!(!jig_toml.contains("proxy = false"));
+    assert!(
+        jig_toml
+            .contains("command = \"BIND_ADDR=\\\"${HOST}:${PORT}\\\" cargo run -p my-app-api\"")
+    );
+    assert!(!jig_toml.contains("port = 3000"));
     let app_lib = fs::read_to_string(destination.join("crates/my-app/src/lib.rs")).unwrap();
     assert!(app_lib.contains("pub fn new_with_version(version: impl Into<String>)"));
     let test_support_cargo =
@@ -1622,7 +1644,7 @@ frontend_apps = []
     .unwrap();
 
     let output = run_adopt(AdoptOpts {
-        path: repo,
+        path: repo.clone(),
         template: Some(template.path().display().to_string()),
         template_mode: None,
         vcs_ref: None,
@@ -1673,7 +1695,7 @@ scope = "repo"
     .unwrap();
 
     let error = run_adopt(AdoptOpts {
-        path: repo,
+        path: repo.clone(),
         template: Some(template.path().display().to_string()),
         template_mode: None,
         vcs_ref: None,
@@ -1688,6 +1710,140 @@ scope = "repo"
     .to_string();
 
     assert!(error.contains("[vault].scope_id is required"));
+}
+
+#[test]
+fn adopt_rejects_malformed_existing_vault_policy() {
+    let _guard = lock_env();
+    let temp = tempdir().unwrap();
+    let template = materialize_template_worktree();
+    let repo = temp.path().join("repo");
+    fs::create_dir_all(&repo).unwrap();
+    fs::write(
+        repo.join(".jig.toml"),
+        r#"repo_name = "repo"
+default_branch = "main"
+ci_github_runner = "ubuntu-latest"
+jig_version = "0.1.0"
+template_source_url = "https://github.com/bpcakes/jig-sh.git"
+sqlx_enabled = false
+schema_dump_enabled = false
+bootstrap_command = "cargo fetch"
+rust_fmt_check_command = "cargo fmt --all -- --check"
+rust_clippy_command = "cargo clippy --workspace --all-targets --locked -- -D warnings"
+rust_test_command = "cargo test --workspace"
+rust_test_locked_command = "cargo test --workspace --locked"
+web_package_manager = "bun"
+frontend_apps = []
+
+[vault]
+scope = "repo"
+scope_id = "scope_1"
+allow_global = "false"
+"#,
+    )
+    .unwrap();
+
+    let error = run_adopt(AdoptOpts {
+        path: repo.clone(),
+        template: Some(template.path().display().to_string()),
+        template_mode: None,
+        vcs_ref: None,
+        force: true,
+        write: false,
+        defaults: true,
+        no_input: true,
+        no_vault: true,
+        answers: AnswerOpts::default(),
+    })
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("[vault].allow_global"));
+    assert!(error.contains("must be a boolean"));
+
+    fs::write(
+        repo.join(".jig.toml"),
+        r#"repo_name = "repo"
+default_branch = "main"
+ci_github_runner = "ubuntu-latest"
+jig_version = "0.1.0"
+template_source_url = "https://github.com/bpcakes/jig-sh.git"
+sqlx_enabled = false
+schema_dump_enabled = false
+bootstrap_command = "cargo fetch"
+rust_fmt_check_command = "cargo fmt --all -- --check"
+rust_clippy_command = "cargo clippy --workspace --all-targets --locked -- -D warnings"
+rust_test_command = "cargo test --workspace"
+rust_test_locked_command = "cargo test --workspace --locked"
+web_package_manager = "bun"
+frontend_apps = []
+
+[vault]
+scope = 123
+"#,
+    )
+    .unwrap();
+
+    let error = run_adopt(AdoptOpts {
+        path: repo.clone(),
+        template: Some(template.path().display().to_string()),
+        template_mode: None,
+        vcs_ref: None,
+        force: true,
+        write: false,
+        defaults: true,
+        no_input: true,
+        no_vault: true,
+        answers: AnswerOpts::default(),
+    })
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("[vault].scope"));
+    assert!(error.contains("must be a string"));
+
+    fs::write(
+        repo.join(".jig.toml"),
+        r#"repo_name = "repo"
+default_branch = "main"
+ci_github_runner = "ubuntu-latest"
+jig_version = "0.1.0"
+template_source_url = "https://github.com/bpcakes/jig-sh.git"
+sqlx_enabled = false
+schema_dump_enabled = false
+bootstrap_command = "cargo fetch"
+rust_fmt_check_command = "cargo fmt --all -- --check"
+rust_clippy_command = "cargo clippy --workspace --all-targets --locked -- -D warnings"
+rust_test_command = "cargo test --workspace"
+rust_test_locked_command = "cargo test --workspace --locked"
+web_package_manager = "bun"
+frontend_apps = []
+
+[vault]
+scope = "repo"
+scope_id = "scope_1"
+unexpected = true
+"#,
+    )
+    .unwrap();
+
+    let error = run_adopt(AdoptOpts {
+        path: repo,
+        template: Some(template.path().display().to_string()),
+        template_mode: None,
+        vcs_ref: None,
+        force: true,
+        write: false,
+        defaults: true,
+        no_input: true,
+        no_vault: true,
+        answers: AnswerOpts::default(),
+    })
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("Unknown [vault].unexpected"));
 }
 
 #[test]

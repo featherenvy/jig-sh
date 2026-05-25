@@ -161,6 +161,201 @@ fn init_rejects_unsafe_frontend_app_values() {
     .unwrap_err()
     .to_string();
     assert!(unsupported_dir.contains("contains unsupported characters"));
+
+    let env_prefix_collision = run_init(InitOpts {
+        path: temp.path().join("env-prefix-collision"),
+        scaffold: ScaffoldOpts::default(),
+        template: Some(template.path().display().to_string()),
+        template_mode: None,
+        vcs_ref: None,
+        force: false,
+        defaults: true,
+        no_input: true,
+        no_vault: true,
+        answers: AnswerOpts {
+            repo_name: Some("demo".into()),
+            sqlx_enabled: Some(false),
+            frontend_apps: vec![
+                FrontendApp {
+                    name: "web-app".into(),
+                    dir: "apps/web-app".into(),
+                    coverage_threshold: 80,
+                    kind: "vite".into(),
+                },
+                FrontendApp {
+                    name: "web_app".into(),
+                    dir: "apps/web_app".into(),
+                    coverage_threshold: 80,
+                    kind: "vite".into(),
+                },
+            ],
+            ..AnswerOpts::default()
+        },
+    })
+    .unwrap_err()
+    .to_string();
+    assert!(env_prefix_collision.contains("share derived dev environment prefix JIG_DEV_WEB_APP"));
+}
+
+#[test]
+fn init_rejects_answers_file_frontend_dev_app_dir_mismatch() {
+    let _guard = lock_env();
+    let temp = tempdir().unwrap();
+    let template = materialize_template_worktree();
+    let answers_file = temp.path().join("answers.toml");
+    fs::write(
+        &answers_file,
+        r#"repo_name = "demo"
+sqlx_enabled = false
+
+[[frontend_apps]]
+name = "web"
+dir = "apps/web"
+coverage_threshold = 80
+kind = "vite"
+
+[[dev.apps]]
+name = "web"
+dir = "apps/admin"
+kind = "vite"
+argv = ["npm", "run", "dev"]
+"#,
+    )
+    .unwrap();
+
+    let error = run_init(InitOpts {
+        path: temp.path().join("repo"),
+        scaffold: ScaffoldOpts::default(),
+        template: Some(template.path().display().to_string()),
+        template_mode: None,
+        vcs_ref: None,
+        force: false,
+        defaults: false,
+        no_input: true,
+        no_vault: true,
+        answers: AnswerOpts {
+            answers_file: Some(answers_file),
+            ..AnswerOpts::default()
+        },
+    })
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("[dev.apps] entry 'web' uses dir 'apps/admin'"));
+    assert!(error.contains("matching [[frontend_apps]] uses 'apps/web'"));
+}
+
+#[test]
+fn init_rejects_answers_file_frontend_dev_app_missing_dir() {
+    let _guard = lock_env();
+    let temp = tempdir().unwrap();
+    let template = materialize_template_worktree();
+    let answers_file = temp.path().join("answers.toml");
+    fs::write(
+        &answers_file,
+        r#"repo_name = "demo"
+sqlx_enabled = false
+
+[[frontend_apps]]
+name = "web"
+dir = "apps/web"
+coverage_threshold = 80
+kind = "vite"
+
+[[dev.apps]]
+name = "web"
+kind = "vite"
+argv = ["npm", "run", "dev"]
+"#,
+    )
+    .unwrap();
+
+    let error = run_init(InitOpts {
+        path: temp.path().join("repo"),
+        scaffold: ScaffoldOpts::default(),
+        template: Some(template.path().display().to_string()),
+        template_mode: None,
+        vcs_ref: None,
+        force: false,
+        defaults: false,
+        no_input: true,
+        no_vault: true,
+        answers: AnswerOpts {
+            answers_file: Some(answers_file),
+            ..AnswerOpts::default()
+        },
+    })
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("[dev.apps] entry 'web' matches [[frontend_apps]]"));
+    assert!(error.contains("must set dir = 'apps/web'"));
+}
+
+#[test]
+fn init_defaults_answers_file_dev_app_kind_to_env_port() {
+    let _guard = lock_env();
+    let temp = tempdir().unwrap();
+    let template = materialize_template_worktree();
+    let answers_file = temp.path().join("answers.toml");
+    fs::write(
+        &answers_file,
+        r#"repo_name = "demo"
+sqlx_enabled = false
+
+[[dev.apps]]
+name = "api"
+command = "cargo run -p demo-api"
+"#,
+    )
+    .unwrap();
+    let repo = temp.path().join("repo");
+
+    let output = run_init(InitOpts {
+        path: repo.clone(),
+        scaffold: ScaffoldOpts::default(),
+        template: Some(template.path().display().to_string()),
+        template_mode: None,
+        vcs_ref: None,
+        force: false,
+        defaults: false,
+        no_input: true,
+        no_vault: true,
+        answers: AnswerOpts {
+            answers_file: Some(answers_file),
+            ..AnswerOpts::default()
+        },
+    })
+    .unwrap();
+
+    let rendered = fs::read_to_string(repo.join(".jig.toml")).unwrap();
+    assert!(rendered.contains("[[dev.apps]]\nname = \"api\""));
+    assert!(rendered.contains("kind = \"env-port\""));
+    assert!(rendered.contains("command = \"cargo run -p demo-api\""));
+    assert!(
+        output["next_steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|step| step.as_str() == Some("scripts/jig dev"))
+    );
+    assert!(
+        output["render_report"]["commands_detected_or_skipped"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|command| command
+                .as_str()
+                .unwrap()
+                .contains("[[dev.apps]] configured"))
+    );
+    assert!(
+        output["render_report"]["suggested_jig_toml_edits"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|edit| edit.as_str().unwrap().contains("Tune [dev]"))
+    );
 }
 
 #[test]

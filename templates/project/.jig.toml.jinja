@@ -72,7 +72,20 @@ lan = false
 tld = "localhost"
 # Set true to discover JavaScript workspace packages that expose dev scripts.
 workspace_discovery = false
-[% for app in frontend_apps %]
+[% for app in dev_apps %]
+
+# Repo-local dev service.
+[[dev.apps]]
+name = "<<[ app.name | replace("\\", "\\\\") | replace("\"", "\\\"") ]>>"
+[% if app.dir %]dir = "<<[ app.dir | replace("\\", "\\\\") | replace("\"", "\\\"") ]>>"
+[% endif %]kind = "<<[ app.kind | replace("\\", "\\\\") | replace("\"", "\\\"") ]>>"
+[% if app.port %]port = <<[ app.port ]>>
+[% endif %][% if app.host %]host = "<<[ app.host | replace("\\", "\\\\") | replace("\"", "\\\"") ]>>"
+[% endif %][% if not app.proxy %]proxy = false
+[% endif %][% if app.command %]command = "<<[ app.command | replace("\\", "\\\\") | replace("\"", "\\\"") ]>>"
+[% else %]argv = [[% for arg in app.argv %]"<<[ arg | replace("\\", "\\\\") | replace("\"", "\\\"") ]>>"[% if not loop.last %], [% endif %][% endfor %]]
+[% endif %][% endfor %]
+[% for app in generated_frontend_dev_apps %]
 
 # Generated from [[frontend_apps]] so local dev uses explicit app settings while
 # web CI keeps its coverage threshold metadata above. Jig validates that name

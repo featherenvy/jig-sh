@@ -22,7 +22,7 @@ Jig's template lives in the `jig-sh` repository. Running `jig init` or `jig adop
 ## Vault Quick Start
 
 Jig Vault stores selected local secrets outside the repository, unlocks them with a local passphrase, and injects only requested values into a brokered child process.
-Generated repos use a repo-scoped local vault by default: `.jig.toml` stores a non-secret `[vault]` `scope_id`, while encrypted state lives under `~/.jig/vault/scopes/<scope_id>` or under the `JIG_VAULT_HOME` base when that variable is set. Use `--global` only when a repo is explicitly allowed to reach the user-level vault.
+Generated repos use a repo-scoped local vault by default: `.jig.toml` stores a non-secret `[vault]` `scope_id`, while encrypted state lives under a trusted local repo namespace below `~/.jig/vault/scopes/` or the `JIG_VAULT_HOME` base when that variable is set. Use `--global` only when a repo is explicitly allowed to reach the user-level vault.
 
 ```sh
 scripts/jig vault init

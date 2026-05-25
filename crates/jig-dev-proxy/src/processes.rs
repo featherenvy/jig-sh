@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 #[cfg(test)]
 use std::fs;
 #[cfg(unix)]
@@ -39,6 +39,13 @@ const PROXY_HEALTH_CHECK_INTERVAL: Duration = Duration::from_secs(1);
 static CTRL_C_REQUESTED: AtomicBool = AtomicBool::new(false);
 static CTRL_C_HANDLER: OnceLock<()> = OnceLock::new();
 
+struct PreparedApp {
+    spec: AppRunSpec,
+    route_parts: Option<(RouteHostname, TargetHost)>,
+    port: u16,
+    argv: Vec<String>,
+}
+
 pub(crate) fn run_app(
     spec: AppRunSpec,
     settings: &ProxySettings,
@@ -61,8 +68,9 @@ pub(crate) fn run_app(
     if argv.is_empty() {
         bail!("No command configured for app '{}'", spec.name);
     }
+    let dev_env = dev_app_environment([(&spec, port)], settings, &store)?;
 
-    let mut child = spawn_child(&spec, &argv, port, settings)?;
+    let mut child = spawn_child(&spec, &argv, port, settings, &dev_env)?;
     let pid = child.id();
     let owner_start_token = if spec.proxy {
         match wait_for_app_ready(&spec, port, &mut child) {
@@ -191,6 +199,7 @@ pub(crate) fn run_apps(
     let mut routes = Vec::new();
     let mut assigned_ports = HashSet::new();
     let mut display_rows = Vec::new();
+    let mut prepared_apps = Vec::new();
 
     for spec in specs {
         let route_parts = if spec.proxy {
@@ -202,22 +211,41 @@ pub(crate) fn run_apps(
         {
             Ok(port) => port,
             Err(error) => {
-                cleanup_children(&mut children);
                 return Err(error);
             }
         };
         let argv = match command_argv(&spec.command, &spec.kind, port) {
             Ok(argv) if !argv.is_empty() => argv,
             Ok(_) => {
-                cleanup_children(&mut children);
                 bail!("No command configured for app '{}'", spec.name);
             }
             Err(error) => {
-                cleanup_children(&mut children);
                 return Err(error);
             }
         };
-        let mut child = match spawn_child(&spec, &argv, port, settings) {
+        prepared_apps.push(PreparedApp {
+            spec,
+            route_parts,
+            port,
+            argv,
+        });
+    }
+    let dev_env = dev_app_environment(
+        prepared_apps
+            .iter()
+            .map(|prepared| (&prepared.spec, prepared.port)),
+        settings,
+        &store,
+    )?;
+
+    for prepared in prepared_apps {
+        let PreparedApp {
+            spec,
+            route_parts,
+            port,
+            argv,
+        } = prepared;
+        let mut child = match spawn_child(&spec, &argv, port, settings, &dev_env) {
             Ok(child) => child,
             Err(error) => {
                 cleanup_children(&mut children);
@@ -434,6 +462,7 @@ fn spawn_child(
     argv: &[String],
     port: u16,
     settings: &ProxySettings,
+    dev_env: &[(String, String)],
 ) -> Result<Child> {
     // App commands are trusted repo-configured dev processes and intentionally
     // inherit the caller's environment; only the background proxy clears env.
@@ -441,6 +470,7 @@ fn spawn_child(
     command
         .args(&argv[1..])
         .current_dir(&spec.dir)
+        .envs(dev_env.iter().map(|(key, value)| (key, value)))
         .env("PORT", port.to_string())
         .env("HOST", &spec.target_host);
     configure_app_child_process_group(&mut command);
@@ -580,20 +610,7 @@ fn app_display(
     store: &StateStore,
 ) -> Result<AppDisplay> {
     if spec.proxy {
-        let (scheme, proxy_port) = if settings.https {
-            store
-                .read_https_port()?
-                .map(|port| ("https", port))
-                .unwrap_or((
-                    "http",
-                    store.read_http_port()?.unwrap_or(settings.http_port),
-                ))
-        } else {
-            (
-                "http",
-                store.read_http_port()?.unwrap_or(settings.http_port),
-            )
-        };
+        let (scheme, proxy_port) = proxy_origin(settings, store)?;
         let lan_note = if settings.lan {
             if let Some(ip) = local_lan_ip_for_ipv4_listener() {
                 Some(format!(
@@ -622,6 +639,57 @@ fn app_display(
         pid,
         lan_note: None,
     })
+}
+
+fn dev_app_environment<'a>(
+    apps: impl IntoIterator<Item = (&'a AppRunSpec, u16)>,
+    settings: &ProxySettings,
+    store: &StateStore,
+) -> Result<Vec<(String, String)>> {
+    let mut env = Vec::new();
+    let mut prefixes = HashMap::new();
+    for (spec, port) in apps {
+        let prefix = jig_core::dev_app_env_prefix(&spec.name);
+        if let Some(previous) = prefixes.insert(prefix.clone(), spec.name.as_str()) {
+            bail!(
+                "dev apps '{}' and '{}' share derived environment prefix {prefix}; rename one app so punctuation-normalized names are unique",
+                previous,
+                spec.name
+            );
+        }
+        env.push((format!("{prefix}_HOST"), spec.target_host.clone()));
+        env.push((format!("{prefix}_PORT"), port.to_string()));
+        let origin = app_origin(spec, settings, port, store)?;
+        env.push((format!("{prefix}_ORIGIN"), origin.clone()));
+        env.push((format!("{prefix}_URL"), origin));
+    }
+    Ok(env)
+}
+
+fn app_origin(
+    spec: &AppRunSpec,
+    settings: &ProxySettings,
+    port: u16,
+    store: &StateStore,
+) -> Result<String> {
+    if !spec.proxy {
+        return Ok(format!("http://{}:{port}", spec.target_host));
+    }
+
+    let (scheme, proxy_port) = proxy_origin(settings, store)?;
+    Ok(format!("{scheme}://{}:{proxy_port}", spec.hostname))
+}
+
+fn proxy_origin(settings: &ProxySettings, store: &StateStore) -> Result<(&'static str, u16)> {
+    if settings.https
+        && let Some(port) = store.read_https_port()?
+    {
+        return Ok(("https", port));
+    }
+    Ok((
+        "http",
+        store.read_http_port()?.unwrap_or(settings.http_port),
+    ))
 }
 
 fn print_dev_table(rows: &[AppDisplay]) {

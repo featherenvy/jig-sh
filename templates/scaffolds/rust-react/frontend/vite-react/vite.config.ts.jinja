@@ -13,9 +13,27 @@ const server =
         },
       }
     : {};
+const apiOrigin =
+  process.env.API_ORIGIN ??
+  process.env.JIG_DEV_API_ORIGIN ??
+  "http://api.<<[ repo_name ]>>.localhost:1355";
 
 export default defineConfig({
-  server,
+  server: {
+    ...server,
+    proxy: apiOrigin
+      ? {
+          "/api": {
+            target: apiOrigin,
+            changeOrigin: true,
+          },
+          "/health": {
+            target: apiOrigin,
+            changeOrigin: true,
+          },
+        }
+      : undefined,
+  },
   plugins: [react()],
   test: {
     environment: "jsdom",

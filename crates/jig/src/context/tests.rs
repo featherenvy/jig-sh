@@ -125,7 +125,7 @@ allow_global = true
 
     validate_config(&config).unwrap();
     assert_eq!(config.vault.repo_scope_id(), Some("scope_1"));
-    assert!(config.vault.allow_global);
+    assert!(config.vault.allow_global());
 }
 
 #[test]
@@ -732,6 +732,74 @@ command = "bun run dev"
     let error = RepoContext::load_from(temp.path()).unwrap_err().to_string();
 
     assert!(error.contains("Duplicate dev app name"));
+}
+
+#[test]
+fn duplicate_dev_app_env_prefixes_are_rejected_at_config_load() {
+    let temp = tempdir().unwrap();
+    fs::create_dir_all(temp.path().join(".agent")).unwrap();
+    fs::write(
+        temp.path().join(".jig.toml"),
+        r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.2.0-beta.1"
+
+[[dev.apps]]
+name = "web-app"
+command = "bun run dev"
+
+[[dev.apps]]
+name = "web_app"
+command = "bun run dev"
+"#,
+    )
+    .unwrap();
+    fs::write(
+        temp.path().join(".agent/jig-contract.json"),
+        serde_json::to_string_pretty(&json!({
+            "contract_version": 3,
+            "tool_namespace": "jig",
+            "jig_version": "0.2.0-beta.1",
+            "required_commands": ["contract_check_command"],
+            "tools": [],
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let error = RepoContext::load_from(temp.path()).unwrap_err().to_string();
+
+    assert!(error.contains("share derived dev environment prefix JIG_DEV_WEB_APP"));
+}
+
+#[test]
+fn matched_frontend_dev_app_requires_same_dir_at_config_load() {
+    let config: RepoConfig = toml::from_str(
+        r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.2.0-beta.1"
+
+[[frontend_apps]]
+name = "web"
+dir = "apps/web"
+coverage_threshold = 80
+
+[[dev.apps]]
+name = "web"
+kind = "vite"
+argv = ["npm", "run", "dev"]
+"#,
+    )
+    .unwrap();
+
+    let error = validate_config(&config).unwrap_err().to_string();
+
+    assert!(error.contains("[dev.apps] entry 'web' matches [[frontend_apps]]"));
+    assert!(error.contains("must set dir = 'apps/web'"));
 }
 
 #[test]

@@ -27,6 +27,7 @@ getrandom.workspace = true
 http-body-util.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true
+jig-core.workspace = true
 libc.workspace = true
 rcgen.workspace = true
 rustls.workspace = true

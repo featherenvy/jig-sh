@@ -103,6 +103,24 @@ pub(crate) fn vault_passphrase_env_present() -> bool {
     vault::passphrase_env_present()
 }
 
+pub(crate) fn repo_vault_options_for_context(
+    ctx: &RepoContext,
+) -> Option<crate::command::VaultRuntimeOptions> {
+    let scope_id = ctx.vault_config().repo_scope_id()?;
+    Some(crate::command::VaultRuntimeOptions::repo(
+        scope_id,
+        ctx.repo_name(),
+        ctx.root(),
+    ))
+}
+
+pub(crate) fn vault_options_for_context(
+    ctx: Option<&RepoContext>,
+) -> crate::command::VaultRuntimeOptions {
+    ctx.and_then(repo_vault_options_for_context)
+        .unwrap_or_default()
+}
+
 fn dispatch_check(ctx: &RepoContext, command: CheckCommand) -> Result<Value> {
     match command {
         CheckCommand::Fmt(opts) => {

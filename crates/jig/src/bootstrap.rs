@@ -129,7 +129,7 @@ pub struct InitOpts {
     #[arg(
         long,
         help_heading = "Automation",
-        help = "Use default answers for omitted configuration prompts"
+        help = "Use default answers for omitted configuration prompts; vault setup captures credentials before rendering"
     )]
     pub defaults: bool,
     #[arg(
@@ -191,7 +191,7 @@ pub struct AdoptOpts {
     pub write: bool,
     #[arg(
         long,
-        help = "Use default answers for omitted configuration prompts and adopt write confirmation"
+        help = "Use default answers for omitted configuration prompts and adopt write confirmation; vault setup captures credentials before rendering"
     )]
     pub defaults: bool,
     #[arg(
@@ -248,6 +248,25 @@ pub struct FrontendApp {
     pub coverage_threshold: u32,
     #[serde(default = "default_frontend_app_kind")]
     pub kind: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct DevApp {
+    pub name: String,
+    #[serde(default)]
+    pub dir: Option<String>,
+    #[serde(default = "default_dev_app_kind")]
+    pub kind: String,
+    #[serde(default)]
+    pub command: Option<String>,
+    #[serde(default)]
+    pub argv: Vec<String>,
+    #[serde(default)]
+    pub port: Option<u16>,
+    #[serde(default)]
+    pub host: Option<String>,
+    #[serde(default = "default_true")]
+    pub proxy: bool,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, ValueEnum)]
@@ -768,7 +787,7 @@ fn initial_next_steps(
     }
     steps.push("scripts/jig check contract".into());
     steps.push("scripts/jig check test".into());
-    if result.frontend_apps_configured {
+    if result.dev_apps_configured {
         steps.push("scripts/jig dev".into());
     }
     if result.sqlx_enabled {
@@ -920,13 +939,14 @@ fn initial_command_report(result: &initial_copy::BootstrapCopyResult) -> Vec<Str
         commands.push("bootstrap_command not configured; skip scripts/jig bootstrap".into());
     }
     commands.push("contract check available through scripts/jig check contract".into());
-    if result.frontend_apps_configured {
-        commands
-            .push("[[dev.apps]] rendered from frontend app answers; run scripts/jig dev".into());
-        commands
-            .push("frontend app checks available through scripts/jig check typescript-*".into());
+    if result.dev_apps_configured {
+        commands.push("[[dev.apps]] configured; run scripts/jig dev".into());
     } else {
         commands.push("no [[dev.apps]] configured; scripts/jig dev has no app to launch".into());
+    }
+    if result.frontend_apps_configured {
+        commands
+            .push("frontend app checks available through scripts/jig check typescript-*".into());
     }
     commands
 }
@@ -955,7 +975,7 @@ fn initial_suggested_jig_toml_edits(result: &initial_copy::BootstrapCopyResult) 
     let mut edits = vec![
         "Replace generated fallback Cargo commands if this repo uses nested workspaces or non-Cargo checks.".into(),
     ];
-    if result.frontend_apps_configured {
+    if result.dev_apps_configured {
         edits.push("Tune [dev] ports, tld, HTTPS, LAN, and each [[dev.apps]] kind/argv if defaults do not match local development.".into());
     }
     if result.sqlx_enabled {
@@ -1054,6 +1074,14 @@ fn parse_scaffold_frontend_kind(value: &str) -> Result<ScaffoldFrontendKind, Str
 
 fn default_frontend_app_kind() -> String {
     "vite".into()
+}
+
+fn default_dev_app_kind() -> String {
+    "env-port".into()
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn validate_init_destination(path: &Path, force: bool) -> Result<()> {

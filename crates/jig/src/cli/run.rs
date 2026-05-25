@@ -6,7 +6,7 @@ use clap::{
     Parser,
     error::{ContextKind, ContextValue, ErrorKind},
 };
-use serde_json::json;
+use serde_json::{Value, json};
 
 use super::output::{HumanOutput, print_json, print_output};
 #[cfg(test)]
@@ -16,6 +16,14 @@ use super::output::{
     format_work_start_plan_id, format_work_status_summary,
 };
 use super::*;
+
+fn attach_bootstrap_vault(output: &mut Value, vault: Value) -> Result<()> {
+    if output.get("vault").is_some() {
+        anyhow::bail!("bootstrap output unexpectedly included a vault field");
+    }
+    output["vault"] = vault;
+    Ok(())
+}
 
 #[derive(Debug)]
 struct JsonOkFalse;
@@ -44,25 +52,12 @@ pub(crate) fn run() -> Result<()> {
     let json_output = cli.json;
     match cli.command {
         CommandKind::Init(opts) => {
-            let should_ensure_vault = !opts.no_vault;
-            let pre_capture_vault = should_pre_capture_bootstrap_vault(
-                should_ensure_vault,
-                opts.no_input,
-                opts.defaults,
-                runtime::vault_passphrase_prompt_available(),
-            );
-            reject_missing_no_input_vault_passphrase(
-                should_ensure_vault,
-                opts.no_input,
-                runtime::vault_passphrase_env_present(),
-            )?;
-            if pre_capture_vault {
-                runtime::capture_new_vault_passphrase()?;
-            }
+            let vault_setup =
+                prepare_bootstrap_vault(!opts.no_vault, opts.no_input, opts.defaults)?;
             let mut output = bootstrap::run_init(opts)?;
-            output["vault"] =
-                ensure_bootstrap_vault(&output, should_ensure_vault, !pre_capture_vault)
-                    .context("vault auto-init failed after repo files were written; rerun `jig vault init` from the repo after fixing the reported vault/config issue")?;
+            let vault =
+                ensure_bootstrap_vault(&output, vault_setup.requested, !vault_setup.pre_captured)?;
+            attach_bootstrap_vault(&mut output, vault)?;
             if json_output {
                 print_json(&output)?;
             } else {
@@ -80,25 +75,15 @@ pub(crate) fn run() -> Result<()> {
             Ok(())
         }
         CommandKind::Adopt(opts) => {
-            let should_ensure_vault = opts.write && !opts.no_vault;
-            let pre_capture_vault = should_pre_capture_bootstrap_vault(
-                should_ensure_vault,
+            let vault_setup = prepare_bootstrap_vault(
+                opts.write && !opts.no_vault,
                 opts.no_input,
                 opts.defaults,
-                runtime::vault_passphrase_prompt_available(),
-            );
-            reject_missing_no_input_vault_passphrase(
-                should_ensure_vault,
-                opts.no_input,
-                runtime::vault_passphrase_env_present(),
             )?;
-            if pre_capture_vault {
-                runtime::capture_new_vault_passphrase()?;
-            }
             let mut output = bootstrap::run_adopt(opts)?;
-            output["vault"] =
-                ensure_bootstrap_vault(&output, should_ensure_vault, !pre_capture_vault)
-                    .context("vault auto-init failed after repo files were written; rerun `jig vault init` from the repo after fixing the reported vault/config issue")?;
+            let vault =
+                ensure_bootstrap_vault(&output, vault_setup.requested, !vault_setup.pre_captured)?;
+            attach_bootstrap_vault(&mut output, vault)?;
             if json_output {
                 print_json(&output)?;
             } else {
@@ -265,15 +250,45 @@ fn vault_command_requires_passphrase(command: &crate::command::VaultCommand) -> 
     !matches!(command, crate::command::VaultCommand::Status(_))
 }
 
+#[derive(Clone, Copy, Debug)]
+struct BootstrapVaultSetup {
+    requested: bool,
+    pre_captured: bool,
+}
+
+fn prepare_bootstrap_vault(
+    requested: bool,
+    no_input: bool,
+    defaults: bool,
+) -> Result<BootstrapVaultSetup> {
+    let env_present = runtime::vault_passphrase_env_present();
+    let pre_captured = should_pre_capture_bootstrap_vault(
+        requested,
+        no_input,
+        defaults,
+        env_present,
+        runtime::vault_passphrase_prompt_available(),
+    );
+    reject_missing_no_input_vault_passphrase(requested, no_input, env_present)?;
+    if pre_captured {
+        runtime::capture_new_vault_passphrase()?;
+    }
+    Ok(BootstrapVaultSetup {
+        requested,
+        pre_captured,
+    })
+}
+
 fn should_pre_capture_bootstrap_vault(
     requested: bool,
     no_input: bool,
     defaults: bool,
+    env_present: bool,
     prompt_available: bool,
 ) -> bool {
     // `--defaults` is treated as automation intent for vault setup even though
     // it can still leave ordinary answer prompts interactive.
-    requested && (no_input || defaults || !prompt_available)
+    requested && (no_input || defaults || env_present || !prompt_available)
 }
 
 fn reject_missing_no_input_vault_passphrase(
@@ -290,16 +305,19 @@ fn reject_missing_no_input_vault_passphrase(
 }
 
 fn apply_repo_vault_scope(command: &mut crate::command::VaultCommand) -> Result<()> {
+    let options = vault_options_mut(command);
+    if options.home.is_some() {
+        return Ok(());
+    }
+
     let Some(ctx) = RepoContext::load_optional()? else {
         return Ok(());
     };
     let vault = ctx.vault_config();
-    let repo_scope_id = vault.repo_scope_id().map(str::to_string);
     apply_repo_vault_scope_to_options(
-        vault_options_mut(command),
-        repo_scope_id.as_deref(),
-        ctx.repo_name(),
-        vault.allow_global,
+        options,
+        runtime::repo_vault_options_for_context(&ctx),
+        vault.allow_global(),
     )
 }
 
@@ -323,25 +341,21 @@ fn vault_options_mut(
 
 fn apply_repo_vault_scope_to_options(
     options: &mut crate::command::VaultRuntimeOptions,
-    repo_scope_id: Option<&str>,
-    repo_name: &str,
+    repo_options: Option<crate::command::VaultRuntimeOptions>,
     allow_global: bool,
 ) -> Result<()> {
     if options.home.is_some() {
         return Ok(());
     }
+    let has_repo_scope = repo_options.is_some();
     match &options.scope {
         crate::command::VaultScopeSelection::Auto => {
-            if let Some(scope_id) = repo_scope_id {
-                options.scope =
-                    crate::command::VaultScopeSelection::Repo(crate::command::VaultRepoScope {
-                        scope_id: scope_id.to_string(),
-                        repo_name: repo_name.to_string(),
-                    });
+            if let Some(repo_options) = repo_options {
+                *options = repo_options;
             }
             Ok(())
         }
-        crate::command::VaultScopeSelection::Global if !allow_global && repo_scope_id.is_some() => {
+        crate::command::VaultScopeSelection::Global if !allow_global && has_repo_scope => {
             anyhow::bail!(
                 "This repo is configured for repo-scoped vault access and [vault].allow_global is false; remove --global or set allow_global = true after reviewing the risk."
             )
@@ -367,8 +381,11 @@ fn ensure_bootstrap_vault(
         }));
     }
 
-    let ctx = RepoContext::load_from_root(std::path::PathBuf::from(destination))?;
-    let Some(scope_id) = ctx.vault_config().repo_scope_id() else {
+    let ctx =
+        RepoContext::load_from_root(std::path::PathBuf::from(destination)).with_context(|| {
+            "vault auto-init could not load the rendered repo context after repo files were written; fix the reported .jig.toml or .agent/jig-contract.json issue before rerunning `jig vault init`"
+        })?;
+    let Some(vault) = runtime::repo_vault_options_for_context(&ctx) else {
         return Ok(json!({
             "requested": true,
             "initialized": false,
@@ -376,18 +393,12 @@ fn ensure_bootstrap_vault(
             "skipped_reason": "repo has no [vault] scope",
         }));
     };
-    let vault = crate::command::VaultRuntimeOptions {
-        home: None,
-        scope: crate::command::VaultScopeSelection::Repo(crate::command::VaultRepoScope {
-            scope_id: scope_id.to_string(),
-            repo_name: ctx.repo_name().to_string(),
-        }),
-    };
     let status = runtime::dispatch_vault(crate::command::VaultCommand::Status(
         crate::command::VaultStatusRequest {
             vault: vault.clone(),
         },
-    ))?;
+    ))
+    .context("vault auto-init status check failed after repo files were written; rerun `jig vault status` from the repo after fixing the reported vault issue")?;
     if status["exists"].as_bool().unwrap_or(false) {
         return Ok(json!({
             "requested": true,
@@ -400,11 +411,14 @@ fn ensure_bootstrap_vault(
     }
 
     if capture_passphrase {
-        runtime::capture_new_vault_passphrase()?;
+        runtime::capture_new_vault_passphrase().context(
+            "vault auto-init passphrase capture failed after repo files were written; rerun `jig vault init` from the repo after fixing the reported vault issue",
+        )?;
     }
     let init = runtime::dispatch_vault(crate::command::VaultCommand::Init(
         crate::command::VaultInitRequest { vault },
-    ))?;
+    ))
+    .context("vault auto-init failed after repo files were written; rerun `jig vault init` from the repo after fixing the reported vault issue")?;
     Ok(json!({
         "requested": true,
         "initialized": true,

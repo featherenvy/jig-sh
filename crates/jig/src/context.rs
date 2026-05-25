@@ -130,11 +130,11 @@ pub(crate) struct FrontendAppConfig {
 #[serde(deny_unknown_fields)]
 pub(crate) struct VaultConfig {
     #[serde(default)]
-    pub(crate) scope: VaultScopeConfig,
+    scope: VaultScopeConfig,
     #[serde(default)]
-    pub(crate) scope_id: Option<String>,
+    scope_id: Option<String>,
     #[serde(default)]
-    pub(crate) allow_global: bool,
+    allow_global: bool,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq)]
@@ -147,9 +147,15 @@ pub(crate) enum VaultScopeConfig {
 
 impl VaultConfig {
     pub(crate) fn repo_scope_id(&self) -> Option<&str> {
-        (self.scope == VaultScopeConfig::Repo)
-            .then_some(self.scope_id.as_deref())
-            .flatten()
+        if self.scope == VaultScopeConfig::Repo {
+            self.scope_id.as_deref()
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn allow_global(&self) -> bool {
+        self.allow_global
     }
 }
 
@@ -656,6 +662,17 @@ fn validate_dev_config(config: &RepoConfig) -> Result<()> {
             bail!("Duplicate dev app name '{}' in [[dev.apps]]", app.name);
         }
     }
+    if config.dev.apps.is_empty() {
+        validate_dev_app_env_prefixes(
+            config.frontend_apps.iter().map(|app| app.name.as_str()),
+            "[[frontend_apps]]",
+        )?;
+    } else {
+        validate_dev_app_env_prefixes(
+            config.dev.apps.iter().map(|app| app.name.as_str()),
+            "[[dev.apps]]",
+        )?;
+    }
     if !config.frontend_apps.is_empty() && !config.dev.apps.is_empty() {
         for frontend_app in &config.frontend_apps {
             let Some(dev_app) = config
@@ -669,16 +686,42 @@ fn validate_dev_config(config: &RepoConfig) -> Result<()> {
                     frontend_app.name
                 );
             };
-            if let Some(dev_dir) = dev_app.dir.as_deref()
-                && dev_dir != frontend_app.dir
-            {
-                bail!(
-                    "[dev.apps] entry '{}' uses dir '{}' but matching [[frontend_apps]] uses '{}'. Keep them aligned because [dev.apps] takes precedence for scripts/jig dev.",
-                    frontend_app.name,
-                    dev_dir,
-                    frontend_app.dir
-                );
+            match dev_app.dir.as_deref() {
+                Some(dev_dir) if dev_dir == frontend_app.dir => {}
+                Some(dev_dir) => {
+                    bail!(
+                        "[dev.apps] entry '{}' uses dir '{}' but matching [[frontend_apps]] uses '{}'. Keep them aligned because [dev.apps] takes precedence for scripts/jig dev.",
+                        frontend_app.name,
+                        dev_dir,
+                        frontend_app.dir
+                    );
+                }
+                None => {
+                    bail!(
+                        "[dev.apps] entry '{}' matches [[frontend_apps]] and must set dir = '{}' because [dev.apps] takes precedence for scripts/jig dev.",
+                        frontend_app.name,
+                        frontend_app.dir
+                    );
+                }
             }
+        }
+    }
+    Ok(())
+}
+
+fn validate_dev_app_env_prefixes<'a>(
+    names: impl IntoIterator<Item = &'a str>,
+    section: &str,
+) -> Result<()> {
+    let mut prefixes = BTreeMap::new();
+    for name in names {
+        let prefix = jig_core::dev_app_env_prefix(name);
+        if let Some(previous) = prefixes.insert(prefix.clone(), name) {
+            bail!(
+                "{section} entries '{}' and '{}' share derived dev environment prefix {prefix}; rename one app so punctuation-normalized names are unique",
+                previous,
+                name
+            );
         }
     }
     Ok(())

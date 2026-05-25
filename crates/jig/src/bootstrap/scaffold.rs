@@ -7,8 +7,8 @@ use serde_json::Value;
 use crate::context::validate_web_package_manager;
 
 use super::{
-    AnswerOpts, FrontendApp, ScaffoldDb, ScaffoldFrontend, ScaffoldFrontendKind, ScaffoldOpts,
-    ScaffoldPreset,
+    AnswerOpts, DevApp, FrontendApp, ScaffoldDb, ScaffoldFrontend, ScaffoldFrontendKind,
+    ScaffoldOpts, ScaffoldPreset,
 };
 
 #[derive(Clone, Debug)]
@@ -106,6 +106,21 @@ impl InitScaffoldPlan {
                 })
                 .collect();
         }
+        if answers.dev_apps.is_empty() {
+            answers.dev_apps = vec![DevApp {
+                name: "api".into(),
+                dir: Some(".".into()),
+                kind: "env-port".into(),
+                command: Some(format!(
+                    "BIND_ADDR=\"${{HOST}}:${{PORT}}\" cargo run -p {}-api",
+                    self.package_name
+                )),
+                argv: Vec::new(),
+                port: None,
+                host: None,
+                proxy: true,
+            }];
+        }
     }
 
     pub(super) fn summary(&self) -> String {
@@ -136,7 +151,7 @@ impl InitScaffoldPlan {
     pub(super) fn write(&self, destination: &Path, force: bool) -> Result<Value> {
         let mut files = self.render_rust_workspace_files()?;
         for frontend in &self.frontends {
-            files.extend(frontend.render_files(&self.package_manager)?);
+            files.extend(frontend.render_files(&self.package_manager, &self.repo_name)?);
         }
         let report = ScaffoldReport::write_files(destination, files, force)?;
         Ok(report.into_json(self))

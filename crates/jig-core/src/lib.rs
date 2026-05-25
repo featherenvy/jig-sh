@@ -27,6 +27,18 @@ fn no_unavailable_tool_message(_ctx: &dyn FeatureContext, _tool_name: &str) -> O
     None
 }
 
+pub fn dev_app_env_prefix(name: &str) -> String {
+    let mut prefix = String::from("JIG_DEV_");
+    for ch in name.chars() {
+        if ch.is_ascii_alphanumeric() {
+            prefix.push(ch.to_ascii_uppercase());
+        } else {
+            prefix.push('_');
+        }
+    }
+    prefix
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -93,5 +105,12 @@ mod tests {
             (FEATURE.required_tools)(&ctx),
             vec![tool::CONTRACT_CHECK, tool::BOOTSTRAP]
         );
+    }
+
+    #[test]
+    fn dev_app_env_prefix_normalizes_punctuation() {
+        assert_eq!(dev_app_env_prefix("api"), "JIG_DEV_API");
+        assert_eq!(dev_app_env_prefix("web-app"), "JIG_DEV_WEB_APP");
+        assert_eq!(dev_app_env_prefix("web_app"), "JIG_DEV_WEB_APP");
     }
 }

@@ -5,11 +5,14 @@ use std::path::{Component, Path};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
-use super::{AnswerOpts, FrontendApp};
+use super::{AnswerOpts, DevApp, FrontendApp};
 use crate::context::{
     DEFAULT_CODEX_MARKETPLACE_ID, DEFAULT_CODEX_MARKETPLACE_SOURCE,
     default_codex_marketplace_plugins, validate_web_package_manager,
 };
+
+mod dev;
+mod vault;
 
 #[derive(Clone, Debug, Serialize)]
 pub(super) struct RenderAnswers {
@@ -41,8 +44,10 @@ pub(super) struct RenderAnswers {
     typescript_typecheck_command: String,
     typescript_build_command: String,
     typescript_coverage_command: String,
+    dev_apps: Vec<DevApp>,
     frontend_apps: Vec<FrontendApp>,
-    vault: VaultAnswers,
+    generated_frontend_dev_apps: Vec<FrontendApp>,
+    vault: vault::VaultAnswers,
     agent_tooling: AgentToolingAnswers,
 }
 
@@ -204,6 +209,10 @@ impl RenderAnswers {
         &self.frontend_apps
     }
 
+    pub(super) fn dev_apps_configured(&self) -> bool {
+        !self.dev_apps.is_empty() || !self.generated_frontend_dev_apps.is_empty()
+    }
+
     pub(super) fn sqlx_enabled(&self) -> bool {
         self.sqlx_enabled
     }
@@ -258,15 +267,9 @@ struct RawAnswers {
     rust_test_locked_command: Option<String>,
     web_package_manager: Option<String>,
     frontend_apps: Option<Vec<FrontendApp>>,
-    vault: Option<VaultAnswers>,
+    dev: Option<dev::RawDevAnswers>,
+    vault: Option<vault::VaultAnswers>,
     agent_tooling: Option<AgentToolingAnswers>,
-}
-
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
-struct VaultAnswers {
-    scope: String,
-    scope_id: String,
-    allow_global: bool,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -368,6 +371,11 @@ impl RawAnswers {
         if !opts.frontend_apps.is_empty() {
             self.frontend_apps = Some(opts.frontend_apps.clone());
         }
+        if !opts.dev_apps.is_empty() {
+            self.dev
+                .get_or_insert_with(dev::RawDevAnswers::default)
+                .apps = Some(opts.dev_apps.clone());
+        }
     }
 
     fn normalize_legacy_sqlx_disabled_schema_dump(&mut self) {
@@ -411,55 +419,7 @@ impl RawAnswers {
         if self.vault.is_some() {
             return Ok(None);
         }
-        let path = destination.join(super::ANSWERS_FILE);
-        let text = match fs::read_to_string(&path) {
-            Ok(text) => text,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => {
-                return Err(error).with_context(|| format!("Failed to read {}", path.display()));
-            }
-        };
-        let value = toml::from_str::<toml::Value>(&text)
-            .with_context(|| format!("Failed to parse {}", path.display()))?;
-        let Some(vault) = value.get("vault") else {
-            return Ok(Some(
-                "Existing .jig.toml had no [vault] block, so Jig added a new repo-scoped vault scope. Existing legacy global vault secrets are not migrated automatically."
-                    .into(),
-            ));
-        };
-        let Some(table) = vault.as_table() else {
-            return Ok(Some(
-                "Existing .jig.toml had no usable [vault] table, so Jig added a new repo-scoped vault scope. Existing legacy global vault secrets are not migrated automatically."
-                    .into(),
-            ));
-        };
-        if table.get("scope").and_then(toml::Value::as_str) != Some("repo") {
-            return Ok(Some(
-                "Existing .jig.toml had no repo [vault] scope, so Jig added a new repo-scoped vault scope. Existing legacy global vault secrets are not migrated automatically."
-                    .into(),
-            ));
-        }
-        let Some(scope_id) = table.get("scope_id").and_then(toml::Value::as_str) else {
-            bail!(
-                "[vault].scope_id is required in {} when [vault].scope = \"repo\"",
-                path.display()
-            );
-        };
-        if !crate::command::is_valid_vault_scope_id(scope_id) {
-            bail!(
-                "Invalid [vault].scope_id in {}: must be 1 to 128 bytes and may only contain letters, digits, '_', or '-'",
-                path.display()
-            );
-        }
-        self.vault = Some(VaultAnswers {
-            scope: "repo".into(),
-            scope_id: scope_id.into(),
-            allow_global: table
-                .get("allow_global")
-                .and_then(toml::Value::as_bool)
-                .unwrap_or(false),
-        });
-        Ok(None)
+        vault::apply_existing_default(&mut self.vault, destination)
     }
 
     fn resolve(self, default_repo_name: Option<String>) -> Result<RenderAnswers> {
@@ -483,8 +443,12 @@ impl RawAnswers {
 
         let frontend_apps = self.frontend_apps.unwrap_or_default();
         validate_frontend_apps(&frontend_apps)?;
-        let vault = self.vault.unwrap_or_else(default_vault_answers);
-        validate_vault_answers(&vault)?;
+        let dev::ResolvedDevApps {
+            dev_apps,
+            generated_frontend_dev_apps,
+        } = dev::resolve(frontend_apps.as_slice(), self.dev)?;
+        let vault = self.vault.unwrap_or_else(vault::default_answers);
+        vault::validate_answers(&vault)?;
         let legacy_dev_command = self.dev_command.filter(|value| !value.trim().is_empty());
 
         let web_package_manager = self.web_package_manager.unwrap_or_else(|| "bun".into());
@@ -559,34 +523,13 @@ impl RawAnswers {
             typescript_typecheck_command: "scripts/check-webapps.sh typecheck".into(),
             typescript_build_command: "scripts/check-webapps.sh build".into(),
             typescript_coverage_command: "scripts/check-webapps.sh coverage".into(),
+            dev_apps,
+            generated_frontend_dev_apps,
             frontend_apps,
             vault,
             agent_tooling: self.agent_tooling.unwrap_or_default(),
         })
     }
-}
-
-fn default_vault_answers() -> VaultAnswers {
-    VaultAnswers {
-        scope: "repo".into(),
-        scope_id: ulid::Ulid::new().to_string(),
-        allow_global: false,
-    }
-}
-
-fn validate_vault_answers(vault: &VaultAnswers) -> Result<()> {
-    if vault.scope != "repo" {
-        bail!(
-            "Unsupported vault.scope '{}'. Expected 'repo'.",
-            vault.scope
-        );
-    }
-    if !crate::command::is_valid_vault_scope_id(&vault.scope_id) {
-        bail!(
-            "vault.scope_id must be 1 to 128 bytes and may only contain letters, digits, '_', or '-'"
-        );
-    }
-    Ok(())
 }
 
 fn answer_opts_has_sqlx_shape(answers: &AnswerOpts) -> bool {

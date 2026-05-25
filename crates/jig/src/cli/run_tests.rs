@@ -4,6 +4,7 @@ use crate::cli::output::format_work_review_summary;
 use crate::command::{
     VaultRepoScope, VaultRuntimeOptions, VaultScopeSelection, VaultStatusRequest,
 };
+use crate::test_env::{CurrentDirGuard, EnvVarGuard, lock_env};
 
 use super::*;
 
@@ -21,16 +22,24 @@ fn missing_init_path_gets_actionable_hint() {
 #[test]
 fn repo_vault_scope_is_applied_to_auto_options() {
     let mut options = VaultRuntimeOptions::default();
+    let repo_root = std::path::PathBuf::from("/repo");
 
-    apply_repo_vault_scope_to_options(&mut options, Some("scope_1"), "demo", false).unwrap();
+    apply_repo_vault_scope_to_options(
+        &mut options,
+        Some(VaultRuntimeOptions::repo("scope_1", "demo", &repo_root)),
+        false,
+    )
+    .unwrap();
 
     match options.scope {
         VaultScopeSelection::Repo(VaultRepoScope {
             scope_id,
             repo_name,
+            repo_root: actual_root,
         }) => {
             assert_eq!(scope_id, "scope_1");
             assert_eq!(repo_name, "demo");
+            assert_eq!(actual_root, repo_root);
         }
         other => panic!("expected repo scope, got {other:?}"),
     }
@@ -43,24 +52,167 @@ fn repo_vault_scope_rejects_global_when_disallowed() {
         scope: VaultScopeSelection::Global,
     };
 
-    let error = apply_repo_vault_scope_to_options(&mut options, Some("scope_1"), "demo", false)
-        .unwrap_err();
+    let error = apply_repo_vault_scope_to_options(
+        &mut options,
+        Some(VaultRuntimeOptions::repo("scope_1", "demo", "/repo")),
+        false,
+    )
+    .unwrap_err();
 
     assert!(error.to_string().contains("allow_global is false"));
 }
 
 #[test]
+fn repo_vault_scope_allows_global_when_configured() {
+    let mut options = VaultRuntimeOptions {
+        home: None,
+        scope: VaultScopeSelection::Global,
+    };
+
+    apply_repo_vault_scope_to_options(
+        &mut options,
+        Some(VaultRuntimeOptions::repo("scope_1", "demo", "/repo")),
+        true,
+    )
+    .unwrap();
+
+    assert!(matches!(options.scope, VaultScopeSelection::Global));
+}
+
+#[test]
+fn repo_vault_scope_leaves_auto_legacy_without_repo_scope() {
+    let mut options = VaultRuntimeOptions::default();
+
+    apply_repo_vault_scope_to_options(&mut options, None, false).unwrap();
+
+    assert!(matches!(options.scope, VaultScopeSelection::Auto));
+}
+
+#[test]
+fn repo_vault_scope_home_override_bypasses_repo_policy() {
+    let home = std::path::PathBuf::from("/tmp/custom-vault");
+    let mut options = VaultRuntimeOptions {
+        home: Some(home.clone()),
+        scope: VaultScopeSelection::Global,
+    };
+
+    apply_repo_vault_scope_to_options(
+        &mut options,
+        Some(VaultRuntimeOptions::repo("scope_1", "demo", "/repo")),
+        false,
+    )
+    .unwrap();
+
+    assert_eq!(options.home.as_deref(), Some(home.as_path()));
+    assert!(matches!(options.scope, VaultScopeSelection::Global));
+}
+
+#[test]
+fn vault_scope_id_validator_rejects_path_and_length_boundaries() {
+    assert!(crate::command::is_valid_vault_scope_id("abc_123-XYZ"));
+    assert!(!crate::command::is_valid_vault_scope_id(""));
+    assert!(!crate::command::is_valid_vault_scope_id("../shared"));
+    assert!(!crate::command::is_valid_vault_scope_id("scope/child"));
+    assert!(!crate::command::is_valid_vault_scope_id(&"a".repeat(129)));
+}
+
+#[test]
+fn explicit_vault_home_bypasses_repo_context_loading() {
+    let _env = lock_env();
+    let temp = tempfile::tempdir().unwrap();
+    std::fs::write(
+        temp.path().join(".jig.toml"),
+        r#"[vault]
+scope = "repo"
+"#,
+    )
+    .unwrap();
+    let _cwd = CurrentDirGuard::set(temp.path());
+    let explicit_home = temp.path().join("explicit-vault");
+    let mut command = crate::command::VaultCommand::Status(VaultStatusRequest {
+        vault: VaultRuntimeOptions {
+            home: Some(explicit_home.clone()),
+            ..Default::default()
+        },
+    });
+
+    apply_repo_vault_scope(&mut command).unwrap();
+
+    let options = vault_options_mut(&mut command);
+    assert_eq!(options.home.as_deref(), Some(explicit_home.as_path()));
+    assert!(matches!(options.scope, VaultScopeSelection::Auto));
+}
+
+#[test]
+fn malformed_repo_vault_config_blocks_status_without_home_override() {
+    let _env = lock_env();
+    let temp = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(temp.path().join(".agent")).unwrap();
+    std::fs::write(
+        temp.path().join(".jig.toml"),
+        r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.2.0-beta.1"
+bootstrap_command = "cargo fetch"
+rust_fmt_check_command = "cargo fmt --all -- --check"
+rust_clippy_command = "cargo clippy --workspace --all-targets --locked -- -D warnings"
+rust_test_command = "cargo test --workspace"
+rust_test_locked_command = "cargo test --workspace --locked"
+web_package_manager = "bun"
+frontend_apps = []
+
+[vault]
+scope = "repo"
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        temp.path().join(".agent/jig-contract.json"),
+        json!({
+            "contract_version": 3,
+            "tool_namespace": "jig",
+            "jig_version": "0.2.0-beta.1",
+            "required_commands": ["bootstrap_command"],
+            "tools": []
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let _cwd = CurrentDirGuard::set(temp.path());
+    let mut command = crate::command::VaultCommand::Status(VaultStatusRequest {
+        vault: VaultRuntimeOptions::default(),
+    });
+
+    let error = apply_repo_vault_scope(&mut command).unwrap_err();
+    let error = format!("{error:#}");
+
+    assert!(
+        error.contains("[vault].scope_id is required"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
 fn bootstrap_vault_capture_is_deferred_only_for_interactive_prompts() {
     assert!(!should_pre_capture_bootstrap_vault(
-        true, false, false, true
+        true, false, false, false, true
     ));
-    assert!(should_pre_capture_bootstrap_vault(true, true, false, true));
-    assert!(should_pre_capture_bootstrap_vault(true, false, true, true));
     assert!(should_pre_capture_bootstrap_vault(
-        true, false, false, false
+        true, true, false, false, true
+    ));
+    assert!(should_pre_capture_bootstrap_vault(
+        true, false, true, false, true
+    ));
+    assert!(should_pre_capture_bootstrap_vault(
+        true, false, false, true, true
+    ));
+    assert!(should_pre_capture_bootstrap_vault(
+        true, false, false, false, false
     ));
     assert!(!should_pre_capture_bootstrap_vault(
-        false, true, true, false
+        false, true, true, true, false
     ));
 }
 
@@ -76,6 +228,123 @@ fn no_input_bootstrap_vault_requires_env_passphrase() {
 
     assert!(error.contains("JIG_VAULT_PASSPHRASE is required"));
     assert!(error.contains("--no-vault"));
+}
+
+#[test]
+fn pre_capture_rejects_short_new_vault_passphrase() {
+    let _env = lock_env();
+    let _passphrase = EnvVarGuard::set("JIG_VAULT_PASSPHRASE", "short");
+
+    let error = runtime::capture_new_vault_passphrase()
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("at least 12 bytes"));
+}
+
+#[test]
+fn ensure_bootstrap_vault_initializes_repo_scope_and_reports_created() {
+    let _env = lock_env();
+    let temp = tempfile::tempdir().unwrap();
+    let repo = temp.path().join("repo");
+    std::fs::create_dir_all(repo.join(".agent")).unwrap();
+    std::fs::write(
+        repo.join(".jig.toml"),
+        r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.2.0-beta.1"
+bootstrap_command = "cargo fetch"
+rust_fmt_check_command = "cargo fmt --all -- --check"
+rust_clippy_command = "cargo clippy --workspace --all-targets --locked -- -D warnings"
+rust_test_command = "cargo test --workspace"
+rust_test_locked_command = "cargo test --workspace --locked"
+web_package_manager = "bun"
+frontend_apps = []
+
+[vault]
+scope = "repo"
+scope_id = "scope_123"
+allow_global = false
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        repo.join(".agent/jig-contract.json"),
+        json!({
+            "contract_version": 3,
+            "tool_namespace": "jig",
+            "jig_version": "0.2.0-beta.1",
+            "required_commands": ["bootstrap_command"],
+            "tools": []
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let _vault_home = EnvVarGuard::set("JIG_VAULT_HOME", temp.path().join("vault-base"));
+    let _passphrase = EnvVarGuard::set("JIG_VAULT_PASSPHRASE", "correct horse battery staple");
+    let bootstrap = json!({ "destination": repo.display().to_string() });
+
+    let output = ensure_bootstrap_vault(&bootstrap, true, true).unwrap();
+
+    assert_eq!(output["requested"], true);
+    assert_eq!(output["initialized"], true);
+    assert_eq!(output["created"], true);
+    assert_eq!(output["vault_scope"], "repo");
+    assert_eq!(output["vault_scope_id"], "scope_123");
+}
+
+#[test]
+fn ensure_bootstrap_vault_late_passphrase_error_mentions_written_repo_files() {
+    let _env = lock_env();
+    let temp = tempfile::tempdir().unwrap();
+    let repo = temp.path().join("repo");
+    std::fs::create_dir_all(repo.join(".agent")).unwrap();
+    std::fs::write(
+        repo.join(".jig.toml"),
+        r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.2.0-beta.1"
+bootstrap_command = "cargo fetch"
+rust_fmt_check_command = "cargo fmt --all -- --check"
+rust_clippy_command = "cargo clippy --workspace --all-targets --locked -- -D warnings"
+rust_test_command = "cargo test --workspace"
+rust_test_locked_command = "cargo test --workspace --locked"
+web_package_manager = "bun"
+frontend_apps = []
+
+[vault]
+scope = "repo"
+scope_id = "scope_123"
+allow_global = false
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        repo.join(".agent/jig-contract.json"),
+        json!({
+            "contract_version": 3,
+            "tool_namespace": "jig",
+            "jig_version": "0.2.0-beta.1",
+            "required_commands": ["bootstrap_command"],
+            "tools": []
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let _vault_home = EnvVarGuard::set("JIG_VAULT_HOME", temp.path().join("vault-base"));
+    let _passphrase = EnvVarGuard::set("JIG_VAULT_PASSPHRASE", "short");
+    let bootstrap = json!({ "destination": repo.display().to_string() });
+
+    let error = ensure_bootstrap_vault(&bootstrap, true, true)
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("repo files were written"));
+    assert!(error.contains("rerun `jig vault init`"));
 }
 
 #[test]

@@ -112,16 +112,25 @@ impl FrontendScaffold {
             .collect()
     }
 
-    pub(super) fn render_files(&self, package_manager: &str) -> Result<Vec<ScaffoldFile>> {
-        self.render_template_files(package_manager)
+    pub(super) fn render_files(
+        &self,
+        package_manager: &str,
+        repo_name: &str,
+    ) -> Result<Vec<ScaffoldFile>> {
+        self.render_template_files(package_manager, repo_name)
     }
 
-    fn render_template_files(&self, package_manager: &str) -> Result<Vec<ScaffoldFile>> {
+    fn render_template_files(
+        &self,
+        package_manager: &str,
+        repo_name: &str,
+    ) -> Result<Vec<ScaffoldFile>> {
         let template_files = self.template_files();
         ensure_scaffold_template_paths(template_files)?;
         let title = title_case(&self.name);
         let context = json!({
             "package_name": self.package_name,
+            "repo_name": repo_name,
             "title": title,
             "subtitle": if self.kind == ScaffoldFrontendKind::Admin {
                 "Operational workspace"

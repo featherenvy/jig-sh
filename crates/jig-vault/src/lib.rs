@@ -18,4 +18,7 @@ pub use redact::Redactor;
 pub use run::RunOutput;
 pub use secret::{SecretBytes, SecretBytesCapacityError};
 pub use types::{EnvVarName, SecretName};
-pub use vault::{MAX_SECRET_VALUE_LEN, SecretRecord, Vault, VaultStatus};
+pub use vault::{
+    MAX_SECRET_VALUE_LEN, MIN_MASTER_PASSPHRASE_LEN, SecretRecord, Vault, VaultStatus,
+    validate_new_vault_passphrase,
+};

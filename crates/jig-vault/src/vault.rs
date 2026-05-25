@@ -29,7 +29,7 @@ use crate::types::SecretName;
 use crate::{Result, SecretBytes, VaultError, VaultErrorKind};
 
 pub const MAX_SECRET_VALUE_LEN: usize = 1024 * 1024;
-const MIN_MASTER_PASSPHRASE_LEN: usize = 12;
+pub const MIN_MASTER_PASSPHRASE_LEN: usize = 12;
 
 #[derive(Clone, Debug)]
 pub struct Vault {
@@ -202,7 +202,7 @@ impl VaultStore {
                 ),
             ));
         }
-        validate_new_vault_passphrase(passphrase)?;
+        validate_new_vault_passphrase_inner(passphrase)?;
 
         let now = now_ms();
         let salt = random_array::<SALT_LEN>()?;
@@ -584,6 +584,15 @@ impl VaultStore {
     }
 }
 
+pub fn validate_new_vault_passphrase(passphrase: &SecretString) -> Result<()> {
+    validate_new_vault_passphrase_inner(passphrase).map_err(|error| {
+        VaultError::new(
+            classified_kind(&error).unwrap_or(VaultErrorKind::InvalidInput),
+            error.to_string(),
+        )
+    })
+}
+
 impl OpenVault {
     pub(crate) fn list(&self) -> Vec<SecretRecord> {
         self.state
@@ -829,7 +838,7 @@ fn validate_serialized_secret_value_len(name: &SecretName, entry: &SecretEntry) 
     Ok(())
 }
 
-fn validate_new_vault_passphrase(passphrase: &SecretString) -> AnyResult<()> {
+fn validate_new_vault_passphrase_inner(passphrase: &SecretString) -> AnyResult<()> {
     if passphrase.expose_secret().len() < MIN_MASTER_PASSPHRASE_LEN {
         return Err(classified(
             VaultErrorKind::InvalidInput,

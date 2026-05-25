@@ -12,9 +12,7 @@ use serde_json::{Value, json};
 
 #[cfg(feature = "dev-proxy")]
 use crate::command::{ProxyCommand, ProxyListRequest, ProxyRuntimeOptions};
-use crate::command::{
-    VaultCommand, VaultRepoScope, VaultRuntimeOptions, VaultScopeSelection, VaultStatusRequest,
-};
+use crate::command::{VaultCommand, VaultStatusRequest};
 use crate::context::{RepoContext, find_repo_root_from_or_env};
 use crate::tool_defs::tool;
 
@@ -125,7 +123,9 @@ pub(crate) fn run() -> Result<Value> {
         }
     }
 
-    checks.push(vault_check(ctx_result.as_ref().ok()));
+    checks.push(vault_check(
+        ctx_result.as_ref().map_err(|error| error.to_string()),
+    ));
 
     Ok(output(
         Some(json!({
@@ -621,11 +621,25 @@ fn proxy_detail(configured: bool, running: bool, output: &Value) -> String {
     }
 }
 
-fn vault_check(ctx: Option<&RepoContext>) -> DoctorCheck {
+fn vault_check(ctx: std::result::Result<&RepoContext, String>) -> DoctorCheck {
+    let ctx = match ctx {
+        Ok(ctx) => ctx,
+        Err(error) => {
+            return check(
+                "vault",
+                "Vault",
+                false,
+                false,
+                "blocked",
+                format!("Skipped until repo context loads successfully: {error}"),
+            )
+            .with_fix("Fix the reported repo context issue, then run `scripts/jig vault status`.");
+        }
+    };
     // Vault status is intentionally a cheap metadata probe and must not prompt
     // for a passphrase; doctor relies on that non-authenticated boundary.
     match crate::runtime::dispatch_vault(VaultCommand::Status(VaultStatusRequest {
-        vault: vault_options_for_context(ctx),
+        vault: crate::runtime::vault_options_for_context(Some(ctx)),
     })) {
         Ok(output) => {
             let initialized = output["exists"].as_bool().unwrap_or(false);
@@ -646,22 +660,6 @@ fn vault_check(ctx: Option<&RepoContext>) -> DoctorCheck {
         }
         Err(error) => check("vault", "Vault", false, false, "error", error.to_string())
             .with_fix("Run `scripts/jig vault status` for vault diagnostics."),
-    }
-}
-
-fn vault_options_for_context(ctx: Option<&RepoContext>) -> VaultRuntimeOptions {
-    let Some(ctx) = ctx else {
-        return VaultRuntimeOptions::default();
-    };
-    let Some(scope_id) = ctx.vault_config().repo_scope_id() else {
-        return VaultRuntimeOptions::default();
-    };
-    VaultRuntimeOptions {
-        home: None,
-        scope: VaultScopeSelection::Repo(VaultRepoScope {
-            scope_id: scope_id.to_string(),
-            repo_name: ctx.repo_name().to_string(),
-        }),
     }
 }
 
@@ -1341,6 +1339,7 @@ mod tests {
         assert_eq!(check_by_id(&output, "required_tools")["status"], "blocked");
         assert_eq!(check_by_id(&output, "agent_skills")["status"], "blocked");
         assert_eq!(check_by_id(&output, "proxy")["status"], "blocked");
+        assert_eq!(check_by_id(&output, "vault")["status"], "blocked");
         for id in ["contract", "required_tools", "agent_skills", "proxy"] {
             assert!(
                 check_by_id(&output, id)["detail"]
@@ -1349,6 +1348,12 @@ mod tests {
                     .contains(".jig.toml")
             );
         }
+        assert!(
+            check_by_id(&output, "vault")["detail"]
+                .as_str()
+                .unwrap()
+                .contains("repo context")
+        );
         assert!(output["next_step"].as_str().unwrap().contains(".jig.toml"));
     }
 

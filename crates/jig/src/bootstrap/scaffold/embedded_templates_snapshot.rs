@@ -197,9 +197,27 @@ const server =
         },
       }
     : {};
+const apiOrigin =
+  process.env.API_ORIGIN ??
+  process.env.JIG_DEV_API_ORIGIN ??
+  "http://api.<<[ repo_name ]>>.localhost:1355";
 
 export default defineConfig({
-  server,
+  server: {
+    ...server,
+    proxy: apiOrigin
+      ? {
+          "/api": {
+            target: apiOrigin,
+            changeOrigin: true,
+          },
+          "/health": {
+            target: apiOrigin,
+            changeOrigin: true,
+          },
+        }
+      : undefined,
+  },
   plugins: [react()],
   test: {
     environment: "jsdom",
@@ -271,14 +289,17 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
-    let bind_addr = std::env::var("BIND_ADDR").unwrap_or_else(|_| "127.0.0.1:3000".into());
+    let bind_addr = std::env::var("BIND_ADDR").unwrap_or_else(|_| "127.0.0.1:0".into());
     let addr: SocketAddr = bind_addr
         .parse()
         .with_context(|| format!("Failed to parse BIND_ADDR '{bind_addr}' as a socket address"))?;
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .with_context(|| format!("Failed to bind API listener to {addr}"))?;
-    tracing::info!(%addr, "listening");
+    let bound_addr = listener
+        .local_addr()
+        .context("Failed to read API listener address after bind")?;
+    tracing::info!(%bound_addr, "listening");
 
     axum::serve(
         listener,

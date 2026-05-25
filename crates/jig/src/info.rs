@@ -5,9 +5,7 @@ use std::path::Path;
 use anyhow::Result;
 use serde_json::{Value, json};
 
-use crate::command::{
-    VaultCommand, VaultRepoScope, VaultRuntimeOptions, VaultScopeSelection, VaultStatusRequest,
-};
+use crate::command::{VaultCommand, VaultStatusRequest};
 use crate::context::{DevAppConfig, RepoContext, WorkGate};
 
 const COMMAND: &str = "info";
@@ -149,7 +147,7 @@ struct VaultCapability {
 
 fn vault_capability(ctx: &RepoContext) -> VaultCapability {
     let command = VaultCommand::Status(VaultStatusRequest {
-        vault: vault_options_for_context(ctx),
+        vault: crate::runtime::vault_options_for_context(Some(ctx)),
     });
     match crate::runtime::dispatch_vault(command) {
         Ok(output) => VaultCapability {
@@ -168,19 +166,6 @@ fn vault_capability(ctx: &RepoContext) -> VaultCapability {
             scope_id: None,
             error: Some(format!("{error:#}")),
         },
-    }
-}
-
-fn vault_options_for_context(ctx: &RepoContext) -> VaultRuntimeOptions {
-    let Some(scope_id) = ctx.vault_config().repo_scope_id() else {
-        return VaultRuntimeOptions::default();
-    };
-    VaultRuntimeOptions {
-        home: None,
-        scope: VaultScopeSelection::Repo(VaultRepoScope {
-            scope_id: scope_id.to_string(),
-            repo_name: ctx.repo_name().to_string(),
-        }),
     }
 }
 

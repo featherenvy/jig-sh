@@ -137,6 +137,23 @@ pub(crate) struct VaultRuntimeOptions {
     pub(crate) scope: VaultScopeSelection,
 }
 
+impl VaultRuntimeOptions {
+    pub(crate) fn repo(
+        scope_id: impl Into<String>,
+        repo_name: impl Into<String>,
+        repo_root: impl Into<PathBuf>,
+    ) -> Self {
+        Self {
+            home: None,
+            scope: VaultScopeSelection::Repo(VaultRepoScope {
+                scope_id: scope_id.into(),
+                repo_name: repo_name.into(),
+                repo_root: repo_root.into(),
+            }),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub(crate) enum VaultScopeSelection {
     #[default]
@@ -149,6 +166,7 @@ pub(crate) enum VaultScopeSelection {
 pub(crate) struct VaultRepoScope {
     pub(crate) scope_id: String,
     pub(crate) repo_name: String,
+    pub(crate) repo_root: PathBuf,
 }
 
 pub(crate) fn is_valid_vault_scope_id(scope_id: &str) -> bool {

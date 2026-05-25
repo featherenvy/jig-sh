@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::Args;
 
-use super::{FrontendApp, parse_frontend_app};
+use super::{DevApp, FrontendApp, parse_frontend_app};
 
 #[derive(Args, Clone, Debug, Default)]
 pub struct AnswerOpts {
@@ -152,4 +152,6 @@ pub struct AnswerOpts {
         long_help = "Frontend CI app as name:dir:coverage_threshold[:kind]. Kind defaults to vite. Example: --frontend-app web:web:80:vite. package.json must expose lint, typecheck, build:bundle, and test:coverage; may be repeated."
     )]
     pub frontend_apps: Vec<FrontendApp>,
+    #[arg(skip)]
+    pub dev_apps: Vec<DevApp>,
 }

@@ -517,6 +517,95 @@ fn dev_table_keeps_header_for_single_app() {
 }
 
 #[test]
+fn dev_app_environment_exports_assigned_app_origins() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = StateStore::resolve(Some(temp.path().to_path_buf())).unwrap();
+    let api = AppRunSpec::new(
+        "api",
+        temp.path().to_path_buf(),
+        CommandSpec::Shell("cargo run -p demo-api".into()),
+        "api.demo.localhost",
+    )
+    .with_proxy(false);
+    let web = AppRunSpec::new(
+        "web-app",
+        temp.path().to_path_buf(),
+        CommandSpec::Argv(vec!["vite".into()]),
+        "web-app.demo.localhost",
+    )
+    .with_kind(AppKind::Vite);
+
+    let env = dev_app_environment(
+        [(&api, 41001), (&web, 41002)],
+        &ProxySettings::default(),
+        &store,
+    )
+    .unwrap();
+
+    assert!(env.contains(&("JIG_DEV_API_PORT".into(), "41001".into())));
+    assert!(env.contains(&("JIG_DEV_API_ORIGIN".into(), "http://127.0.0.1:41001".into())));
+    assert!(env.contains(&("JIG_DEV_WEB_APP_PORT".into(), "41002".into())));
+    assert!(env.contains(&(
+        "JIG_DEV_WEB_APP_ORIGIN".into(),
+        "http://web-app.demo.localhost:1355".into()
+    )));
+}
+
+#[test]
+fn dev_app_environment_rejects_duplicate_env_prefixes() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = StateStore::resolve(Some(temp.path().to_path_buf())).unwrap();
+    let first = AppRunSpec::new(
+        "web-app",
+        temp.path().to_path_buf(),
+        CommandSpec::Argv(vec!["vite".into()]),
+        "web-app.demo.localhost",
+    )
+    .with_proxy(false);
+    let second = AppRunSpec::new(
+        "web_app",
+        temp.path().to_path_buf(),
+        CommandSpec::Argv(vec!["vite".into()]),
+        "web-app.demo.localhost",
+    )
+    .with_proxy(false);
+
+    let error = dev_app_environment(
+        [(&first, 41001), (&second, 41002)],
+        &ProxySettings::default(),
+        &store,
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("share derived environment prefix JIG_DEV_WEB_APP"));
+}
+
+#[test]
+fn proxied_app_origin_prefers_https_port_without_http_fallback() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = StateStore::resolve(Some(temp.path().to_path_buf())).unwrap();
+    store.write_https_port(1443).unwrap();
+    fs::write(store.http_port_path(), "not-a-port").unwrap();
+    let settings = ProxySettings {
+        https: true,
+        ..ProxySettings::default()
+    };
+    let spec = AppRunSpec::new(
+        "web",
+        temp.path().to_path_buf(),
+        CommandSpec::Argv(vec!["vite".into()]),
+        "web.demo.localhost",
+    );
+
+    let origin = app_origin(&spec, &settings, 41002, &store).unwrap();
+    let display = app_display(&spec, &settings, 41002, 12345, &store).unwrap();
+
+    assert_eq!(origin, "https://web.demo.localhost:1443");
+    assert_eq!(display.url, "https://web.demo.localhost:1443");
+}
+
+#[test]
 fn open_proxy_log_rotates_existing_large_log() {
     let temp = tempfile::tempdir().unwrap();
     let store = StateStore::resolve(Some(temp.path().to_path_buf())).unwrap();
@@ -583,7 +672,7 @@ fn spawn_child_errors_preserve_io_source() {
     };
     let argv = ["jig-dev-proxy-definitely-missing-test-command".to_string()];
 
-    let error = spawn_child(&spec, &argv, 4321, &settings).unwrap_err();
+    let error = spawn_child(&spec, &argv, 4321, &settings, &[]).unwrap_err();
 
     assert!(error.to_string().contains("executable was not found"));
     assert!(
