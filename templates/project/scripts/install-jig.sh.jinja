@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 ANSWERS_FILE="$ROOT_DIR/.jig.toml"
 
 read_field() {
-  python3 - "$ANSWERS_FILE" "$1" <<'PY'
+  python3 -c '
 import ast
 import pathlib
 import re
@@ -45,7 +45,7 @@ def strip_inline_comment(value):
             if char == quote:
                 quote = None
             continue
-        if char in {"'", '"'}:
+        if char in {chr(39), chr(34)}:
             quote = char
             continue
         if char == "#":
@@ -65,7 +65,7 @@ for line in text.splitlines():
         break
 else:
     print("")
-PY
+' "$ANSWERS_FILE" "$1"
 }
 
 JIG_VERSION="$(read_field jig_version)"
@@ -259,12 +259,12 @@ resolve_executable_path() {
     return
   fi
   if command -v python3 >/dev/null 2>&1; then
-    python3 - "$input" <<'PY'
+    python3 -c '
 import os
 import sys
 
 print(os.path.realpath(sys.argv[1]))
-PY
+' "$input"
     return
   fi
 

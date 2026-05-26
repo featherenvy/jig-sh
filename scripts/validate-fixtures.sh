@@ -15,6 +15,15 @@ source "$ROOT_DIR/scripts/fixtures/stub-repos.sh"
 source "$ROOT_DIR/scripts/fixtures/rendered-repos.sh"
 source "$ROOT_DIR/scripts/fixtures/source-normalization.sh"
 
+assert_posix_launcher() {
+  local launcher="$1"
+  sh -n "$launcher"
+  if grep -Eq 'BASH_SOURCE|pipefail|(^|[[:space:]])\[\[|^[[:space:]]*local[[:space:]]|\+=|<<EOF' "$launcher"; then
+    echo "$launcher contains Bash-only launcher syntax." >&2
+    exit 1
+  fi
+}
+
 BACKEND_DIR="$TMP_DIR/backend-only"
 FULL_STACK_DIR="$TMP_DIR/full-stack"
 TOOLING_ONLY_DIR="$TMP_DIR/tooling-only"
@@ -28,6 +37,8 @@ for answer_name in backend-only.toml full-stack.toml tooling-only.toml; do
   fi
 done
 
+assert_posix_launcher "$ROOT_DIR/scripts/jig"
+
 create_template_snapshot_repo "$TEMPLATE_SNAPSHOT"
 mkdir -p "$EXAMPLE_SMOKE_DIR"
 for answers_file in "$ROOT_DIR"/examples/*.toml; do
@@ -35,11 +46,16 @@ for answers_file in "$ROOT_DIR"/examples/*.toml; do
   render_fixture_from_template "$TEMPLATE_SNAPSHOT" "$answers_file" "$EXAMPLE_SMOKE_DIR/$answer_name"
   test -f "$EXAMPLE_SMOKE_DIR/$answer_name/.jig.toml"
   test -f "$EXAMPLE_SMOKE_DIR/$answer_name/scripts/jig"
+  assert_posix_launcher "$EXAMPLE_SMOKE_DIR/$answer_name/scripts/jig"
 done
 
 render_fixture_from_template "$TEMPLATE_SNAPSHOT" "$ROOT_DIR/tests/fixtures/backend-only.toml" "$BACKEND_DIR"
 render_fixture_from_template "$TEMPLATE_SNAPSHOT" "$ROOT_DIR/tests/fixtures/full-stack.toml" "$FULL_STACK_DIR"
 render_fixture_from_template "$TEMPLATE_SNAPSHOT" "$ROOT_DIR/tests/fixtures/tooling-only.toml" "$TOOLING_ONLY_DIR"
+
+assert_posix_launcher "$BACKEND_DIR/scripts/jig"
+assert_posix_launcher "$FULL_STACK_DIR/scripts/jig"
+assert_posix_launcher "$TOOLING_ONLY_DIR/scripts/jig"
 
 validate_backend_fixture "$BACKEND_DIR"
 validate_full_stack_fixture "$FULL_STACK_DIR"

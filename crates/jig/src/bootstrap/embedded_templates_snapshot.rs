@@ -1176,7 +1176,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 ANSWERS_FILE="$ROOT_DIR/.jig.toml"
 
 read_field() {
-  python3 - "$ANSWERS_FILE" "$1" <<'PY'
+  python3 -c '
 import ast
 import pathlib
 import re
@@ -1216,7 +1216,7 @@ def strip_inline_comment(value):
             if char == quote:
                 quote = None
             continue
-        if char in {"'", '"'}:
+        if char in {chr(39), chr(34)}:
             quote = char
             continue
         if char == "#":
@@ -1236,7 +1236,7 @@ for line in text.splitlines():
         break
 else:
     print("")
-PY
+' "$ANSWERS_FILE" "$1"
 }
 
 JIG_VERSION="$(read_field jig_version)"
@@ -1430,12 +1430,12 @@ resolve_executable_path() {
     return
   fi
   if command -v python3 >/dev/null 2>&1; then
-    python3 - "$input" <<'PY'
+    python3 -c '
 import os
 import sys
 
 print(os.path.realpath(sys.argv[1]))
-PY
+' "$input"
     return
   fi
 
@@ -1640,22 +1640,22 @@ fi
 
 printf '%s\n' "$BIN_PATH"
 "## },
-    EmbeddedTemplateFile { relative_path: "scripts/jig.jinja", contents: r#"#!/usr/bin/env bash
-set -euo pipefail
+    EmbeddedTemplateFile { relative_path: "scripts/jig.jinja", contents: r#"#!/bin/sh
+set -eu
 
 # Keep launcher behavior synchronized with scripts/jig in the jig-sh source
 # tree; this template may gate source-checkout-only user messages.
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+SCRIPT_DIR="$(dirname "$0")"
+ROOT_DIR="$(CDPATH= cd "$SCRIPT_DIR/.." && pwd -P)"
 INSTALLER="$ROOT_DIR/scripts/install-jig.sh"
 JIG_VERSION="<<[ jig_version ]>>"
 
-if [[ ! -x "$INSTALLER" ]]; then
-  echo "Missing $INSTALLER." >&2
+if [ ! -x "$INSTALLER" ]; then
+  printf '%s\n' "Missing $INSTALLER." >&2
   exit 1
 fi
 
 jig_help_requested_before_separator() {
-  local arg
   for arg in "$@"; do
     case "$arg" in
       --)
@@ -1670,27 +1670,25 @@ jig_help_requested_before_separator() {
 }
 
 binary_version() {
-  local bin_path="$1"
-  "$bin_path" --version 2>/dev/null | awk '{print $2}'
+  "$1" --version 2>/dev/null | awk '{print $2}'
 }
 
 use_matching_binary() {
-  local bin_path="$1"
-  local actual_version
+  candidate_bin="$1"
 
-  [[ -x "$bin_path" ]] || return 1
-  actual_version="$(binary_version "$bin_path" || true)"
-  [[ "$actual_version" == "$JIG_VERSION" ]] || return 1
+  [ -x "$candidate_bin" ] || return 1
+  candidate_version="$(binary_version "$candidate_bin" || true)"
+  [ "$candidate_version" = "$JIG_VERSION" ] || return 1
 
-  printf '%s\n' "$bin_path"
+  printf '%s\n' "$candidate_bin"
 }
 
 is_jig_source_checkout() {
-  [[ -f "$ROOT_DIR/crates/jig/Cargo.toml" && -f "$ROOT_DIR/templates/project/scripts/jig.jinja" ]]
+  [ -f "$ROOT_DIR/crates/jig/Cargo.toml" ] && [ -f "$ROOT_DIR/templates/project/scripts/jig.jinja" ]
 }
 
 default_install_base() {
-  if [[ -d "$ROOT_DIR/.git" ]]; then
+  if [ -d "$ROOT_DIR/.git" ]; then
     printf '%s\n' "$ROOT_DIR/.git/jig-tools"
   else
     # Git worktrees have .git as a file; keep their launcher cache repo-local.
@@ -1699,33 +1697,28 @@ default_install_base() {
 }
 
 resolve_cached_binary() {
-  local install_base
   install_base="$(default_install_base)"
 
-  local candidates=()
-  if is_jig_source_checkout; then
+  if is_jig_source_checkout && use_matching_binary "$ROOT_DIR/target/debug/jig"; then
     # In the jig-sh source checkout, prefer a freshly built dev binary so
     # launcher/help dogfooding exercises the current workspace before a cache.
-    candidates+=("$ROOT_DIR/target/debug/jig")
+    return 0
   fi
-  candidates+=(
-    "$install_base/$JIG_VERSION/bin/jig"
-    "$install_base/$JIG_VERSION-runtime/bin/jig"
-  )
 
-  local candidate
-  for candidate in "${candidates[@]}"; do
-    # use_matching_binary validates the binary-reported version and prints the
-    # selected path on success for the caller's command substitution.
-    if use_matching_binary "$candidate"; then
-      return
-    fi
-  done
+  # use_matching_binary validates the binary-reported version and prints the
+  # selected path on success for the caller's command substitution.
+  if use_matching_binary "$install_base/$JIG_VERSION/bin/jig"; then
+    return 0
+  fi
+  if use_matching_binary "$install_base/$JIG_VERSION-runtime/bin/jig"; then
+    return 0
+  fi
+
   return 1
 }
 
 resolve_help_binary() {
-  if [[ -n "${JIG_DEV_BIN:-}" ]]; then
+  if [ -n "${JIG_DEV_BIN:-}" ]; then
     # Dev mode intentionally lets the installer resolve the requested profile
     # so local binary overrides stay consistent across help and execution.
     "$INSTALLER" --profile runtime
@@ -1742,13 +1735,13 @@ resolve_or_install_help_binary() {
   if bin_path="$(resolve_help_binary)"; then
     version_checked=true
   else
-    echo "Preparing jig $JIG_VERSION for help output; first run may install the repo-local runtime." >&2
+    printf '%s\n' "Preparing jig $JIG_VERSION for help output; first run may install the repo-local runtime." >&2
     bin_path="$("$INSTALLER" --profile runtime)"
   fi
 }
 
 resolve_mcp_binary() {
-  if [[ -n "${JIG_DEV_BIN:-}" ]]; then
+  if [ -n "${JIG_DEV_BIN:-}" ]; then
     "$INSTALLER" --profile mcp
     return
   fi
@@ -1757,24 +1750,23 @@ resolve_mcp_binary() {
     return
   fi
 
-  cat >&2 <<EOF
-No prebuilt jig $JIG_VERSION binary is available for MCP startup.
-Refusing to run cargo install during MCP initialization because it can block the client startup path.
-
-Run a normal Jig command once to populate the cache:
-  scripts/jig check contract
-
+  printf '%s\n' \
+    "No prebuilt jig $JIG_VERSION binary is available for MCP startup." \
+    "Refusing to run cargo install during MCP initialization because it can block the client startup path." \
+    "" \
+    "Run a normal Jig command once to populate the cache:" \
+    "  scripts/jig check contract" \
+    "" >&2
 [% if repo_name == "jig-sh" %]
-For the jig-sh source checkout, you can also build directly:
-  cargo build -p jig-sh --bin jig
+  printf '%s\n' \
+    "For the jig-sh source checkout, you can also build directly:" \
+    "  cargo build -p jig-sh --bin jig" >&2
 [% endif %]
-EOF
   exit 1
 }
 
 # Keep repo-contract, work, and agent commands on stripped builds. MCP startup
 # resolves a prebuilt binary without invoking the installer.
-install_args=(--profile runtime)
 version_checked=false
 case "${1:-}" in
   mcp)
@@ -1787,24 +1779,23 @@ case "${1:-}" in
     if jig_help_requested_before_separator "$@"; then
       resolve_or_install_help_binary
     else
-      install_args=(--profile default)
-      bin_path="$("$INSTALLER" "${install_args[@]}")"
+      bin_path="$("$INSTALLER" --profile default)"
     fi
     ;;
   *)
     if jig_help_requested_before_separator "$@"; then
       resolve_or_install_help_binary
     else
-      bin_path="$("$INSTALLER" "${install_args[@]}")"
+      bin_path="$("$INSTALLER" --profile runtime)"
     fi
     ;;
 esac
 
-if [[ "$version_checked" != true ]]; then
-  actual_version="$("$bin_path" --version 2>/dev/null | awk '{print $2}')"
+if [ "$version_checked" != true ]; then
+  actual_version="$(binary_version "$bin_path" || true)"
 
-  if [[ "$actual_version" != "$JIG_VERSION" ]]; then
-    echo "Expected jig version $JIG_VERSION but resolved $actual_version from $bin_path." >&2
+  if [ "$actual_version" != "$JIG_VERSION" ]; then
+    printf '%s\n' "Expected jig version $JIG_VERSION but resolved $actual_version from $bin_path." >&2
     exit 1
   fi
 fi
