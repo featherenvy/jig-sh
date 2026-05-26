@@ -263,6 +263,14 @@ fn init_accepts_json_after_subcommand() {
 }
 
 #[test]
+fn update_accepts_json_after_subcommand() {
+    let update = Cli::try_parse_from(["jig", "update", "--json"]).unwrap();
+
+    assert!(update.json);
+    assert!(matches!(update.command, CommandKind::Update(_)));
+}
+
+#[test]
 fn init_and_adopt_parse_no_vault() {
     let init = Cli::try_parse_from(["jig", "init", "/tmp/demo", "--no-vault"]).unwrap();
     match init.command {

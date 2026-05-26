@@ -91,7 +91,15 @@ pub(crate) fn run() -> Result<()> {
             }
             Ok(())
         }
-        CommandKind::Update(opts) => print_json(&bootstrap::run_update(opts)?),
+        CommandKind::Update(opts) => {
+            let output = bootstrap::run_update(opts)?;
+            if json_output {
+                print_json(&output)?;
+            } else {
+                print_update_human_summary(&output)?;
+            }
+            Ok(())
+        }
         CommandKind::Mcp => {
             let ctx = RepoContext::load()?;
             mcp::serve(&ctx)
@@ -497,14 +505,16 @@ fn require_vault_child_status_ok(output: &serde_json::Value) -> Result<()> {
 }
 
 fn print_init_human_summary(output: &serde_json::Value) -> Result<()> {
-    let mut stdout = io::stdout().lock();
-    stdout.write_all(format_init_human_summary(output).as_bytes())?;
-    Ok(())
+    print_human_summary(format_init_human_summary(output))
 }
 
 fn print_presets_human_summary(output: &serde_json::Value) -> Result<()> {
+    print_human_summary(format_presets_human_summary(output))
+}
+
+fn print_human_summary(summary: String) -> Result<()> {
     let mut stdout = io::stdout().lock();
-    stdout.write_all(format_presets_human_summary(output).as_bytes())?;
+    stdout.write_all(summary.as_bytes())?;
     Ok(())
 }
 
@@ -659,9 +669,37 @@ pub(super) fn format_init_human_summary(output: &serde_json::Value) -> String {
 }
 
 fn print_adopt_human_summary(output: &serde_json::Value) -> Result<()> {
-    let mut stdout = io::stdout().lock();
-    stdout.write_all(format_adopt_human_summary(output).as_bytes())?;
-    Ok(())
+    print_human_summary(format_adopt_human_summary(output))
+}
+
+fn print_update_human_summary(output: &serde_json::Value) -> Result<()> {
+    print_human_summary(format_update_human_summary(output))
+}
+
+pub(super) fn format_update_human_summary(output: &serde_json::Value) -> String {
+    let mut summary = String::new();
+    summary.push_str("update summary\n");
+    push_summary_field(&mut summary, "mode", output["render_mode"].as_str());
+    push_summary_field(&mut summary, "target", output["destination"].as_str());
+    push_summary_field(&mut summary, "answers", output["answers_file"].as_str());
+
+    let report = &output["render_report"];
+    let created = array_len(&report["files_created"]);
+    let modified = array_len(&report["files_modified"]);
+    let removed = array_len(&report["files_removed"]);
+    let unchanged = array_len(&report["files_unchanged"]);
+    summary.push_str(&format!(
+        "  managed files: {created} created, {modified} modified, {removed} removed, {unchanged} unchanged\n"
+    ));
+
+    if let Some(conflicts) = report["conflicts"].as_array()
+        && !conflicts.is_empty()
+    {
+        push_conflict_summary(&mut summary, "conflicts accepted", conflicts);
+    }
+
+    summary.push_str("  full report: rerun with --json\n");
+    summary
 }
 
 pub(super) fn format_adopt_human_summary(output: &serde_json::Value) -> String {
@@ -704,19 +742,7 @@ pub(super) fn format_adopt_human_summary(output: &serde_json::Value) -> String {
     if let Some(conflicts) = report["conflicts"].as_array()
         && !conflicts.is_empty()
     {
-        summary.push_str(&format!("  conflicts: {}\n", conflicts.len()));
-        for conflict in conflicts.iter().take(10) {
-            if let Some(path) = conflict["path"].as_str() {
-                if let Some(detail) = conflict["detail"].as_str() {
-                    summary.push_str(&format!("    - {path}: {detail}\n"));
-                } else {
-                    summary.push_str(&format!("    - {path}\n"));
-                }
-            }
-        }
-        if conflicts.len() > 10 {
-            summary.push_str(&format!("    - and {} more\n", conflicts.len() - 10));
-        }
+        push_conflict_summary(&mut summary, "conflicts", conflicts);
     }
 
     if let Some(warnings) = output["detection_report"]["warnings"].as_array()
@@ -744,6 +770,23 @@ pub(super) fn format_adopt_human_summary(output: &serde_json::Value) -> String {
         }
     }
     summary
+}
+
+fn push_conflict_summary(summary: &mut String, label: &str, conflicts: &[serde_json::Value]) {
+    summary.push_str(&format!("  {label}: {}\n", conflicts.len()));
+    for conflict in conflicts.iter().take(10) {
+        let Some(path) = conflict["path"].as_str() else {
+            continue;
+        };
+        if let Some(detail) = conflict["detail"].as_str() {
+            summary.push_str(&format!("    - {path}: {detail}\n"));
+        } else {
+            summary.push_str(&format!("    - {path}\n"));
+        }
+    }
+    if conflicts.len() > 10 {
+        summary.push_str(&format!("    - and {} more\n", conflicts.len() - 10));
+    }
 }
 
 fn push_vault_summary(summary: &mut String, vault: &serde_json::Value) {

@@ -449,6 +449,29 @@ fn adopt_human_summary_includes_notes() {
 }
 
 #[test]
+fn update_human_summary_reports_managed_file_counts() {
+    let summary = format_update_human_summary(&json!({
+        "render_mode": "update",
+        "destination": "/tmp/repo",
+        "answers_file": ".jig.toml",
+        "render_report": {
+            "files_created": ["scripts/new-helper.sh"],
+            "files_modified": ["scripts/jig", "scripts/install-jig.sh"],
+            "files_removed": [],
+            "files_unchanged": [".mcp.json"],
+            "conflicts": []
+        }
+    }));
+
+    assert!(summary.contains("update summary"));
+    assert!(summary.contains("mode: update"));
+    assert!(summary.contains("target: /tmp/repo"));
+    assert!(summary.contains("answers: .jig.toml"));
+    assert!(summary.contains("managed files: 1 created, 2 modified, 0 removed, 1 unchanged"));
+    assert!(summary.contains("full report: rerun with --json"));
+}
+
+#[test]
 fn vault_run_summary_calls_out_truncated_output() {
     let summary = format_vault_run_summary(&json!({
         "result": {
