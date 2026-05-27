@@ -141,6 +141,97 @@ fn parses_hidden_sqlx_todo_generator_for_compatibility() {
 }
 
 #[test]
+fn parses_prompt_registry_commands() {
+    let get = Cli::try_parse_from([
+        "jig",
+        "prompt",
+        "get",
+        "repo:review-loop",
+        "--var",
+        "base=main",
+    ])
+    .unwrap();
+    match get.command {
+        CommandKind::Prompt(PromptCommand::Get(opts)) => {
+            assert_eq!(opts.name, "repo:review-loop");
+            assert_eq!(opts.vars, vec!["base=main"]);
+        }
+        other => panic!("expected prompt get command, got {other:?}"),
+    }
+
+    let add = Cli::try_parse_from([
+        "jig",
+        "prompt",
+        "add",
+        "comprehensive-review-loop",
+        "body",
+        "--description",
+        "Review loop",
+        "--tag",
+        "review",
+    ])
+    .unwrap();
+    match add.command {
+        CommandKind::Prompt(PromptCommand::Add(opts)) => {
+            assert_eq!(opts.name, "comprehensive-review-loop");
+            assert_eq!(opts.body.as_deref(), Some("body"));
+            assert_eq!(opts.description.as_deref(), Some("Review loop"));
+            assert_eq!(opts.tags, vec!["review"]);
+        }
+        other => panic!("expected prompt add command, got {other:?}"),
+    }
+
+    let list_without_packs = Cli::try_parse_from(["jig", "prompt", "list", "--no-packs"]).unwrap();
+    match list_without_packs.command {
+        CommandKind::Prompt(PromptCommand::List(opts)) => {
+            assert!(opts.no_packs);
+        }
+        other => panic!("expected prompt list command, got {other:?}"),
+    }
+}
+
+#[test]
+fn prompt_raw_conflicts_with_template_vars() {
+    let error = Cli::try_parse_from([
+        "jig",
+        "prompt",
+        "get",
+        "literal",
+        "--raw",
+        "--var",
+        "name=value",
+    ])
+    .unwrap_err();
+
+    assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+
+    let error = Cli::try_parse_from([
+        "jig",
+        "prompt",
+        "copy",
+        "literal",
+        "--raw",
+        "--var",
+        "name=value",
+    ])
+    .unwrap_err();
+
+    assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+}
+
+#[test]
+fn parses_prompt_get_with_global_json_for_exact_output_contract() {
+    let cli = Cli::try_parse_from(["jig", "--json", "prompt", "get", "review"]).unwrap();
+    assert!(cli.json);
+    match cli.command {
+        CommandKind::Prompt(PromptCommand::Get(opts)) => {
+            assert_eq!(opts.name, "review");
+        }
+        other => panic!("expected prompt get command, got {other:?}"),
+    }
+}
+
+#[test]
 fn adopt_human_summary_includes_reviewable_next_steps() {
     let output = serde_json::json!({
         "render_mode": "preview",

@@ -213,6 +213,7 @@ pub(crate) fn run() -> Result<()> {
             }
             require_json_ok(true, &output)
         }
+        CommandKind::Prompt(command) => run_prompt_command(command, json_output),
         CommandKind::Agent(command) => {
             let require_ok = agent_command_reports_failure_with_ok(&command);
             let human_output = agent_human_output_requested(&command);
@@ -235,6 +236,97 @@ pub(crate) fn run() -> Result<()> {
             false,
             None,
         ),
+    }
+}
+
+fn run_prompt_command(command: PromptCommand, json_output: bool) -> Result<()> {
+    let repo = RepoContext::load_optional()?;
+    let registry =
+        crate::prompt_registry::PromptRegistry::from_env(repo.as_ref().map(|ctx| ctx.root()))?;
+    match command {
+        PromptCommand::Get(opts) => {
+            let body = registry.render_prompt(crate::prompt_registry::PromptRenderRequest {
+                name: opts.name,
+                vars: opts.vars,
+                raw: opts.raw,
+            })?;
+            // `prompt get` is the raw prompt primitive: stdout is exactly the
+            // rendered body even when the global --json flag is present.
+            let mut stdout = io::stdout().lock();
+            stdout.write_all(body.as_bytes())?;
+            stdout.flush()?;
+            Ok(())
+        }
+        PromptCommand::Copy(opts) => print_prompt_output(
+            registry.copy_prompt(crate::prompt_registry::PromptRenderRequest {
+                name: opts.name,
+                vars: opts.vars,
+                raw: opts.raw,
+            })?,
+            json_output,
+        ),
+        PromptCommand::Add(opts) => print_prompt_output(
+            registry.add_prompt(crate::prompt_registry::PromptAddRequest {
+                name: opts.name,
+                body: opts.body,
+                file: opts.file,
+                description: opts.description,
+                tags: opts.tags,
+            })?,
+            json_output,
+        ),
+        PromptCommand::Edit(opts) => {
+            print_prompt_output(registry.edit_prompt(&opts.name)?, json_output)
+        }
+        PromptCommand::Remove(opts) => {
+            print_prompt_output(registry.remove_prompt(&opts.name)?, json_output)
+        }
+        PromptCommand::List(opts) => {
+            print_prompt_output(registry.list_prompts(!opts.no_packs)?, json_output)
+        }
+        PromptCommand::Search(opts) => print_prompt_output(
+            registry.search_prompts(&opts.query, opts.body)?,
+            json_output,
+        ),
+        PromptCommand::Export(opts) => {
+            let archive = registry.export_prompts()?;
+            if let Some(output) = opts.output {
+                let text = serde_json::to_string_pretty(&archive)?;
+                crate::prompt_registry::write_bytes_atomic(
+                    &output,
+                    format!("{text}\n").as_bytes(),
+                )?;
+                let result = json!({
+                    "ok": true,
+                    "command": "prompt export",
+                    "output": output,
+                    "prompt_count": archive["prompts"].as_array().map(Vec::len).unwrap_or(0),
+                });
+                print_prompt_output(result, json_output)
+            } else if json_output {
+                print_json(&json!({
+                    "ok": true,
+                    "command": "prompt export",
+                    "prompt_count": archive["prompts"].as_array().map(Vec::len).unwrap_or(0),
+                    "archive": archive,
+                }))
+            } else {
+                // Without --output the archive itself is the requested artifact.
+                print_json(&archive)
+            }
+        }
+        PromptCommand::Import(opts) => {
+            print_prompt_output(registry.import_prompts(&opts.file)?, json_output)
+        }
+    }
+}
+
+fn print_prompt_output(output: serde_json::Value, json_output: bool) -> Result<()> {
+    if json_output {
+        print_json(&output)
+    } else {
+        crate::prompt_registry::print_prompt_warnings(&output);
+        print_human_summary(crate::prompt_registry::format_prompt_human_output(&output)?)
     }
 }
 

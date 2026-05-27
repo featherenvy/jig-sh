@@ -8,6 +8,7 @@ use crate::{bootstrap, context::RepoContext, doctor, info, mcp, runtime, tool_de
 
 mod agent;
 mod check;
+mod prompt;
 mod proxy;
 mod state;
 mod vault;
@@ -17,6 +18,7 @@ mod work;
 pub(crate) use agent::AgentDoctorOpts;
 pub(crate) use agent::{AgentBootstrapOpts, AgentCommand};
 pub(crate) use check::{CheckCommand, CheckMigrationImmutabilityOpts, CheckRustFileLocOpts};
+pub(crate) use prompt::PromptCommand;
 pub(crate) use proxy::{
     DevOpts, ProxyAliasOpts, ProxyCertCommand, ProxyCertGenerateOpts, ProxyCertRuntimeOpts,
     ProxyCertTrustOpts, ProxyCertUntrustOpts, ProxyCommand, ProxyListOpts, ProxyPruneOpts,
@@ -176,6 +178,9 @@ pub(crate) enum CommandKind {
         after_help = VAULT_AFTER_HELP
     )]
     Vault(VaultCommand),
+    /// Manage user, repo, and prompt-pack prompt libraries.
+    #[command(name = "prompt", subcommand)]
+    Prompt(PromptCommand),
     /// Inspect or bootstrap local agent tooling.
     #[command(
         name = tool_defs::cli_command::AGENT,

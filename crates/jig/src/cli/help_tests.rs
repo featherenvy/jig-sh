@@ -41,6 +41,7 @@ fn top_level_help_describes_common_commands() {
     assert_help_contains(&help, "Summarize repo Jig configuration");
     assert_help_contains(&help, "Manage structured work plans");
     assert_help_contains(&help, "Inspect or bootstrap local agent tooling");
+    assert_help_contains(&help, "Manage user, repo, and prompt-pack prompt libraries");
     assert_help_omits(&help, "generate-sqlx-unchecked-queries-todo");
 }
 
@@ -157,6 +158,26 @@ fn agent_help_includes_examples() {
     let agent_help = rendered_help(&["agent"]);
     assert_help_contains(&agent_help, "jig agent doctor");
     assert_help_contains(&agent_help, "jig agent bootstrap");
+}
+
+#[test]
+fn prompt_help_includes_registry_examples() {
+    let prompt_help = rendered_help(&["prompt"]);
+    assert_help_contains(&prompt_help, "get");
+    assert_help_contains(
+        &prompt_help,
+        "Print a rendered prompt body and nothing else",
+    );
+
+    let prompt_get_help = rendered_help(&["prompt", "get"]);
+    assert_help_contains(&prompt_get_help, "jig prompt get comprehensive-review-loop");
+    assert_help_contains(&prompt_get_help, "--var");
+
+    let prompt_export_help = rendered_help(&["prompt", "export"]);
+    assert_help_contains(&prompt_export_help, "--output");
+
+    let prompt_list_help = rendered_help(&["prompt", "list"]);
+    assert_help_contains(&prompt_list_help, "--no-packs");
 }
 
 #[test]
