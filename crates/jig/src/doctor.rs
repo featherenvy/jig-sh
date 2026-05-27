@@ -172,20 +172,27 @@ pub(crate) fn format_summary(value: &Value) -> String {
         }
     }
 
-    match value["next_step"].as_str() {
-        Some(step) => lines.push(format!("Next step: {step}")),
-        None => lines.push("Next step: none".into()),
+    match summary_step(value, "next_required_step", true) {
+        Some(step) => lines.push(format!("Next required step: {step}")),
+        None => lines.push("Next required step: none".into()),
+    }
+    match summary_step(value, "optional_setup", false) {
+        Some(step) => lines.push(format!("Optional setup: {}", optional_setup_label(step))),
+        None => lines.push("Optional setup: none".into()),
     }
     lines.join("\n")
 }
 
 fn output(repo: Option<Value>, checks: Vec<DoctorCheck>) -> Value {
     let required_ok = checks.iter().all(|check| !check.required || check.ok);
-    let next_issue = checks
-        .iter()
-        .find(|check| check.required && !check.ok)
-        .or_else(|| checks.iter().find(|check| !check.ok));
+    let next_required_issue = checks.iter().find(|check| check.required && !check.ok);
+    let next_optional_issue = required_ok
+        .then(|| checks.iter().find(|check| !check.required && !check.ok))
+        .flatten();
+    let next_issue = next_required_issue.or(next_optional_issue);
     let next_step = next_issue.and_then(|check| check.fix.clone());
+    let next_required_step = next_required_issue.and_then(|check| check.fix.clone());
+    let optional_setup = next_optional_issue.and_then(|check| check.fix.clone());
     let next_issue = next_issue.map(|check| {
         json!({
             "id": &check.id,
@@ -203,8 +210,54 @@ fn output(repo: Option<Value>, checks: Vec<DoctorCheck>) -> Value {
         "repo": repo,
         "checks": checks,
         "next_issue": next_issue,
+        "next_required_step": next_required_step,
+        "optional_setup": optional_setup,
         "next_step": next_step,
     })
+}
+
+fn summary_step<'a>(value: &'a Value, key: &str, required: bool) -> Option<&'a str> {
+    value[key]
+        .as_str()
+        .or_else(|| {
+            (required || value["ok"].as_bool().unwrap_or(false))
+                .then(|| step_from_checks(value, required))
+                .flatten()
+        })
+        .or_else(|| legacy_next_step(value, required))
+}
+
+fn step_from_checks(value: &Value, required: bool) -> Option<&str> {
+    value["checks"]
+        .as_array()?
+        .iter()
+        .find(|check| {
+            !check["ok"].as_bool().unwrap_or(false)
+                && check["required"].as_bool().unwrap_or(false) == required
+        })
+        .and_then(|check| check["fix"].as_str())
+}
+
+fn legacy_next_step(value: &Value, required: bool) -> Option<&str> {
+    let ready = value["ok"].as_bool().unwrap_or(false);
+    if ready == required {
+        return None;
+    }
+    value["next_step"].as_str()
+}
+
+fn optional_setup_label(step: &str) -> &str {
+    let Some(rest) = step.strip_prefix("Run `") else {
+        return step;
+    };
+    let Some((command, _)) = rest.split_once('`') else {
+        return step;
+    };
+    if command.starts_with("scripts/jig ") {
+        command
+    } else {
+        step
+    }
 }
 
 fn config_check(root: &Path, result: &Result<crate::context::RepoConfigProbe>) -> DoctorCheck {
@@ -1257,6 +1310,8 @@ mod tests {
 
         assert!(summary.contains("Jig doctor: ready"));
         assert!(summary.contains("Agent skills: optional setup (missing, optional)"));
+        assert!(summary.contains("Next required step: none"));
+        assert!(summary.contains("Optional setup: scripts/jig agent bootstrap"));
     }
 
     #[test]
@@ -1284,6 +1339,8 @@ mod tests {
         assert!(summary.contains(
             "Detail: Missing command executable(s): schema_dump_command: scripts/dump-schema.sh"
         ));
+        assert!(summary.contains("Next required step: Install the missing executable."));
+        assert!(summary.contains("Optional setup: none"));
     }
 
     #[test]
@@ -1355,6 +1412,16 @@ mod tests {
                 .contains("repo context")
         );
         assert!(output["next_step"].as_str().unwrap().contains(".jig.toml"));
+        assert!(
+            output["next_required_step"]
+                .as_str()
+                .unwrap()
+                .contains(".jig.toml")
+        );
+        assert!(output["optional_setup"].is_null());
+        let summary = format_summary(&output);
+        assert!(summary.contains("Next required step: Fix `.jig.toml`"));
+        assert!(summary.contains("Optional setup: none"));
     }
 
     #[test]
