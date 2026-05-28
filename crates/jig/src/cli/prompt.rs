@@ -6,6 +6,9 @@ const PROMPT_AFTER_HELP: &str = "\
 Prompt bodies are rendered as MiniJinja templates unless --raw is passed.
 Prompt names may be unqualified or explicitly namespaced with user:, repo:, or pack:.
 Unqualified reads must resolve to exactly one prompt.
+`jig prompt add NAME` with no BODY or --file opens $VISUAL or $EDITOR.
+Use `jig prompt add --no-editor` to use the terminal prompt flow instead.
+Finish the interactive body with Ctrl-D or a line containing only `.`.
 Storage defaults to the user Jig config directory. JIG_PROMPT_HOME overrides
 the storage root that contains prompts/user and prompt-packs.
 `jig prompt get` always prints the rendered prompt body, even with global --json.
@@ -16,6 +19,7 @@ Re-adding an existing prompt preserves its description and tags unless new
 values are provided.
 
 Examples:
+  jig prompt add
   jig prompt get comprehensive-review-loop
   jig prompt get repo:release-checklist --var base=main
   jig prompt get code-example --raw
@@ -30,18 +34,24 @@ On Unix, EDITOR and VISUAL may include arguments such as `code -w`.";
 #[derive(Debug, Subcommand)]
 pub(crate) enum PromptCommand {
     /// Print a rendered prompt body and nothing else.
+    #[command(alias = "cat")]
     Get(PromptGetOpts),
     /// Render a prompt body and copy it to the system clipboard.
+    #[command(alias = "cp")]
     Copy(PromptCopyOpts),
     /// Add or replace a writable user: or repo: prompt.
+    #[command(alias = "new")]
     Add(PromptAddOpts),
     /// Edit a writable user: or repo: prompt in $EDITOR.
     Edit(PromptEditOpts),
     /// Remove a writable user: or repo: prompt.
+    #[command(alias = "rm")]
     Remove(PromptRemoveOpts),
     /// List prompt names and metadata without prompt bodies.
+    #[command(alias = "ls")]
     List(PromptListOpts),
     /// Search prompt names, descriptions, tags, and optionally bodies.
+    #[command(alias = "find")]
     Search(PromptSearchOpts),
     /// Export prompts and prompt packs as a versioned JSON archive.
     Export(PromptExportOpts),
@@ -78,14 +88,16 @@ pub(crate) struct PromptCopyOpts {
 #[derive(Args, Debug)]
 #[command(after_help = PROMPT_AFTER_HELP)]
 pub(crate) struct PromptAddOpts {
-    /// Prompt name. Unqualified writes default to user:.
-    pub(crate) name: String,
-    /// Prompt body. Use shell quoting for multi-word prompts.
-    #[arg(required_unless_present = "file")]
+    /// Prompt name. Unqualified writes default to user:. Omit to enter interactive mode.
+    pub(crate) name: Option<String>,
+    /// Prompt body. Use shell quoting for multi-word prompts. Omit with --file absent to open an editor for named prompts.
     pub(crate) body: Option<String>,
     /// Read the prompt body from a file.
     #[arg(long, conflicts_with = "body")]
     pub(crate) file: Option<PathBuf>,
+    /// Use the terminal prompt flow instead of launching $VISUAL or $EDITOR when BODY and --file are omitted.
+    #[arg(long)]
+    pub(crate) no_editor: bool,
     /// Metadata description shown by list/search.
     #[arg(long)]
     pub(crate) description: Option<String>,
@@ -99,6 +111,9 @@ pub(crate) struct PromptAddOpts {
 pub(crate) struct PromptEditOpts {
     /// Prompt name. Unqualified edits an existing unambiguous writable prompt, or user: when new.
     pub(crate) name: String,
+    /// Print the resolved editable prompt path without launching $VISUAL or $EDITOR.
+    #[arg(long)]
+    pub(crate) no_editor: bool,
 }
 
 #[derive(Args, Debug)]

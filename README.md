@@ -37,6 +37,35 @@ Terminal use prompts for the vault passphrase. For scripts and other non-interac
 
 Use `--value-prompt` for hidden terminal entry; interactive `secret set NAME` uses the same hidden prompt by default. Use `--value-stdin` for automation. Stdin values are exact, so use `printf` instead of `echo` when the trailing newline is not part of the secret. `vault run --env VAR=SECRET` injects UTF-8 secrets as environment values; on Unix, `vault run --file VAR=SECRET` writes the secret to a private `0600` temporary file and injects its path. Non-Unix platforms reject `--file`; use `--env` or a platform-specific wrapper there. Vault output is JSON so scripts can inspect it directly; `vault run` mirrors the child process exit status while still printing the redacted result payload.
 
+## Prompt Library Quick Start
+
+Jig Prompt stores reusable prompts outside the agent context window so large prompt libraries do not have to become Codex skills. Prompts can be user-level, repo-level, or distributed through read-only prompt packs.
+
+```sh
+scripts/jig prompt add
+scripts/jig prompt add comprehensive-review-loop --file prompt.md --tag review
+scripts/jig prompt new comprehensive-review-loop
+scripts/jig prompt get comprehensive-review-loop
+scripts/jig prompt get repo:release-checklist --var base=main
+scripts/jig prompt copy user:review-loop
+scripts/jig prompt list
+scripts/jig prompt search review
+scripts/jig prompt export --output prompts.json
+scripts/jig prompt import prompts.json
+```
+
+`prompt get` is the exact-output primitive: it prints only the rendered prompt body, with no summary, envelope, or added newline, even when global `--json` is present. Prompt bodies render as MiniJinja templates by default; pass repeated `--var KEY=VALUE` values for template data, or `--raw` to print the stored body without rendering. `prompt copy` renders the same way and writes to the system clipboard. Set `JIG_PROMPT_CLIPBOARD_COMMAND` to an explicit clipboard command when Jig cannot find a platform clipboard tool.
+
+`prompt add` enters an interactive terminal flow when you omit the prompt name. When you pass a name but omit `BODY` and `--file`, it opens `$VISUAL` or `$EDITOR` with seeded prompt metadata. Pass `--no-editor` to use the terminal prompt flow instead; that flow asks for any missing metadata and a multiline body finished with Ctrl-D or a line containing only `.`. For automation, pass `NAME` plus either inline `BODY` or `--file`.
+
+`prompt edit NAME` opens the resolved writable prompt file in `$VISUAL` or `$EDITOR`. Pass `--no-editor` to print the resolved editable path without launching an editor or creating a new prompt placeholder.
+
+Prompt names may be unqualified or explicitly namespaced with `user:`, `repo:`, or `pack:<pack>/`. Unqualified reads must resolve to exactly one prompt. Unqualified writes default to `user:`; `pack:` prompts are read-only. User prompts live below the Jig config directory under `prompts/user`, repo prompts live under `.jig/prompts`, and prompt packs live under `prompt-packs/<pack>/prompts`. Set `JIG_PROMPT_HOME` to override the user prompt storage root.
+
+`prompt list` and `prompt search` show names and metadata without prompt bodies. `prompt export` writes a versioned JSON archive; without `--output`, it prints the bare archive JSON artifact, while `jig --json prompt export` wraps the archive in a command envelope. Import replaces existing prompts and reports overwritten entries.
+
+Common prompt subcommands also have shell-style aliases: `cat` for `get`, `cp` for `copy`, `new` for `add`, `rm` for `remove`, `ls` for `list`, and `find` for `search`.
+
 ## Quick Start
 
 **Prerequisites:** Rust 1.85+, [Bun](https://bun.sh) (web targets), and the selected database engine when SQLx is enabled
@@ -57,6 +86,7 @@ By default, release builds of `jig init` and `jig adopt` clone the official temp
 | --- | --- | --- | --- |
 | `check` | yes | yes | no |
 | `work` | runtime-owned | yes | no |
+| `prompt` | runtime-owned | no | partly |
 | `dev` / `proxy` | runtime-owned | no | yes |
 | `vault` | runtime-owned | no | yes |
 

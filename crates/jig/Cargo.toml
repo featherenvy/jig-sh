@@ -37,6 +37,7 @@ jig-features.workspace = true
 jig-vault.workspace = true
 minijinja = { version = "2.19.0", features = ["custom_syntax"] }
 rpassword.workspace = true
+rustyline = "18.0.0"
 secrecy.workspace = true
 serde.workspace = true
 serde_json.workspace = true

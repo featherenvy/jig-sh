@@ -1,4 +1,6 @@
-use std::io::{self, Write};
+#[cfg(test)]
+use std::io::BufRead;
+use std::io::{self, IsTerminal, Write};
 use std::process;
 
 use anyhow::{Context, Result};
@@ -6,6 +8,7 @@ use clap::{
     Parser,
     error::{ContextKind, ContextValue, ErrorKind},
 };
+use rustyline::{DefaultEditor, error::ReadlineError};
 use serde_json::{Value, json};
 
 use super::output::{HumanOutput, print_json, print_output};
@@ -15,6 +18,7 @@ use super::output::{
     format_work_evidence_summary, format_work_gates_summary, format_work_receipts_summary,
     format_work_start_plan_id, format_work_status_summary,
 };
+use super::prompt::PromptAddOpts;
 use super::*;
 
 fn attach_bootstrap_vault(output: &mut Value, vault: Value) -> Result<()> {
@@ -266,18 +270,21 @@ fn run_prompt_command(command: PromptCommand, json_output: bool) -> Result<()> {
             json_output,
         ),
         PromptCommand::Add(opts) => print_prompt_output(
-            registry.add_prompt(crate::prompt_registry::PromptAddRequest {
-                name: opts.name,
-                body: opts.body,
-                file: opts.file,
-                description: opts.description,
-                tags: opts.tags,
-            })?,
+            if prompt_add_uses_editor(&opts) {
+                registry.add_prompt_with_editor(prompt_add_request(opts)?)
+            } else {
+                registry.add_prompt(prompt_add_request(opts)?)
+            }?,
             json_output,
         ),
-        PromptCommand::Edit(opts) => {
-            print_prompt_output(registry.edit_prompt(&opts.name)?, json_output)
-        }
+        PromptCommand::Edit(opts) => print_prompt_output(
+            if opts.no_editor {
+                registry.prompt_edit_target(&opts.name)?
+            } else {
+                registry.edit_prompt(&opts.name)?
+            },
+            json_output,
+        ),
         PromptCommand::Remove(opts) => {
             print_prompt_output(registry.remove_prompt(&opts.name)?, json_output)
         }
@@ -319,6 +326,243 @@ fn run_prompt_command(command: PromptCommand, json_output: bool) -> Result<()> {
             print_prompt_output(registry.import_prompts(&opts.file)?, json_output)
         }
     }
+}
+
+fn prompt_add_request(opts: PromptAddOpts) -> Result<crate::prompt_registry::PromptAddRequest> {
+    if prompt_add_needs_interaction(&opts) {
+        if !io::stdin().is_terminal() || !io::stderr().is_terminal() {
+            anyhow::bail!(
+                "prompt add needs interactive input; pass NAME plus BODY or --file, or omit --no-editor to use $VISUAL or $EDITOR"
+            );
+        }
+        interactive_prompt_add_request_terminal(opts)
+    } else {
+        Ok(crate::prompt_registry::PromptAddRequest {
+            name: opts.name.expect("checked by prompt_add_needs_interaction"),
+            body: opts.body,
+            file: opts.file,
+            description: opts.description,
+            tags: opts.tags,
+        })
+    }
+}
+
+fn prompt_add_needs_interaction(opts: &PromptAddOpts) -> bool {
+    opts.name.is_none() || (opts.no_editor && opts.body.is_none() && opts.file.is_none())
+}
+
+fn prompt_add_uses_editor(opts: &PromptAddOpts) -> bool {
+    opts.name.is_some() && opts.body.is_none() && opts.file.is_none() && !opts.no_editor
+}
+
+fn interactive_prompt_add_request_terminal(
+    opts: PromptAddOpts,
+) -> Result<crate::prompt_registry::PromptAddRequest> {
+    let mut output = io::stderr();
+    writeln!(output, "Interactive prompt add")?;
+    let mut editor = DefaultEditor::new().context("Failed to initialize prompt line editor")?;
+    let name = match opts.name {
+        Some(name) => name,
+        None => prompt_required_line_editor(&mut editor, "Prompt name: ", "prompt name")?,
+    };
+    let description = match opts.description {
+        Some(description) => Some(description),
+        None => {
+            let value = prompt_optional_line_editor(&mut editor, "Description (optional): ")?;
+            if value.is_empty() { None } else { Some(value) }
+        }
+    };
+    let tags = if opts.tags.is_empty() {
+        parse_interactive_tags(&prompt_optional_line_editor(
+            &mut editor,
+            "Tags (comma-separated, optional): ",
+        )?)
+    } else {
+        opts.tags
+    };
+    let body = if opts.body.is_none() && opts.file.is_none() {
+        Some(prompt_body_line_editor(&mut editor, &mut output)?)
+    } else {
+        opts.body
+    };
+    Ok(crate::prompt_registry::PromptAddRequest {
+        name,
+        body,
+        file: opts.file,
+        description,
+        tags,
+    })
+}
+
+#[cfg(test)]
+fn interactive_prompt_add_request<R: BufRead, W: Write>(
+    opts: PromptAddOpts,
+    mut input: R,
+    output: &mut W,
+) -> Result<crate::prompt_registry::PromptAddRequest> {
+    writeln!(output, "Interactive prompt add")?;
+    let name = match opts.name {
+        Some(name) => name,
+        None => prompt_required_line(&mut input, output, "Prompt name: ", "prompt name")?,
+    };
+    let description = match opts.description {
+        Some(description) => Some(description),
+        None => {
+            let value = prompt_optional_line(&mut input, output, "Description (optional): ")?;
+            if value.is_empty() { None } else { Some(value) }
+        }
+    };
+    let tags = if opts.tags.is_empty() {
+        parse_interactive_tags(&prompt_optional_line(
+            &mut input,
+            output,
+            "Tags (comma-separated, optional): ",
+        )?)
+    } else {
+        opts.tags
+    };
+    let body = if opts.body.is_none() && opts.file.is_none() {
+        Some(prompt_body(&mut input, output)?)
+    } else {
+        opts.body
+    };
+    Ok(crate::prompt_registry::PromptAddRequest {
+        name,
+        body,
+        file: opts.file,
+        description,
+        tags,
+    })
+}
+
+fn prompt_required_line_editor(
+    editor: &mut DefaultEditor,
+    prompt: &str,
+    label: &str,
+) -> Result<String> {
+    loop {
+        let value = prompt_optional_line_editor(editor, prompt)?;
+        if !value.is_empty() {
+            return Ok(value);
+        }
+        eprintln!("{label} cannot be empty");
+    }
+}
+
+fn prompt_optional_line_editor(editor: &mut DefaultEditor, prompt: &str) -> Result<String> {
+    match editor.readline(prompt) {
+        Ok(line) => Ok(line),
+        Err(ReadlineError::Interrupted) => anyhow::bail!("interactive prompt add interrupted"),
+        Err(ReadlineError::Eof) => Ok(String::new()),
+        Err(error) => Err(error).context("Failed to read interactive prompt input"),
+    }
+}
+
+#[cfg(test)]
+fn prompt_required_line<R: BufRead, W: Write>(
+    input: &mut R,
+    output: &mut W,
+    prompt: &str,
+    label: &str,
+) -> Result<String> {
+    loop {
+        let value = prompt_optional_line(input, output, prompt)?;
+        if !value.is_empty() {
+            return Ok(value);
+        }
+        writeln!(output, "{label} cannot be empty")?;
+    }
+}
+
+#[cfg(test)]
+fn prompt_optional_line<R: BufRead, W: Write>(
+    input: &mut R,
+    output: &mut W,
+    prompt: &str,
+) -> Result<String> {
+    write!(output, "{prompt}")?;
+    output.flush()?;
+    let mut line = String::new();
+    if input.read_line(&mut line)? == 0 {
+        anyhow::bail!("interactive prompt add ended before input was complete");
+    }
+    Ok(trim_line_ending(line))
+}
+
+fn prompt_body_line_editor<W: Write>(editor: &mut DefaultEditor, output: &mut W) -> Result<String> {
+    writeln!(
+        output,
+        "Prompt body. Finish with Ctrl-D or a line containing only a single dot."
+    )?;
+    let mut lines = Vec::new();
+    loop {
+        let line = match editor.readline("> ") {
+            Ok(line) => line,
+            Err(ReadlineError::Interrupted) => anyhow::bail!("interactive prompt add interrupted"),
+            Err(ReadlineError::Eof) if lines.is_empty() => {
+                anyhow::bail!("interactive prompt add ended before prompt body was complete")
+            }
+            Err(ReadlineError::Eof) => break,
+            Err(error) => return Err(error).context("Failed to read interactive prompt body"),
+        };
+        if line == "." {
+            break;
+        }
+        lines.push(line);
+    }
+    let body = lines.join("\n");
+    if body.trim().is_empty() {
+        anyhow::bail!("prompt body cannot be empty");
+    }
+    Ok(body)
+}
+
+#[cfg(test)]
+fn prompt_body<R: BufRead, W: Write>(input: &mut R, output: &mut W) -> Result<String> {
+    writeln!(
+        output,
+        "Prompt body. Finish with Ctrl-D or a line containing only a single dot."
+    )?;
+    let mut lines = Vec::new();
+    loop {
+        write!(output, "> ")?;
+        output.flush()?;
+        let mut line = String::new();
+        if input.read_line(&mut line)? == 0 && lines.is_empty() {
+            anyhow::bail!("interactive prompt add ended before prompt body was complete");
+        } else if line.is_empty() {
+            break;
+        }
+        let line = trim_line_ending(line);
+        if line == "." {
+            break;
+        }
+        lines.push(line);
+    }
+    let body = lines.join("\n");
+    if body.trim().is_empty() {
+        anyhow::bail!("prompt body cannot be empty");
+    }
+    Ok(body)
+}
+
+#[cfg(test)]
+fn trim_line_ending(mut line: String) -> String {
+    if line.ends_with('\n') {
+        line.pop();
+        if line.ends_with('\r') {
+            line.pop();
+        }
+    }
+    line
+}
+
+fn parse_interactive_tags(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .map(str::trim)
+        .filter(|tag| !tag.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
 }
 
 fn print_prompt_output(output: serde_json::Value, json_output: bool) -> Result<()> {

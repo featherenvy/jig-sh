@@ -125,6 +125,7 @@ struct AppliedImport {
     original: Option<Vec<u8>>,
 }
 
+#[derive(Debug)]
 pub(crate) struct PromptAddRequest {
     pub(crate) name: String,
     pub(crate) body: Option<String>,
@@ -232,6 +233,91 @@ impl PromptRegistry {
         }))
     }
 
+    pub(crate) fn add_prompt_with_editor(&self, request: PromptAddRequest) -> Result<Value> {
+        if request.body.is_some() || request.file.is_some() {
+            bail!("prompt add editor mode requires BODY and --file to be omitted");
+        }
+        let selector = parse_selector(&request.name)?;
+        let (name, path, namespace) = self.resolve_write_target(selector, true)?;
+        reject_name_dir_collision(&path, &name)?;
+        let overwritten = path.exists();
+        let original = if overwritten {
+            Some(fs::read(&path).with_context(|| format!("Failed to read {}", path.display()))?)
+        } else {
+            None
+        };
+        let existing = if overwritten {
+            read_prompt_file(&path, name.clone()).ok()
+        } else {
+            None
+        };
+        let existing_metadata = existing.as_ref().map(|record| &record.metadata);
+        let version =
+            existing
+                .as_ref()
+                .map(|record| {
+                    record.metadata.version.checked_add(1).ok_or_else(|| {
+                        anyhow!("Prompt '{}' version is already at u32::MAX", name.0)
+                    })
+                })
+                .transpose()?
+                .unwrap_or(1);
+        let metadata = PromptMetadata {
+            name: name.0.clone(),
+            description: request
+                .description
+                .or_else(|| existing_metadata.and_then(|metadata| metadata.description.clone())),
+            tags: if request.tags.is_empty() {
+                existing_metadata
+                    .map(|metadata| metadata.tags.clone())
+                    .unwrap_or_default()
+            } else {
+                normalize_tags(request.tags)
+            },
+            version,
+            updated_at: Some(now_timestamp()),
+        };
+        let initial_body = existing
+            .as_ref()
+            .map(|record| record.body.as_str())
+            .unwrap_or("");
+        write_prompt_file(&path, &metadata, initial_body)?;
+        if let Err(error) = open_editor(&path) {
+            restore_after_failed_edit(&path, original.as_deref())?;
+            return Err(error);
+        }
+        let record = match read_prompt_file(&path, name.clone()) {
+            Ok(record) => record,
+            Err(error) => {
+                restore_after_failed_edit(&path, original.as_deref())?;
+                return Err(error)
+                    .with_context(|| format!("Edited prompt file is invalid: {}", path.display()));
+            }
+        };
+        if record.body.trim().is_empty() {
+            restore_after_failed_edit(&path, original.as_deref())?;
+            if !overwritten {
+                bail!(
+                    "New prompt '{}' was empty after edit; no prompt was saved",
+                    name.0
+                );
+            }
+            bail!(
+                "Prompt '{}' was empty after edit; original prompt was restored",
+                name.0
+            );
+        }
+        Ok(json!({
+            "ok": true,
+            "command": "prompt add",
+            "namespace": namespace_name(&namespace),
+            "name": name.0,
+            "path": path,
+            "overwritten": overwritten,
+            "editor": true,
+        }))
+    }
+
     pub(crate) fn edit_prompt(&self, name: &str) -> Result<Value> {
         let selector = parse_selector(name)?;
         let (prompt_name, path, namespace) = self.resolve_edit_target(selector)?;
@@ -289,6 +375,20 @@ impl PromptRegistry {
             "namespace": namespace_name(&namespace),
             "name": prompt_name.0,
             "path": path,
+        }))
+    }
+
+    pub(crate) fn prompt_edit_target(&self, name: &str) -> Result<Value> {
+        let selector = parse_selector(name)?;
+        let (prompt_name, path, namespace) = self.resolve_edit_target(selector)?;
+        Ok(json!({
+            "ok": true,
+            "command": "prompt edit",
+            "namespace": namespace_name(&namespace),
+            "name": prompt_name.0,
+            "path": path,
+            "editor": false,
+            "exists": path.exists(),
         }))
     }
 
@@ -840,6 +940,11 @@ pub(crate) fn format_prompt_human_output(output: &Value) -> Result<String> {
                 .as_str()
                 .or_else(|| output["name"].as_str())
                 .unwrap_or("")
+        )),
+        "prompt edit" if output["editor"].as_bool() == Some(false) => Ok(format!(
+            "{command}: {}\npath: {}\n",
+            output["name"].as_str().unwrap_or(""),
+            output["path"].as_str().unwrap_or("")
         )),
         "prompt add" | "prompt edit" | "prompt remove" => Ok(format!(
             "{command}: {}\n",
@@ -2423,6 +2528,83 @@ mod tests {
                 .unwrap(),
             "keep me"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn add_prompt_with_editor_seeds_metadata_and_saves_body() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _env = lock_env();
+        let temp = tempdir().unwrap();
+        let editor = temp.path().join("editor.sh");
+        fs::write(
+            &editor,
+            "#!/bin/sh\ngrep -q 'description: Seeded' \"$1\" || exit 3\ngrep -q -- '- review' \"$1\" || exit 4\nprintf 'edited body\\n' >> \"$1\"\n",
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&editor).unwrap().permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&editor, permissions).unwrap();
+        let _visual = EnvVarGuard::remove("VISUAL");
+        let _editor = EnvVarGuard::set("EDITOR", editor.as_os_str());
+        let registry = PromptRegistry::new(temp.path().join("store"), None);
+
+        let output = registry
+            .add_prompt_with_editor(PromptAddRequest {
+                name: "seeded-prompt".into(),
+                body: None,
+                file: None,
+                description: Some("Seeded".into()),
+                tags: vec!["review".into()],
+            })
+            .unwrap();
+
+        assert_eq!(output["command"], "prompt add");
+        assert_eq!(output["name"], "seeded-prompt");
+        assert_eq!(output["overwritten"], false);
+        assert_eq!(output["editor"], true);
+        let rendered = registry
+            .render_prompt(PromptRenderRequest {
+                name: "seeded-prompt".into(),
+                vars: Vec::new(),
+                raw: false,
+            })
+            .unwrap();
+        assert_eq!(rendered, "edited body");
+    }
+
+    #[test]
+    fn prompt_edit_target_reports_path_without_creating_new_prompt() {
+        let temp = tempdir().unwrap();
+        let registry = PromptRegistry::new(temp.path().join("store"), None);
+
+        let target = registry.prompt_edit_target("new-prompt").unwrap();
+        assert_eq!(target["name"], "new-prompt");
+        assert_eq!(target["namespace"], "user");
+        assert_eq!(target["editor"], false);
+        assert_eq!(target["exists"], false);
+        let path = target["path"].as_str().unwrap();
+        assert!(path.ends_with("store/prompts/user/new-prompt.md"));
+        assert!(!Path::new(path).exists());
+        let human = format_prompt_human_output(&target).unwrap();
+        assert!(human.contains("prompt edit: new-prompt"));
+        assert!(human.contains(path));
+
+        registry
+            .add_prompt(PromptAddRequest {
+                name: "new-prompt".into(),
+                body: Some("body".into()),
+                file: None,
+                description: None,
+                tags: Vec::new(),
+            })
+            .unwrap();
+
+        let existing = registry.prompt_edit_target("new-prompt").unwrap();
+        assert_eq!(existing["editor"], false);
+        assert_eq!(existing["exists"], true);
+        assert!(Path::new(existing["path"].as_str().unwrap()).exists());
     }
 
     #[test]
