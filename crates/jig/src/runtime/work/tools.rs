@@ -18,9 +18,12 @@ pub(super) fn selected_tools(ctx: &RepoContext, explicit_tools: &[String]) -> Re
 }
 
 pub(super) fn validate_check_tool(ctx: &RepoContext, name: &str, label: &str) -> Result<()> {
-    let tool = ctx
-        .tool_spec(name)
-        .ok_or_else(|| anyhow!("{}", super::super::undeclared_tool_message(ctx, name)))?;
+    let tool = ctx.tool_spec(name).ok_or_else(|| {
+        anyhow!(
+            "{}",
+            super::super::tool_execution::undeclared_tool_message(ctx, name)
+        )
+    })?;
     if !tool_defs::is_execution_tool(tool) {
         bail!("{label} is not an execution tool: {name}");
     }

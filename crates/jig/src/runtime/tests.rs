@@ -447,3 +447,56 @@ rust_test_command = "printf 'tool failed stdout\n'; printf 'tool failed stderr\n
     assert!(error.contains("tool failed stderr"), "{error}");
     assert!(error.contains("receipt recording also failed"), "{error}");
 }
+
+#[test]
+fn collect_result_keeps_failed_tool_context_when_receipt_append_fails() {
+    let temp = tempdir().unwrap();
+    fs::create_dir_all(temp.path().join(".agent")).unwrap();
+    fs::write(
+        temp.path().join(".jig.toml"),
+        r#"_src_path = "/tmp/template"
+_commit = "abc123"
+repo_name = "demo"
+default_branch = "main"
+jig_version = "0.2.0-beta.1"
+rust_test_command = "printf 'tool failed stdout\n'; printf 'tool failed stderr\n' >&2; exit 7"
+"#,
+    )
+    .unwrap();
+    fs::write(
+        temp.path().join(".agent/jig-contract.json"),
+        serde_json::to_string_pretty(&json!({
+            "contract_version": 2,
+            "tool_namespace": "jig",
+            "jig_version": "0.2.0-beta.1",
+            "required_commands": ["rust_test_command"],
+            "tools": [
+                {
+                    "name": "jig.test",
+                    "kind": "command",
+                    "description": "Run configured test command.",
+                    "command": "rust_test_command"
+                }
+            ],
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    fs::write(temp.path().join(".agent/state"), "not a directory").unwrap();
+
+    let ctx = RepoContext::load_from(temp.path()).unwrap();
+    let error = tool_execution::execute_manifest_tool_result_without_worktree_fingerprint(
+        &ctx,
+        crate::tool_defs::tool::TEST,
+        json!({}),
+        None,
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("jig.test failed with status 7"), "{error}");
+    assert!(error.contains("command key: rust_test_command"), "{error}");
+    assert!(error.contains("tool failed stdout"), "{error}");
+    assert!(error.contains("tool failed stderr"), "{error}");
+    assert!(error.contains("receipt recording also failed"), "{error}");
+}

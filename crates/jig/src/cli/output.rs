@@ -753,3 +753,7 @@ fn value_string_list(value: &serde_json::Value, key: &str) -> Vec<String> {
         .map(str::to_string)
         .collect()
 }
+
+#[cfg(test)]
+#[path = "output_tests.rs"]
+mod tests;

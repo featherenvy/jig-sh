@@ -1,18 +1,4 @@
 use super::*;
-use crate::cli::run::{format_adopt_human_summary, format_init_human_summary};
-#[test]
-fn template_errors_get_hint() {
-    let missing_template_value =
-        Cli::try_parse_from(["jig", "adopt", ".", "--template"]).unwrap_err();
-    assert_eq!(
-        missing_template_value.kind(),
-        clap::error::ErrorKind::InvalidValue
-    );
-    assert!(should_add_template_hint(&missing_template_value));
-
-    let unrelated = Cli::try_parse_from(["jig", "proxy", "run", "web", "vite"]).unwrap_err();
-    assert!(!should_add_template_hint(&unrelated));
-}
 
 #[test]
 fn parses_check_namespace_commands() {
@@ -60,67 +46,6 @@ fn parses_check_namespace_commands() {
             (other, _) => panic!("expected check {command} command, got {other:?}"),
         }
     }
-
-    for (legacy, replacement) in [
-        ("fmt-check", "jig check fmt"),
-        ("clippy", "jig check clippy"),
-        ("test", "jig check test"),
-        ("test-locked", "jig check test-locked"),
-        ("sqlx-check", "jig check sqlx"),
-        ("schema-check", "jig check schema"),
-        ("contract-check", "jig check contract"),
-        ("check-agent-guides", "jig check agent-guides"),
-        ("check-rust-file-loc", "jig check rust-file-loc"),
-        ("check-no-mod-rs", "jig check no-mod-rs"),
-        (
-            "check-migration-immutability",
-            "jig check migration-immutability",
-        ),
-        (
-            "check-sqlx-unchecked-non-test",
-            "jig check sqlx-unchecked-non-test",
-        ),
-    ] {
-        let error = Cli::try_parse_from(["jig", legacy]).unwrap_err();
-        assert_eq!(error.kind(), clap::error::ErrorKind::InvalidSubcommand);
-        let message = error.to_string();
-        assert!(
-            message.contains("Usage: jig [OPTIONS] <COMMAND>"),
-            "legacy top-level hint depends on Clap usage text for {legacy}: {message}"
-        );
-        assert!(
-            message.contains(&format!("'{legacy}'")),
-            "legacy top-level hint depends on Clap quoting the invalid command for {legacy}: {message}"
-        );
-        assert_eq!(
-            moved_check_command_hint(&error),
-            Some(format!("This check command moved. Use:\n  {replacement}")),
-            "wrong moved-command hint for {legacy}"
-        );
-    }
-
-    let error = Cli::try_parse_from(["jig", "agent-map", "check"]).unwrap_err();
-    assert_eq!(error.kind(), clap::error::ErrorKind::InvalidSubcommand);
-    let message = error.to_string();
-    assert!(
-        message.contains("unrecognized subcommand 'check'"),
-        "agent-map hint depends on Clap quoting the nested invalid command: {message}"
-    );
-    assert!(
-        message.contains("Usage: jig agent-map [OPTIONS] <COMMAND>"),
-        "agent-map hint depends on Clap nested usage text: {message}"
-    );
-    assert_eq!(
-        moved_check_command_hint(&error),
-        Some("This check command moved. Use:\n  jig check agent-map".to_string())
-    );
-
-    let unrelated_nested = Cli::try_parse_from(["jig", "agent-map", "test"]).unwrap_err();
-    assert_eq!(
-        unrelated_nested.kind(),
-        clap::error::ErrorKind::InvalidSubcommand
-    );
-    assert!(moved_check_command_hint(&unrelated_nested).is_none());
 }
 
 #[test]
@@ -327,93 +252,6 @@ fn parses_prompt_get_with_global_json_for_exact_output_contract() {
         }
         other => panic!("expected prompt get command, got {other:?}"),
     }
-}
-
-#[test]
-fn adopt_human_summary_includes_reviewable_next_steps() {
-    let output = serde_json::json!({
-        "render_mode": "preview",
-        "destination": "/tmp/repo",
-        "render_report": {
-            "files_created": ["scripts/jig"],
-            "files_modified": [],
-            "files_removed": [],
-            "conflicts": [
-                {
-                    "path": ".agent/PLANS.md",
-                    "detail": "destination differs from the rendered template-managed path"
-                }
-            ]
-        },
-        "detection_report": {
-            "warnings": ["SQLx metadata directory was not detected"]
-        },
-        "adoption_review": [
-            "stack: Rust workspace, SQLx",
-            "SQLx: enabled with migrations at migrations"
-        ],
-        "next_steps": [
-            "Re-run jig adopt . --write after reviewing the preview.",
-            "No files were changed by this preview."
-        ]
-    });
-
-    let summary = format_adopt_human_summary(&output);
-
-    assert!(summary.contains("mode: preview"));
-    assert!(summary.contains("managed files: 1 created, 0 modified, 0 removed"));
-    assert!(summary.contains("stack: Rust workspace, SQLx"));
-    assert!(summary.contains(".agent/PLANS.md"));
-    assert!(summary.contains("SQLx metadata directory was not detected"));
-    assert!(summary.contains("Re-run jig adopt . --write"));
-}
-
-#[test]
-fn init_human_summary_includes_scaffold_and_next_steps() {
-    let output = serde_json::json!({
-        "destination": "/tmp/repo",
-        "template": "embedded",
-        "git_initialized": true,
-        "scaffold": {
-            "preset": "rust-react",
-            "repo_name": "demo",
-            "db": "postgres",
-            "frontends": [
-                { "name": "web", "dir": "web", "kind": "vite" },
-                { "name": "landing", "dir": "landing", "kind": "astro" },
-                { "name": "admin-panel", "dir": "admin-panel", "kind": "vite" }
-            ],
-            "files_created": ["Cargo.toml", "web/package.json"],
-            "files_modified": [],
-            "files_unchanged": ["landing/package.json"]
-        },
-        "render_report": {
-            "files_created": ["scripts/jig", ".jig.toml"],
-            "files_modified": [],
-            "files_removed": []
-        },
-        "notes": [
-            "SQLx disabled by default until configured."
-        ],
-        "next_steps": [
-            "cd /tmp/repo",
-            "scripts/jig doctor --summary"
-        ]
-    });
-
-    let summary = format_init_human_summary(&output);
-
-    assert!(summary.contains("init summary"));
-    assert!(summary.contains("target: /tmp/repo"));
-    assert!(summary.contains("template: embedded"));
-    assert!(summary.contains("managed files: 2 created, 0 modified, 0 removed"));
-    assert!(summary.contains("scaffold: rust-react for demo (db: postgres)"));
-    assert!(summary.contains("scaffold files: 2 created, 0 modified, 1 unchanged"));
-    assert!(summary.contains("frontends: web, landing, admin-panel"));
-    assert!(summary.contains("git: initialized"));
-    assert!(summary.contains("SQLx disabled by default"));
-    assert!(summary.contains("scripts/jig doctor --summary"));
-    assert!(summary.contains("full report: rerun with --json"));
 }
 
 #[test]
@@ -1051,42 +889,6 @@ fn proxy_service_install_requires_scope_acknowledgement_at_parse_time() {
         error.kind(),
         clap::error::ErrorKind::MissingRequiredArgument
     );
-}
-
-#[test]
-fn proxy_json_ok_false_is_cli_failure() {
-    let error = require_json_ok(true, &serde_json::json!({ "ok": false }))
-        .unwrap_err()
-        .to_string();
-
-    assert!(error.contains("ok=false"));
-    require_json_ok(false, &serde_json::json!({ "ok": false })).unwrap();
-    assert!(test_command_reports_failure_with_ok(&CommandKind::Dev(
-        DevOpts {
-            apps: Vec::new(),
-            discover_workspace: false,
-            no_proxy: false,
-            proxy: ProxyRuntimeOpts::default(),
-        }
-    )));
-    assert!(test_command_reports_failure_with_ok(&CommandKind::Doctor(
-        DoctorOpts::default()
-    )));
-    assert!(test_command_reports_failure_with_ok(&CommandKind::Agent(
-        AgentCommand::Doctor(AgentDoctorOpts::default())
-    )));
-    assert!(test_command_reports_failure_with_ok(&CommandKind::Vault(
-        VaultCommand::Run(VaultRunOpts {
-            summary: false,
-            env: vec!["TOKEN=api_token".into()],
-            files: Vec::new(),
-            vault: VaultRuntimeOpts::default(),
-            command: vec!["true".into()],
-        })
-    )));
-    assert!(!test_command_reports_failure_with_ok(&CommandKind::Vault(
-        VaultCommand::Status(VaultStatusOpts::default())
-    )));
 }
 
 #[test]

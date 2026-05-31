@@ -1,5 +1,8 @@
 use super::*;
 use std::path::Path;
+use std::process::Command;
+
+use crate::state::{ReceiptInput, record_receipt};
 
 pub(super) fn write_fixture_repo(root: &Path) {
     fs::create_dir_all(root.join(".agent")).unwrap();

@@ -7,6 +7,7 @@ use crate::tool_defs::tool;
 use crate::{bootstrap, context::RepoContext, doctor, info, mcp, runtime, tool_defs};
 
 mod agent;
+mod bootstrap_run;
 mod check;
 mod prompt;
 mod proxy;
@@ -258,14 +259,12 @@ pub(crate) struct GenerateSqlxUncheckedQueriesTodoOpts {
 mod command_conversion;
 
 mod output;
+mod prompt_run;
 mod run;
+mod structured_error;
+mod vault_run;
 
 pub(crate) use run::{is_structured_json_failure, run, structured_error_exit_code};
-#[cfg(test)]
-use run::{
-    moved_check_command_hint, require_json_ok, should_add_template_hint,
-    test_command_reports_failure_with_ok,
-};
 
 #[cfg(test)]
 mod help_tests;

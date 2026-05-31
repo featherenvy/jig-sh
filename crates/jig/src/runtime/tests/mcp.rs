@@ -1,4 +1,5 @@
 use super::*;
+use std::process::Command;
 
 #[test]
 fn mcp_call_dispatches_command_tool_declared_only_in_manifest() {

@@ -6,7 +6,7 @@ use crate::context::RepoContext;
 use crate::state::{ReceiptInput, current_worktree_fingerprint, now_ms, record_receipt};
 use crate::tool_defs::tool;
 
-use super::super::{
+use super::super::tool_execution::{
     execute_manifest_tool_result_without_worktree_fingerprint,
     execute_manifest_tool_without_worktree_fingerprint,
 };

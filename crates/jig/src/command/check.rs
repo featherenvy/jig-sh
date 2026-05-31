@@ -1,0 +1,55 @@
+//! Check and policy command DTOs.
+
+use std::path::PathBuf;
+
+use super::ToolRequest;
+
+#[derive(Debug)]
+pub(crate) enum CheckCommand {
+    Fmt(ToolRequest),
+    Clippy(ToolRequest),
+    Test(ToolRequest),
+    TestLocked(ToolRequest),
+    TypeScriptLint(ToolRequest),
+    TypeScriptTypecheck(ToolRequest),
+    TypeScriptBuild(ToolRequest),
+    TypeScriptCoverage(ToolRequest),
+    Sqlx(ToolRequest),
+    Schema(ToolRequest),
+    Contract(ToolRequest),
+    AgentMap(AgentMapRequest),
+    AgentGuides,
+    RustFileLoc(RustFileLocRequest),
+    NoModRs,
+    MigrationImmutability(MigrationImmutabilityRequest),
+    SqlxUncheckedNonTest,
+}
+
+// Top-level `jig agent-map generate` and `jig check agent-map` share the same
+// request shape, even though they run through different policy paths.
+#[derive(Debug)]
+pub(crate) enum AgentMapCommand {
+    Generate(AgentMapRequest),
+}
+
+#[derive(Debug)]
+pub(crate) struct AgentMapRequest {
+    pub(crate) map_path: PathBuf,
+}
+
+#[derive(Debug)]
+pub(crate) struct RustFileLocRequest {
+    pub(crate) staged: bool,
+    pub(crate) changed_against: Option<String>,
+    pub(crate) all: bool,
+}
+
+#[derive(Debug)]
+pub(crate) struct MigrationImmutabilityRequest {
+    pub(crate) changed_against: String,
+}
+
+#[derive(Debug)]
+pub(crate) struct SqlxTodoRequest {
+    pub(crate) output: Option<PathBuf>,
+}
