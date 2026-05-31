@@ -1,0 +1,51 @@
+---
+import "../styles/global.css";
+import { site } from "../config/site";
+
+interface Props {
+  title?: string;
+  description?: string;
+}
+
+const {
+  title = site.title,
+  description = site.description,
+} = Astro.props;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={site.ogDescription} />
+    <meta property="og:url" content={site.repoUrl} />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@400;700;800;900&family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Fraunces:ital,opsz,wght,SOFT@1,144,300..400,100&display=swap"
+      rel="stylesheet"
+    />
+    <noscript>
+      <style is:inline>
+        .reveal,
+        .appear {
+          opacity: 1 !important;
+          transform: none !important;
+          animation: none !important;
+        }
+        .reticle {
+          display: none !important;
+        }
+      </style>
+    </noscript>
+  </head>
+  <body>
+    <div class="reticle" id="reticle" aria-hidden="true"></div>
+    <slot />
+    <script src="../scripts/landing.ts"></script>
+  </body>
+</html>

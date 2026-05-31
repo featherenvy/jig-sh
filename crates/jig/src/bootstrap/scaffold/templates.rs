@@ -53,6 +53,7 @@ fn scaffold_environment() -> Result<Environment<'static>> {
     );
     environment.set_trim_blocks(true);
     environment.set_lstrip_blocks(true);
+    environment.set_keep_trailing_newline(true);
     environment.set_undefined_behavior(UndefinedBehavior::Strict);
     Ok(environment)
 }

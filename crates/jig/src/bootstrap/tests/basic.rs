@@ -678,10 +678,44 @@ fn run_init_rust_react_scaffold_generates_backend_and_frontends() {
     assert!(destination.join("apps/my-app-api/src/main.rs").exists());
     assert!(destination.join("crates/my-app-core/src/lib.rs").exists());
     assert!(destination.join("crates/my-app/src/lib.rs").exists());
+    assert!(destination.join("crates/my-app/AGENTS.md").exists());
+    assert!(destination.join("crates/my-app-http/src/lib.rs").exists());
+    assert!(destination.join("crates/my-app-http/AGENTS.md").exists());
     assert!(destination.join("crates/my-app-db/src/lib.rs").exists());
+    assert!(destination.join("crates/my-app-db/AGENTS.md").exists());
     assert!(
         destination
             .join("crates/my-app-test-support/src/lib.rs")
+            .exists()
+    );
+    assert!(
+        destination
+            .join("crates/my-app-test-support/AGENTS.md")
+            .exists()
+    );
+    assert!(
+        destination
+            .join("crates/my-app-test-support/src/app.rs")
+            .exists()
+    );
+    assert!(
+        destination
+            .join("crates/my-app-test-support/src/http.rs")
+            .exists()
+    );
+    assert!(
+        destination
+            .join("crates/my-app-test-support/src/responses.rs")
+            .exists()
+    );
+    assert!(
+        destination
+            .join("crates/my-app-test-support/src/db.rs")
+            .exists()
+    );
+    assert!(
+        destination
+            .join("crates/my-app-test-support/tests/http.rs")
             .exists()
     );
     assert!(destination.join("web/package.json").exists());
@@ -705,12 +739,15 @@ fn run_init_rust_react_scaffold_generates_backend_and_frontends() {
 
     let api_main = fs::read_to_string(destination.join("apps/my-app-api/src/main.rs")).unwrap();
     assert!(api_main.contains("use anyhow::Context;"));
-    assert!(api_main.contains(r#""127.0.0.1:0""#));
+    assert!(api_main.contains("use my_app::AppConfig;"));
     assert!(api_main.contains("let bound_addr = listener"));
     assert!(api_main.contains("Failed to read API listener address after bind"));
     assert!(api_main.contains("tracing::info!(%bound_addr, \"listening\")"));
-    assert!(api_main.contains("AppState::new_with_version(env!(\"CARGO_PKG_VERSION\"))"));
-    assert!(api_main.contains("Failed to parse BIND_ADDR"));
+    assert!(api_main.contains("my_app_http::router"));
+    assert!(api_main.contains("AppConfig::from_env()"));
+    assert!(api_main.contains("AppState::from_config(config)"));
+    assert!(api_main.contains("install_panic_hook"));
+    assert!(api_main.contains("tracing::error!(error = ?error, \"API server failed\")"));
     assert!(api_main.contains("Failed to bind API listener"));
     assert!(api_main.contains("API server exited with an error"));
     assert!(api_main.contains("SignalKind::terminate"));
@@ -725,15 +762,58 @@ fn run_init_rust_react_scaffold_generates_backend_and_frontends() {
     );
     assert!(!jig_toml.contains("port = 3000"));
     let app_lib = fs::read_to_string(destination.join("crates/my-app/src/lib.rs")).unwrap();
+    assert!(app_lib.contains("pub struct AppConfig"));
+    assert!(app_lib.contains("pub fn from_env() -> Result<Self>"));
+    assert!(app_lib.contains("DATABASE_URL is required when the db feature is enabled"));
+    assert!(app_lib.contains("pub async fn from_config(config: AppConfig) -> Result<Self>"));
     assert!(app_lib.contains("pub fn new_with_version(version: impl Into<String>)"));
+    assert!(app_lib.contains("pub fn version(&self) -> &AppVersion"));
+    assert!(app_lib.contains("pub fn is_ready(&self) -> bool"));
+    assert!(!app_lib.contains("use axum::"));
+    assert!(!app_lib.contains("pub fn router"));
+    let http_lib = fs::read_to_string(destination.join("crates/my-app-http/src/lib.rs")).unwrap();
+    assert!(http_lib.contains("pub fn router(state: AppState) -> Router"));
+    assert!(http_lib.contains("TraceLayer::new_for_http()"));
+    assert!(http_lib.contains("SetRequestIdLayer::new(REQUEST_ID_HEADER, MakeRequestUuid)"));
+    assert!(http_lib.contains(r#".route("/health/live", get(live))"#));
+    assert!(http_lib.contains(r#".route("/health/ready", get(ready))"#));
+    assert!(http_lib.contains(r#".route("/api/version", get(version))"#));
     let test_support_cargo =
         fs::read_to_string(destination.join("crates/my-app-test-support/Cargo.toml")).unwrap();
-    assert!(test_support_cargo.contains(r#"my-app = { path = "../my-app" }"#));
+    assert!(test_support_cargo.contains(r#"my-app = { path = "../my-app""#));
+    assert!(test_support_cargo.contains(r#"my-app-http = { path = "../my-app-http""#));
+    assert!(test_support_cargo.contains(r#"tower = { workspace = true, features = ["util"] }"#));
+    let test_support_app =
+        fs::read_to_string(destination.join("crates/my-app-test-support/src/app.rs")).unwrap();
+    assert!(test_support_app.contains("pub struct TestApp"));
+    assert!(test_support_app.contains(".oneshot(request)"));
+    let test_support_response =
+        fs::read_to_string(destination.join("crates/my-app-test-support/src/responses.rs"))
+            .unwrap();
+    assert!(test_support_response.contains("pub struct TestResponse"));
+    assert!(test_support_response.contains("failed to decode response JSON"));
+    assert!(test_support_response.contains("pub fn assert_error"));
+    let test_support_http_test =
+        fs::read_to_string(destination.join("crates/my-app-test-support/tests/http.rs")).unwrap();
+    assert!(test_support_http_test.contains("use my_app_test_support::TestApp;"));
+    assert!(test_support_http_test.contains("async fn health_returns_ok()"));
+    assert!(test_support_http_test.contains("async fn readiness_reflects_state()"));
+    assert!(test_support_http_test.contains("StatusCode::SERVICE_UNAVAILABLE"));
+    assert!(test_support_http_test.contains("async fn responses_include_request_id()"));
+    assert!(test_support_http_test.contains("async fn version_returns_json()"));
     let db_lib = fs::read_to_string(destination.join("crates/my-app-db/src/lib.rs")).unwrap();
     assert!(db_lib.contains("PgPool"));
     assert!(db_lib.contains("DEFAULT_DB_TIMEOUT"));
     assert!(db_lib.contains("connect_with_timeout"));
     assert!(db_lib.contains("migrate_with_timeout"));
+    let test_support_db =
+        fs::read_to_string(destination.join("crates/my-app-test-support/src/db.rs")).unwrap();
+    assert!(test_support_db.contains("pub struct DatabaseTestConfig"));
+    assert!(test_support_db.contains("validate_test_database_name"));
+    let http_agents = fs::read_to_string(destination.join("crates/my-app-http/AGENTS.md")).unwrap();
+    assert!(http_agents.contains("routes, handlers, middleware, extractors, and HTTP DTOs"));
+    let app_agents = fs::read_to_string(destination.join("crates/my-app/AGENTS.md")).unwrap();
+    assert!(app_agents.contains("Parse environment configuration once at startup"));
 
     let answers = fs::read_to_string(destination.join(".jig.toml")).unwrap();
     assert!(answers.contains("repo_name = \"my-app\""));
@@ -1228,7 +1308,7 @@ fn scaffold_prefixes_repo_names_that_are_invalid_rust_crate_identifiers() {
     );
     let main_rs =
         fs::read_to_string(temp.path().join("apps/app-123-type-api/src/main.rs")).unwrap();
-    assert!(main_rs.contains("app_123_type::router"));
+    assert!(main_rs.contains("app_123_type_http::router"));
     let core_lib =
         fs::read_to_string(temp.path().join("crates/app-123-type-core/src/lib.rs")).unwrap();
     assert!(core_lib.contains("APP_NAME: &str = \"app-123-type\""));
@@ -1366,8 +1446,17 @@ fn scaffold_output_paths_include_template_collision_candidates() {
     let paths = plan.output_paths();
     for expected in [
         "Cargo.toml",
+        "crates/demo-http/Cargo.toml",
+        "crates/demo-http/AGENTS.md",
+        "crates/demo-http/src/lib.rs",
         "crates/demo-db/Cargo.toml",
+        "crates/demo-db/AGENTS.md",
         "crates/demo-db/src/lib.rs",
+        "crates/demo/AGENTS.md",
+        "crates/demo-test-support/AGENTS.md",
+        "crates/demo-test-support/src/app.rs",
+        "crates/demo-test-support/src/db.rs",
+        "crates/demo-test-support/tests/http.rs",
         "migrations/.gitkeep",
         "web/package.json",
         "web/src/App.tsx",
@@ -1449,6 +1538,7 @@ fn scaffold_generated_rust_workspace_has_valid_cargo_metadata() {
         "demo-api",
         "demo-core",
         "demo-db",
+        "demo-http",
         "demo-test-support",
     ] {
         assert!(

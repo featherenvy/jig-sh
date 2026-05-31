@@ -1,20 +1,33 @@
-use std::net::SocketAddr;
+use std::{net::SocketAddr, process::ExitCode};
 
 use anyhow::Context;
+use <<[ module_name ]>>::AppConfig;
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            // If you rename the application crate, update this default filter too.
-            std::env::var("RUST_LOG").unwrap_or_else(|_| "<<[ module_name ]>>=info,tower_http=info".into()),
-        )
-        .init();
+async fn main() -> ExitCode {
+    init_tracing();
+    install_panic_hook();
 
-    let bind_addr = std::env::var("BIND_ADDR").unwrap_or_else(|_| "127.0.0.1:0".into());
-    let addr: SocketAddr = bind_addr
-        .parse()
-        .with_context(|| format!("Failed to parse BIND_ADDR '{bind_addr}' as a socket address"))?;
+    match run().await {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            tracing::error!(error = ?error, "API server failed");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+async fn run() -> anyhow::Result<()> {
+    let config = AppConfig::from_env().context("Failed to load application config")?;
+    let addr: SocketAddr = config.bind_addr();
+    let state = <<[ module_name ]>>::AppState::from_config(config)
+        .await
+        .context("Failed to initialize application state")?;
+
+    serve(addr, state).await
+}
+
+async fn serve(addr: SocketAddr, state: <<[ module_name ]>>::AppState) -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .with_context(|| format!("Failed to bind API listener to {addr}"))?;
@@ -23,27 +36,43 @@ async fn main() -> anyhow::Result<()> {
         .context("Failed to read API listener address after bind")?;
     tracing::info!(%bound_addr, "listening");
 
-    axum::serve(
-        listener,
-        <<[ module_name ]>>::router(<<[ module_name ]>>::AppState::new_with_version(env!("CARGO_PKG_VERSION"))),
-    )
+    axum::serve(listener, <<[ module_name ]>>_http::router(state))
         .with_graceful_shutdown(shutdown_signal())
         .await
         .context("API server exited with an error")?;
     Ok(())
 }
 
+fn init_tracing() {
+    let default_filter = "<<[ module_name ]>>=info,tower_http=info";
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            // If you rename the application crate, update this default filter too.
+            std::env::var("RUST_LOG").unwrap_or_else(|_| default_filter.into()),
+        )
+        .init();
+}
+
+fn install_panic_hook() {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic_info| {
+        tracing::error!(panic = %panic_info, "application panic");
+        default_hook(panic_info);
+    }));
+}
+
 async fn shutdown_signal() {
     #[cfg(unix)]
     {
-        let mut terminate = match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
-            Ok(signal) => signal,
-            Err(error) => {
-                tracing::error!(error = %error, "failed to listen for SIGTERM");
-                wait_for_ctrl_c().await;
-                return;
-            }
-        };
+        let mut terminate =
+            match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+                Ok(signal) => signal,
+                Err(error) => {
+                    tracing::error!(error = %error, "failed to listen for SIGTERM");
+                    wait_for_ctrl_c().await;
+                    return;
+                }
+            };
 
         tokio::select! {
             result = tokio::signal::ctrl_c() => log_ctrl_c_result(result),

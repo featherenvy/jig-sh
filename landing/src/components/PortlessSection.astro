@@ -1,0 +1,151 @@
+---
+---
+
+  <section class="section appear" id="portless">
+    <div class="section-head">
+      <span class="no">06</span>
+      <h2>Hostnames, not ports.</h2>
+    </div>
+
+    <div class="section-intro">
+      <p class="lede">
+        <span class="hot">scripts/jig dev</span> brings up every app in your repo behind a single local reverse proxy and gives each one a stable hostname scoped to your repo &mdash; <span class="serif ink">no port juggling, no hand-typed </span><span class="mono ink">localhost:5173</span><span class="serif ink">, no stale tabs.</span> Run every project on your machine at once and nothing fights over a port.
+      </p>
+      <p class="sub">
+        A separate crate, <span class="hot">crates/jig-dev-proxy</span>, owns route storage, HTTP / HTTPS forwarding, HTTP/2 &amp; WebSockets, a local CA, and optional launchd / systemd service files. It runs <em class="serif">alongside</em> the harness &mdash; not inside the jig contract &mdash; because routes, ports, and certs are mutable machine-local state, not auditable work.
+      </p>
+    </div>
+
+    <!-- routing diagram -->
+    <div class="route">
+      <div class="route-col">
+        <div class="route-h">your apps</div>
+        <div class="route-card">
+          <span class="route-name">web</span>
+          <span class="route-kind">vite</span>
+          <span class="route-port">:random</span>
+        </div>
+        <div class="route-card">
+          <span class="route-name">api</span>
+          <span class="route-kind">env-port</span>
+          <span class="route-port">:random</span>
+        </div>
+        <div class="route-card">
+          <span class="route-name">admin</span>
+          <span class="route-kind">vite</span>
+          <span class="route-port">:random</span>
+        </div>
+        <div class="route-note">PORT injected per process · Vite flags rewritten</div>
+      </div>
+
+      <div class="route-wire" aria-hidden="true">
+        <svg viewBox="0 0 200 360" preserveAspectRatio="none" fill="none">
+          <g stroke="#3a3528" stroke-width="1" stroke-dasharray="3 4">
+            <path d="M 0 64  C 80 64,  120 96,  200 96"/>
+            <path d="M 0 168 C 80 168, 120 180, 200 180"/>
+            <path d="M 0 272 C 80 272, 120 264, 200 264"/>
+          </g>
+          <g stroke="#ff4d1f" stroke-width="1">
+            <path d="M 0 64  C 80 64,  120 96,  200 96"  stroke-dasharray="4 6"><animate attributeName="stroke-dashoffset" from="0" to="-20" dur="2.4s" repeatCount="indefinite"/></path>
+            <path d="M 0 168 C 80 168, 120 180, 200 180" stroke-dasharray="4 6"><animate attributeName="stroke-dashoffset" from="0" to="-20" dur="2.8s" repeatCount="indefinite"/></path>
+            <path d="M 0 272 C 80 272, 120 264, 200 264" stroke-dasharray="4 6"><animate attributeName="stroke-dashoffset" from="0" to="-20" dur="3.2s" repeatCount="indefinite"/></path>
+          </g>
+        </svg>
+      </div>
+
+      <div class="route-mid">
+        <div class="route-h">jig proxy</div>
+        <div class="route-mid-card">
+          <div class="route-mid-row"><span>HTTP</span><b>:1355</b></div>
+          <div class="route-mid-row"><span>HTTPS</span><b>:1443</b></div>
+          <div class="route-mid-row"><span>HTTP/2</span><b>on</b></div>
+          <div class="route-mid-row"><span>WebSockets</span><b>on</b></div>
+          <div class="route-mid-row"><span>TLD</span><b>localhost</b></div>
+          <div class="route-mid-row"><span>LAN mode</span><b class="d">opt-in</b></div>
+        </div>
+        <div class="route-note">state · <span class="mono">~/.jig/proxy</span></div>
+      </div>
+
+      <div class="route-wire" aria-hidden="true">
+        <svg viewBox="0 0 200 360" preserveAspectRatio="none" fill="none">
+          <g stroke="#3a3528" stroke-width="1" stroke-dasharray="3 4">
+            <path d="M 0 96  C 80 96,  120 64,  200 64"/>
+            <path d="M 0 180 C 80 180, 120 168, 200 168"/>
+            <path d="M 0 264 C 80 264, 120 272, 200 272"/>
+          </g>
+          <g stroke="#ff4d1f" stroke-width="1">
+            <path d="M 0 96  C 80 96,  120 64,  200 64"  stroke-dasharray="4 6"><animate attributeName="stroke-dashoffset" from="0" to="-20" dur="2.6s" repeatCount="indefinite"/></path>
+            <path d="M 0 180 C 80 180, 120 168, 200 168" stroke-dasharray="4 6"><animate attributeName="stroke-dashoffset" from="0" to="-20" dur="3.0s" repeatCount="indefinite"/></path>
+            <path d="M 0 264 C 80 264, 120 272, 200 272" stroke-dasharray="4 6"><animate attributeName="stroke-dashoffset" from="0" to="-20" dur="2.2s" repeatCount="indefinite"/></path>
+          </g>
+        </svg>
+      </div>
+
+      <div class="route-col r">
+        <div class="route-h">stable hostnames</div>
+        <div class="route-url"><span class="proto">https://</span>web.<i>demo</i>.localhost</div>
+        <div class="route-url"><span class="proto">https://</span>api.<i>demo</i>.localhost</div>
+        <div class="route-url"><span class="proto">https://</span>admin.<i>demo</i>.localhost</div>
+        <div class="route-note">routes are repo-scoped to <span class="hot">demo</span></div>
+      </div>
+    </div>
+
+    <!-- feature row + config -->
+    <div class="feature-grid">
+      <div class="feature-list">
+        <div class="feature-row"><span class="feature-num">01</span><div><b>Auto-port allocation.</b> The proxy picks a free port per app, then injects <span class="mono hot">PORT</span> + <span class="mono hot">HOST</span> for env-port apps, or rewrites <span class="mono hot">--port&nbsp;--host&nbsp;--strictPort</span> for Vite.</div></div>
+        <div class="feature-row"><span class="feature-num">02</span><div><b>One local URL, every time.</b> <span class="mono">&lt;app&gt;.&lt;repo&gt;.localhost</span> &mdash; the <span class="mono">&lt;repo&gt;</span> segment puts every project in its own namespace, so two repos can each run a <span class="mono">web</span> app with no collision. Restart the dev server, the bookmark still works.</div></div>
+        <div class="feature-row"><span class="feature-num">03</span><div><b>HTTPS without ceremony.</b> Generate a local CA + leaf, trust it once, then everything is <span class="mono">https://</span>. HTTP/2 + WebSocket forwarding included.</div></div>
+        <div class="feature-row"><span class="feature-num">04</span><div><b>LAN mode for device testing.</b> Flip <span class="mono hot">lan&nbsp;=&nbsp;true</span> and your phone can hit the same hostnames on the same Wi-Fi.</div></div>
+        <div class="feature-row"><span class="feature-num">05</span><div><b>Ad-hoc aliases.</b> Point a hostname at an already-running process: <span class="mono hot">proxy alias api 8080</span>. Useful for binaries you didn't start with <span class="mono">dev</span>.</div></div>
+        <div class="feature-row"><span class="feature-num">06</span><div><b>Optional user service.</b> Install a launchd / systemd user service and the proxy boots with your session — no per-shell start, no orphaned tabs.</div></div>
+      </div>
+
+      <div class="code-panel">
+        <div class="panel-bar">
+          <span class="dots"><i></i><i></i><i></i></span>
+          <span>.jig.toml</span>
+          <span>cfg</span>
+        </div>
+<pre class="code-block"><span class="d">[dev]</span>
+<span class="k">proxy_port</span>          = <span class="v">1355</span>
+<span class="k">https_port</span>          = <span class="v">1443</span>
+<span class="k">https</span>               = <span class="v">false</span>
+<span class="k">http2</span>               = <span class="v">true</span>
+<span class="k">lan</span>                 = <span class="v">false</span>
+<span class="k">tld</span>                 = <span class="s">"localhost"</span>
+<span class="k">workspace_discovery</span> = <span class="v">false</span>
+
+<span class="d">[[dev.apps]]</span>
+<span class="k">name</span>    = <span class="s">"api"</span>
+<span class="k">kind</span>    = <span class="h">"env-port"</span>
+<span class="k">command</span> = <span class="s">"cargo run --bin api"</span>
+
+<span class="d">[[dev.apps]]</span>
+<span class="k">name</span> = <span class="s">"web"</span>
+<span class="k">dir</span>  = <span class="s">"apps/web"</span>
+<span class="k">kind</span> = <span class="h">"vite"</span>
+<span class="k">argv</span> = [<span class="s">"bun"</span>, <span class="s">"run"</span>, <span class="s">"dev"</span>]</pre>
+      </div>
+    </div>
+
+    <!-- command rail -->
+    <div class="cmdrail">
+      <div class="cmdrail-h">commands · <span class="d">run from the repo root</span></div>
+      <div class="cmdrail-grid">
+        <div><span class="d">$</span> scripts/jig <span class="hot">dev</span></div>
+        <div><span class="d">$</span> scripts/jig <span class="hot">dev</span> --app web</div>
+        <div><span class="d">$</span> scripts/jig <span class="hot">proxy</span> start</div>
+        <div><span class="d">$</span> scripts/jig <span class="hot">proxy</span> list</div>
+        <div><span class="d">$</span> scripts/jig <span class="hot">proxy</span> run web -- vite</div>
+        <div><span class="d">$</span> scripts/jig <span class="hot">proxy</span> alias api 8080</div>
+        <div><span class="d">$</span> scripts/jig <span class="hot">proxy</span> cert generate</div>
+        <div><span class="d">$</span> scripts/jig <span class="hot">proxy</span> cert trust</div>
+        <div><span class="d">$</span> scripts/jig <span class="hot">proxy</span> service install</div>
+      </div>
+      <div class="cmdrail-foot">
+        <span>state · <span class="mono">~/.jig/proxy</span> &nbsp;·&nbsp; override with <span class="mono">JIG_PROXY_STATE_DIR</span></span>
+        <span class="d">runtime-owned · <s>not</s> in <span class="mono">.agent/jig-contract.json</span></span>
+      </div>
+    </div>
+  </section>

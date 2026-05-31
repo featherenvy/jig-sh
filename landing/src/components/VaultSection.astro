@@ -1,0 +1,134 @@
+---
+---
+
+  <section class="section appear" id="vault">
+    <div class="section-head">
+      <span class="no">07</span>
+      <h2>Sealed. Audited. Redacted.</h2>
+    </div>
+
+    <div class="section-intro">
+      <p class="lede">
+        <span class="hot">vault run --env TOKEN=gh_token -- gh release create</span> resolves a named secret from an encrypted local vault, injects it into the child's environment only, redacts known forms of it from output, and records the run in a tamper-evident audit log.
+      </p>
+      <p class="sub">
+        A separate crate, <span class="hot">crates/jig-vault</span>, owns the encrypted store, broker, and audit chain. <b>Argon2id</b> passphrase derivation, <b>XChaCha20-Poly1305</b> AEAD, owner-only filesystem permissions. Plaintext never lands in repo state, MCP results, command receipts, or <span class="mono">Debug</span> output.
+      </p>
+    </div>
+
+    <!-- brokered run lifecycle · 3 zones with hard borders + dimension arrows -->
+    <div class="brokered">
+      <div class="brokered-zone z-vault">
+        <div class="stamp"><span class="stamp-n">01</span> the vault</div>
+        <div class="zone-body">
+          <div class="zone-row"><span>path</span><b>~/.jig/vault/</b></div>
+          <div class="zone-row"><span>perms</span><b>owner-only · 0600</b></div>
+          <div class="zone-row"><span>kdf</span><b>Argon2id 128MiB</b></div>
+          <div class="zone-row"><span>aead</span><b>XChaCha20-Poly1305</b></div>
+          <div class="zone-row"><span>min pass</span><b>12 bytes</b></div>
+        </div>
+        <div class="zone-divider">contents · names only</div>
+        <div class="zone-list">
+          <div><span class="zone-key">GH_TOKEN</span><span class="zone-bar"></span></div>
+          <div><span class="zone-key">DEPLOY_KEY</span><span class="zone-bar"></span></div>
+          <div><span class="zone-key">DB_PASSWORD</span><span class="zone-bar"></span></div>
+        </div>
+      </div>
+
+      <div class="brokered-sep" aria-hidden="true">
+        <svg viewBox="0 0 40 20" width="40" height="20">
+          <line x1="2"  y1="10" x2="38" y2="10" stroke="#ff4d1f" stroke-width="1"/>
+          <path d="M 32 5 L 38 10 L 32 15" stroke="#ff4d1f" stroke-width="1" fill="none"/>
+        </svg>
+      </div>
+
+      <div class="brokered-zone z-broker">
+        <div class="stamp"><span class="stamp-n">02</span> the broker</div>
+        <div class="zone-body">
+          <div class="zone-row"><span>unlock</span><b>$JIG_VAULT_PASSPHRASE</b></div>
+          <div class="zone-row"><span>resolve</span><b>in-memory · locked</b></div>
+          <div class="zone-row"><span>env</span><b>cleaned allowlist</b></div>
+          <div class="zone-row"><span>inject</span><b>VAR=secret-bytes</b></div>
+          <div class="zone-row"><span>timeout</span><b>30 minutes</b></div>
+          <div class="zone-row"><span>caps</span><b>1 MiB stdout · 1 MiB stderr</b></div>
+        </div>
+        <div class="zone-divider">child sees only</div>
+        <div class="zone-allow">PATH · HOME · TMPDIR · locale · <span class="hot">+ your env vars</span></div>
+      </div>
+
+      <div class="brokered-sep" aria-hidden="true">
+        <svg viewBox="0 0 40 20" width="40" height="20">
+          <line x1="2"  y1="10" x2="38" y2="10" stroke="#ff4d1f" stroke-width="1"/>
+          <path d="M 32 5 L 38 10 L 32 15" stroke="#ff4d1f" stroke-width="1" fill="none"/>
+        </svg>
+      </div>
+
+      <div class="brokered-zone z-trace">
+        <div class="stamp"><span class="stamp-n">03</span> the trace</div>
+        <div class="zone-body">
+          <div class="zone-row"><span>stdout</span><b>redacted · returned</b></div>
+          <div class="zone-row"><span>stderr</span><b>redacted · returned</b></div>
+          <div class="zone-row"><span>exit</span><b>propagated</b></div>
+          <div class="zone-row"><span>audit</span><b>HMAC-chained JSONL</b></div>
+          <div class="zone-row"><span>run id</span><b>pairs start ↔ finish</b></div>
+        </div>
+        <div class="zone-divider">plaintext never reaches</div>
+        <div class="zone-deny">
+          <span>.agent/state</span><span>MCP results</span><span>receipts</span><span>Debug logs</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- features + audit tail -->
+    <div class="feature-grid">
+      <div class="feature-list">
+        <div class="feature-row"><span class="feature-num">01</span><div><b>Strong crypto, no knobs.</b> Argon2id (128 MiB · 3 iter · 4 lanes) wraps a random data key; XChaCha20-Poly1305 seals state with role-tagged AEAD. Nothing to weaken.</div></div>
+        <div class="feature-row"><span class="feature-num">02</span><div><b>Brokered, not granted.</b> Secrets resolve in-memory and inject only into the child's env. <span class="mono">jig</span> never returns plaintext through public APIs, MCP, receipts, or <span class="mono">Debug</span>.</div></div>
+        <div class="feature-row"><span class="feature-num">03</span><div><b>Cleaned environment.</b> The child sees a strict allowlist — PATH, HOME, TMPDIR, locale — plus the secret vars you named. No <span class="mono">SSH_AUTH_SOCK</span>, no <span class="mono">XDG_*</span>, no surprise inheritance.</div></div>
+        <div class="feature-row"><span class="feature-num">04</span><div><b>Output redaction.</b> Known forms of resolved secrets are scrubbed from captured stdout and stderr before display. A backup control &mdash; <span class="serif ink">never the boundary</span>.</div></div>
+        <div class="feature-row"><span class="feature-num">05</span><div><b>Tamper-evident audit.</b> Every mutation, every run, every verify is an HMAC-chained JSONL event. <span class="mono hot">vault audit verify</span> walks the chain and reports edits, torn tails, or broken links.</div></div>
+        <div class="feature-row"><span class="feature-num">06</span><div><b>Local-only state.</b> Vault lives at <span class="mono">~/.jig/vault</span> (or <span class="mono">JIG_VAULT_HOME</span>) with owner-only perms — never inside the repo, never inside <span class="mono">.agent/state</span>.</div></div>
+      </div>
+
+      <div class="code-panel">
+        <div class="panel-bar">
+          <span class="dots"><i></i><i></i><i></i></span>
+          <span>~/.jig/vault/audit.jsonl &nbsp;·&nbsp; tail</span>
+          <span>HMAC-chained</span>
+        </div>
+        <div class="audit">
+          <div class="receipt ok"><span class="ts">10:42:11</span><span class="ev"><span class="k">vault.init</span> · ok · <span class="d">vault[v1] · home=~/.jig/vault</span></span></div>
+          <div class="receipt ok"><span class="ts">10:42:18</span><span class="ev"><span class="k">secret.set</span> · <span class="y">GH_TOKEN</span> · <span class="d">40 B</span></span></div>
+          <div class="receipt ok"><span class="ts">10:42:21</span><span class="ev"><span class="k">secret.set</span> · <span class="y">DEPLOY_KEY</span> · <span class="d">512 B</span></span></div>
+          <div class="receipt pend"><span class="ts">10:42:23</span><span class="ev"><span class="k">brokered.start</span> · run_id=<span class="d">01HG6X…</span> · <span class="d">env={'{'}TOKEN→GH_TOKEN{'}'}</span></span></div>
+          <div class="receipt ok"><span class="ts">10:42:24</span><span class="ev"><span class="k">brokered.finish</span> · ok · <span class="d">exit=0 · stdout=24 B · stderr=0 B</span></span></div>
+          <div class="receipt fail"><span class="ts">10:43:01</span><span class="ev"><span class="k">brokered.failed</span> · <span class="x">stage=resolve</span> · run_id=<span class="d">01HG7P…</span> · <span class="d">unknown secret name</span></span></div>
+          <div class="receipt ok" style="margin-bottom:0;"><span class="ts">10:43:05</span><span class="ev"><span class="k">audit.verify</span> · ok · <span class="d">7 events · head b3f1…9c2e</span></span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- command rail -->
+    <div class="cmdrail">
+      <div class="cmdrail-h">commands · <span class="d">passphrase via $JIG_VAULT_PASSPHRASE — cleared after capture · no CLI flag (leaks via shell history)</span></div>
+      <div class="cmdrail-grid">
+        <div><span class="d">$</span> scripts/jig <span class="hot">vault</span> init</div>
+        <div><span class="d">$</span> scripts/jig <span class="hot">vault</span> status</div>
+        <div><span class="d">$</span> scripts/jig <span class="hot">vault</span> audit verify</div>
+        <div><span class="d">$</span> scripts/jig <span class="hot">vault</span> secret list</div>
+        <div><span class="d">$</span> scripts/jig <span class="hot">vault</span> secret set GH_TOKEN --value-stdin</div>
+        <div><span class="d">$</span> scripts/jig <span class="hot">vault</span> secret remove GH_TOKEN</div>
+        <div class="cmdrail-wide"><span class="d">$</span> scripts/jig <span class="hot">vault</span> run --env TOKEN=gh_token -- gh release create v0.3.0</div>
+      </div>
+      <div class="cmdrail-foot">
+        <span>state · <span class="mono">~/.jig/vault</span> &nbsp;·&nbsp; override with <span class="mono">JIG_VAULT_HOME</span></span>
+        <span class="d">runtime-owned · <s>not</s> in <span class="mono">.agent/jig-contract.json</span> · <s>not</s> in MCP · <s>not</s> in receipts</span>
+      </div>
+    </div>
+
+    <!-- honest caveat -->
+    <div class="caveat">
+      <div class="caveat-tag">⚠ &nbsp;blast-radius reducer, not a sandbox</div>
+      <p>Once a child process receives a secret in its environment, that process can use or disclose it. Redaction catches accidental output, not malicious transformations or side channels. The vault shrinks what your repo, your receipts, and your MCP transcripts can leak — it doesn't replace a real secret manager for production.</p>
+    </div>
+  </section>

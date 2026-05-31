@@ -1,0 +1,42 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+import Tape from "../components/Tape.astro";
+import Nav from "../components/Nav.astro";
+import Hero from "../components/Hero.astro";
+import WhatSection from "../components/WhatSection.astro";
+import FlowSection from "../components/FlowSection.astro";
+import ContractSection from "../components/ContractSection.astro";
+import InstallSection from "../components/InstallSection.astro";
+import PortlessSection from "../components/PortlessSection.astro";
+import VaultSection from "../components/VaultSection.astro";
+import PromptsSection from "../components/PromptsSection.astro";
+import SpecsSection from "../components/SpecsSection.astro";
+import QuickstartSection from "../components/QuickstartSection.astro";
+import PhilosophySection from "../components/PhilosophySection.astro";
+import FaqSection from "../components/FaqSection.astro";
+import SiteFooter from "../components/SiteFooter.astro";
+import BottomTape from "../components/BottomTape.astro";
+---
+
+<BaseLayout>
+  <Tape />
+  <div class="wrap">
+    <Nav />
+    <main>
+      <Hero />
+      <WhatSection />
+      <FlowSection />
+      <ContractSection />
+      <QuickstartSection />
+      <InstallSection />
+      <PortlessSection />
+      <VaultSection />
+      <PromptsSection />
+      <SpecsSection />
+      <PhilosophySection />
+      <FaqSection />
+    </main>
+    <SiteFooter />
+  </div>
+  <BottomTape />
+</BaseLayout>

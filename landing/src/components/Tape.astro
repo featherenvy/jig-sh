@@ -1,0 +1,10 @@
+---
+import { site } from '../config/site';
+---
+
+<div class="tape">
+  <div class="tape-inner">
+    <span><b>source</b> · <a href={site.repoUrl}>{site.repoHost}</a></span>
+    <span><a href={`${site.repoUrl}/releases`}>releases</a> · <a href={site.cratesUrl}>crates.io</a></span>
+  </div>
+</div>

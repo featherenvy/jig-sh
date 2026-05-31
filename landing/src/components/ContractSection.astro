@@ -1,0 +1,80 @@
+---
+---
+
+  <section class="section appear" id="contract">
+    <div class="section-head">
+      <span class="no">03</span>
+      <h2>The contract, on paper.</h2>
+    </div>
+
+    <div class="contract">
+      <div class="left">
+        <h3>Rendered into your repo</h3>
+        <p>Files jig writes and maintains. Everything outside this list stays repo-owned.</p>
+<pre class="tree">
+<b>target-repo/</b>
+├── <i>.jig.toml</i>            <span class="tic">— public config + renderer answers</span>
+├── <i>.mcp.json</i>            <span class="tic">— MCP wiring for agents</span>
+├── <i>AGENTS.md</i>            <span class="tic">— managed block; rest is yours</span>
+├── <i>agent-map.md</i>         <span class="tic">— surface area, in plain text</span>
+├── <s>.agent/</s>
+│   ├── <i>PLANS.md</i>         <span class="tic">— in-flight plans</span>
+│   ├── <i>jig-contract.json</i><span class="tic">— machine-readable surface</span>
+│   └── <s>state/</s>            <span class="tic">— append-only receipts (JSONL)</span>
+├── <s>scripts/</s>
+│   ├── <u>jig</u>              <span class="tic">— launcher; pins runtime version</span>
+│   ├── <u>install-jig.sh</u>
+│   └── <u>enforce-coverage.cjs</u>
+└── <s>.github/workflows/</s>
+    ├── <u>agent-map-check.yml</u>
+    ├── <u>repo-policy.yml</u>
+    ├── <u>rust-tests.yml</u>
+    └── <u>webapp-checks.yml</u>
+</pre>
+      </div>
+
+      <div class="right" id="receipts">
+        <h3>What an agent leaves behind</h3>
+        <p>A streaming tail of <span class="hot">.agent/state/receipts.jsonl</span>. Reviewable. Diffable. Auditable.</p>
+
+        <div class="receipts">
+          <div class="receipt ok">
+            <span class="ts">10:42:11</span>
+            <span class="ev"><span class="k">gate</span> · <span class="y">fmt</span> · ok · <span class="d">cargo fmt --check</span></span>
+          </div>
+          <div class="receipt ok">
+            <span class="ts">10:42:14</span>
+            <span class="ev"><span class="k">gate</span> · <span class="y">clippy</span> · ok · <span class="d">0 warnings, 0 errors</span></span>
+          </div>
+          <div class="receipt pend">
+            <span class="ts">10:42:18</span>
+            <span class="ev"><span class="k">work</span> · <span class="v">edit</span> · crates/api/src/routes.rs (+38 −12)</span>
+          </div>
+          <div class="receipt ok">
+            <span class="ts">10:42:42</span>
+            <span class="ev"><span class="k">gate</span> · <span class="y">test</span> · ok · 184 passed · 12.4s</span>
+          </div>
+          <div class="receipt fail">
+            <span class="ts">10:43:01</span>
+            <span class="ev"><span class="k">gate</span> · <span class="x">coverage</span> · fail · 71.8% (&lt; 80% threshold)</span>
+          </div>
+          <div class="receipt pend">
+            <span class="ts">10:43:09</span>
+            <span class="ev"><span class="k">plan</span> · update · <span class="d">"add table-level coverage for routes::auth"</span></span>
+          </div>
+          <div class="receipt ok">
+            <span class="ts">10:44:02</span>
+            <span class="ev"><span class="k">gate</span> · <span class="y">coverage</span> · ok · 83.2%</span>
+          </div>
+          <div class="receipt ok">
+            <span class="ts">10:44:11</span>
+            <span class="ev"><span class="k">gate</span> · <span class="y">schema-check</span> · ok · <span class="d">.sqlx/ matches HEAD</span></span>
+          </div>
+          <div class="receipt ok" style="margin-bottom:0;">
+            <span class="ts">10:44:14</span>
+            <span class="ev"><span class="k">commit</span> · <span class="v">staged</span> · 1 file · sig <span class="d">9f3c81…</span></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>

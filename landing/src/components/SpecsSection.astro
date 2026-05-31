@@ -1,0 +1,77 @@
+---
+---
+
+  <section class="section appear">
+    <div class="section-head">
+      <span class="no">09</span>
+      <h2>What it gates, what it leaves alone.</h2>
+    </div>
+
+    <div class="specs">
+      <div class="row">
+        <div class="k">Stacks</div>
+        <div class="v"><b>Rust-first today.</b> JavaScript / TypeScript web apps already supported alongside. Modular language adapters in flight so other stacks can plug in without forking the harness.</div>
+        <div class="s">roadmap</div>
+      </div>
+      <div class="row">
+        <div class="k">Rust path</div>
+        <div class="v"><b>Cargo workspaces</b>, <code>cargo fmt</code>, <code>cargo clippy</code> — all assumed present on the default path.</div>
+        <div class="s">required</div>
+      </div>
+      <div class="row">
+        <div class="k">Scaffold preset</div>
+        <div class="v"><code>jig init --preset rust-react --db postgres --frontends web,landing,admin</code> writes <b>apps/&lt;repo&gt;-api</b>, <b>crates/&lt;repo&gt;-core</b>, <b>crates/&lt;repo&gt;</b>, <b>crates/&lt;repo&gt;-test-support</b>, optional <b>crates/&lt;repo&gt;-db</b>, Vite React <b>web</b>, Astro <b>landing</b>, and <b>admin-panel</b>. Rust roots default to <code>apps</code> + <code>crates</code>.</div>
+        <div class="s">greenfield</div>
+      </div>
+      <div class="row">
+        <div class="k">Database</div>
+        <div class="v"><b>SQLx</b> can be enabled with Postgres or SQLite, or skipped entirely. Schema dumps are off until the project provides a dump command.</div>
+        <div class="s">optional</div>
+      </div>
+      <div class="row">
+        <div class="k">Web apps</div>
+        <div class="v">Each configured app directory exposes <b>lint</b>, <b>typecheck</b>, <b>build:bundle</b>, <b>test:coverage</b>. Bun by default.</div>
+        <div class="s">optional</div>
+      </div>
+      <div class="row">
+        <div class="k">Coverage</div>
+        <div class="v">Hard threshold enforced by <b>scripts/enforce-coverage.cjs</b>. Default <code>80%</code>; generated scaffold frontends use Bun unless overridden.</div>
+        <div class="s">gate</div>
+      </div>
+      <div class="row">
+        <div class="k">Schema</div>
+        <div class="v">Schema dumps remain <b>project-owned</b>. Jig only verifies they match a checked state.</div>
+        <div class="s">gate</div>
+      </div>
+      <div class="row">
+        <div class="k">Work loop</div>
+        <div class="v"><b>scripts/jig work review</b>, <b>work refine</b>, <b>work gates</b>, <b>work receipts</b>, and <b>state archive</b> keep review findings, fixer loops, gate freshness, and receipt history inspectable.</div>
+        <div class="s">workflow</div>
+      </div>
+      <div class="row">
+        <div class="k">Dev proxy</div>
+        <div class="v"><b>jig-dev-proxy</b> serves repo-scoped hostnames over HTTP/HTTPS w/ HTTP/2 + WebSockets, so multiple projects run side by side with no port conflicts. State lives in <code>~/.jig/proxy</code>, outside <code>.agent/state</code>.</div>
+        <div class="s">runtime-owned</div>
+      </div>
+      <div class="row">
+        <div class="k">TLS · LAN</div>
+        <div class="v">Local <b>CA + leaf certs</b> with explicit trust/untrust. <b>LAN mode</b> exposes the same hostnames to devices on the same network.</div>
+        <div class="s">opt-in</div>
+      </div>
+      <div class="row">
+        <div class="k">Vault · broker</div>
+        <div class="v"><b>jig-vault</b> seals local secrets with Argon2id + XChaCha20-Poly1305 and runs commands with env-only injection + redaction. Tamper-evident audit log.</div>
+        <div class="s">runtime-owned</div>
+      </div>
+      <div class="row">
+        <div class="k">Prompt registry</div>
+        <div class="v"><b>jig prompt</b> stores reusable agent prompts as Markdown with YAML frontmatter across <code>user:</code>, <code>repo:</code>, and <code>pack:</code> namespaces. Bodies render through MiniJinja with <code>--var</code>. Versioned JSON archive for export/import.</div>
+        <div class="s">runtime-owned</div>
+      </div>
+      <div class="row">
+        <div class="k">Out of scope</div>
+        <div class="v">Crate-level <code>AGENTS.md</code> files, schema implementations, and app code outside an explicit scaffold preset remain <b>repo-owned</b>.</div>
+        <div class="s">repo-owned</div>
+      </div>
+    </div>
+  </section>

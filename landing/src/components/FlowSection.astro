@@ -1,0 +1,27 @@
+---
+import { site } from '../config/site';
+---
+
+  <section class="section appear" id="flow">
+    <div class="section-head">
+      <span class="no">02</span>
+      <h2>Two starts. Update later.</h2>
+    </div>
+
+    <div class="flow">
+      <div>
+        <div class="stage">→ start path 01 / new repo</div>
+        <div class="cmd"><span class="pf">$</span> jig init <span class="hot">/path/to/repo</span></div>
+        <div class="desc">Use <span class="hot">init</span> when you are creating a fresh repo. Release builds pull the official harness template from <a href={site.repoUrl} style="color:var(--hot);">{site.repoHost}</a>. Add <span class="hot">--preset rust-react</span> to scaffold a Rust API workspace plus Vite React and Astro frontend apps in one shot.</div>
+      </div>
+      <div>
+        <div class="stage">→ start path 02 / existing repo</div>
+        <div class="cmd"><span class="pf">$</span> jig adopt <span class="hot">.</span></div>
+        <div class="desc">Use <span class="hot">adopt</span> instead of init when a repo already exists. It previews by default and only writes files when you re-run with <span class="hot">--write</span>.</div>
+      </div>
+      <div>
+        <div class="stage">→ later / template updates</div>
+        <div class="cmd"><span class="pf">$</span> jig update <span class="hot">--recopy</span></div>
+        <div class="desc">After a repo has been initialized or adopted, use <span class="hot">update</span> to advance to a newer template or re-render from stored answers. <span class="hot">--force</span> is required to overwrite locally edited managed files.</div>
+      </div>
+    </div>

@@ -1,4 +1,6 @@
-use axum::{Json, Router, extract::State, routing::get};
+use std::net::SocketAddr;
+
+use anyhow::{Context, Result};
 use <<[ module_name ]>>_core::AppVersion;
 [% if db_enabled %]
 #[cfg(feature = "db")]
@@ -6,20 +8,175 @@ pub use <<[ module_name ]>>_db as db;
 [% endif %]
 
 #[derive(Clone, Debug)]
-pub struct AppState {
+pub struct AppConfig {
     version: AppVersion,
+    bind_addr: SocketAddr,
+[% if db_enabled %]
+    #[cfg(feature = "db")]
+    database_url: Option<String>,
+[% endif %]
+}
+
+impl AppConfig {
+    pub fn from_env() -> Result<Self> {
+        Self::from_env_with_version(env!("CARGO_PKG_VERSION"))
+    }
+
+    pub fn from_env_with_version(version: impl Into<String>) -> Result<Self> {
+        let bind_addr = std::env::var("BIND_ADDR").unwrap_or_else(|_| "127.0.0.1:0".into());
+        let bind_addr = bind_addr.parse().with_context(|| {
+            format!("Failed to parse BIND_ADDR '{bind_addr}' as a socket address")
+        })?;
+[% if db_enabled %]
+
+        #[cfg(feature = "db")]
+        let database_url = Some(
+            std::env::var("DATABASE_URL")
+                .context("DATABASE_URL is required when the db feature is enabled")?,
+        );
+[% endif %]
+
+        Ok(Self {
+            version: AppVersion::new(version),
+            bind_addr,
+            [% if db_enabled %]
+            #[cfg(feature = "db")]
+            database_url,
+            [% endif %]
+        })
+    }
+
+    pub fn for_tests() -> Self {
+        Self::for_tests_with_version(env!("CARGO_PKG_VERSION"))
+    }
+
+    pub fn for_tests_with_version(version: impl Into<String>) -> Self {
+        Self {
+            version: AppVersion::new(version),
+            bind_addr: "127.0.0.1:0".parse().expect("test bind address is valid"),
+            [% if db_enabled %]
+            #[cfg(feature = "db")]
+            database_url: None,
+            [% endif %]
+        }
+    }
+
+    pub fn bind_addr(&self) -> SocketAddr {
+        self.bind_addr
+    }
+
+    pub fn version(&self) -> &AppVersion {
+        &self.version
+    }
+[% if db_enabled %]
+
+    #[cfg(feature = "db")]
+    pub fn database_url(&self) -> Option<&str> {
+        self.database_url.as_deref()
+    }
+[% endif %]
+}
+
+#[derive(Clone, Debug)]
+pub struct AppState {
+    config: AppConfig,
+    [% if db_enabled %]
+    #[cfg(feature = "db")]
+    db: Option<db::Db>,
+    [% endif %]
 }
 
 impl AppState {
     pub fn new() -> Self {
-        Self::new_with_version(env!("CARGO_PKG_VERSION"))
+        Self::for_tests()
     }
 
     pub fn new_with_version(version: impl Into<String>) -> Self {
-        Self {
-            version: AppVersion::new(version),
-        }
+        Self::for_tests_with_version(version)
     }
+
+    pub fn for_tests() -> Self {
+        Self::for_tests_with_version(env!("CARGO_PKG_VERSION"))
+    }
+
+    pub fn for_tests_with_version(version: impl Into<String>) -> Self {
+        Self::from_test_config(AppConfig::for_tests_with_version(version))
+    }
+
+    pub fn from_test_config(config: AppConfig) -> Self {
+        [% if db_enabled %]
+        Self {
+            config,
+            #[cfg(feature = "db")]
+            db: None,
+        }
+        [% else %]
+        Self { config }
+        [% endif %]
+    }
+
+    pub async fn from_config(config: AppConfig) -> Result<Self> {
+        [% if db_enabled %]
+        #[cfg(feature = "db")]
+        {
+            let database_url = config.database_url().ok_or_else(|| {
+                anyhow::anyhow!("DATABASE_URL is required to initialize the database")
+            })?;
+            let db = db::Db::connect(database_url)
+                .await
+                .context("Failed to connect to the database")?;
+            db.migrate()
+                .await
+                .context("Failed to run database migrations")?;
+            return Ok(Self {
+                config,
+                db: Some(db),
+            });
+        }
+
+        #[cfg(not(feature = "db"))]
+        {
+            Ok(Self {
+                config,
+                #[cfg(feature = "db")]
+                db: None,
+            })
+        }
+        [% else %]
+        Ok(Self { config })
+        [% endif %]
+    }
+
+    pub fn config(&self) -> &AppConfig {
+        &self.config
+    }
+
+    pub fn version(&self) -> &AppVersion {
+        self.config.version()
+    }
+
+    pub fn is_ready(&self) -> bool {
+        [% if db_enabled %]
+        #[cfg(feature = "db")]
+        {
+            return self.db.is_some();
+        }
+
+        #[cfg(not(feature = "db"))]
+        {
+            true
+        }
+        [% else %]
+        true
+        [% endif %]
+    }
+[% if db_enabled %]
+
+    #[cfg(feature = "db")]
+    pub fn db(&self) -> Option<&db::Db> {
+        self.db.as_ref()
+    }
+[% endif %]
 }
 
 impl Default for AppState {
@@ -28,27 +185,21 @@ impl Default for AppState {
     }
 }
 
-pub fn router(state: AppState) -> Router {
-    Router::new()
-        .route("/health", get(health))
-        .route("/api/version", get(version))
-        .with_state(state)
-}
-
-async fn health() -> &'static str {
-    "ok"
-}
-
-async fn version(State(state): State<AppState>) -> Json<AppVersion> {
-    Json(state.version)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use <<[ module_name ]>>_core::APP_NAME;
 
     #[test]
     fn app_state_uses_current_version() {
-        assert_eq!(AppState::new().version.name, <<[ module_name ]>>_core::APP_NAME);
+        assert_eq!(AppState::new().version().name, APP_NAME);
+    }
+
+    #[test]
+    fn test_config_uses_loopback_bind_addr() {
+        assert_eq!(
+            AppConfig::for_tests().bind_addr().to_string(),
+            "127.0.0.1:0"
+        );
     }
 }

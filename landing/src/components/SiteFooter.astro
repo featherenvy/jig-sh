@@ -1,0 +1,29 @@
+---
+import { repoBlob, repoTree, site } from '../config/site';
+---
+
+  <footer class="foot">
+    <div>
+      <div class="big">JIG<em>.</em>SH</div>
+      <p class="meta">harness · runtime · contract<br><b>operate your repos with agents you can audit.</b><br><br>© Banana Pancakes s.r.o. · <a href={site.companyUrl} style="color:var(--ink-soft);">bananapancakes.co</a></p>
+    </div>
+    <div>
+      <h4>Project</h4>
+      <a href={site.repoUrl}>Source</a>
+      <a href={site.skillsRepoUrl}>jig-skills</a>
+      <a href={`${site.repoUrl}/releases`}>Releases</a>
+      <a href={repoBlob("CHANGELOG.md")}>CHANGELOG</a>
+      <a href={site.cratesUrl}>crates.io</a>
+    </div>
+    <div>
+      <h4>Docs</h4>
+      <a href={repoBlob("docs/configuration.md")}>Configuration</a>
+      <a href={repoBlob("docs/public-contract.md")}>Public contract</a>
+      <a href={repoBlob("docs/repo-intent.md")}>Repo intent</a>
+      <a href={repoTree("examples")}>Examples</a>
+    </div>
+    <div>
+      <h4>Talk</h4>
+      <a href={site.companyUrl}>bananapancakes.co</a>
+    </div>
+  </footer>

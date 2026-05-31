@@ -27,8 +27,24 @@ const RUST_WORKSPACE_TEMPLATES: &[ScaffoldTemplateFile] = &[
         output: "crates/{package}/Cargo.toml",
     },
     ScaffoldTemplateFile {
+        template: "rust-react/workspace/crates/app/AGENTS.md.jinja",
+        output: "crates/{package}/AGENTS.md",
+    },
+    ScaffoldTemplateFile {
         template: "rust-react/workspace/crates/app/src/lib.rs.jinja",
         output: "crates/{package}/src/lib.rs",
+    },
+    ScaffoldTemplateFile {
+        template: "rust-react/workspace/crates/http/Cargo.toml.jinja",
+        output: "crates/{package}-http/Cargo.toml",
+    },
+    ScaffoldTemplateFile {
+        template: "rust-react/workspace/crates/http/AGENTS.md.jinja",
+        output: "crates/{package}-http/AGENTS.md",
+    },
+    ScaffoldTemplateFile {
+        template: "rust-react/workspace/crates/http/src/lib.rs.jinja",
+        output: "crates/{package}-http/src/lib.rs",
     },
     ScaffoldTemplateFile {
         template: "rust-react/workspace/apps/api/Cargo.toml.jinja",
@@ -43,8 +59,28 @@ const RUST_WORKSPACE_TEMPLATES: &[ScaffoldTemplateFile] = &[
         output: "crates/{package}-test-support/Cargo.toml",
     },
     ScaffoldTemplateFile {
+        template: "rust-react/workspace/crates/test-support/AGENTS.md.jinja",
+        output: "crates/{package}-test-support/AGENTS.md",
+    },
+    ScaffoldTemplateFile {
         template: "rust-react/workspace/crates/test-support/src/lib.rs.jinja",
         output: "crates/{package}-test-support/src/lib.rs",
+    },
+    ScaffoldTemplateFile {
+        template: "rust-react/workspace/crates/test-support/src/app.rs.jinja",
+        output: "crates/{package}-test-support/src/app.rs",
+    },
+    ScaffoldTemplateFile {
+        template: "rust-react/workspace/crates/test-support/src/http.rs.jinja",
+        output: "crates/{package}-test-support/src/http.rs",
+    },
+    ScaffoldTemplateFile {
+        template: "rust-react/workspace/crates/test-support/src/responses.rs.jinja",
+        output: "crates/{package}-test-support/src/responses.rs",
+    },
+    ScaffoldTemplateFile {
+        template: "rust-react/workspace/crates/test-support/tests/http.rs.jinja",
+        output: "crates/{package}-test-support/tests/http.rs",
     },
 ];
 
@@ -54,8 +90,16 @@ const RUST_DB_TEMPLATES: &[ScaffoldTemplateFile] = &[
         output: "crates/{package}-db/Cargo.toml",
     },
     ScaffoldTemplateFile {
+        template: "rust-react/workspace/crates/db/AGENTS.md.jinja",
+        output: "crates/{package}-db/AGENTS.md",
+    },
+    ScaffoldTemplateFile {
         template: "rust-react/workspace/crates/db/src/lib.rs.jinja",
         output: "crates/{package}-db/src/lib.rs",
+    },
+    ScaffoldTemplateFile {
+        template: "rust-react/workspace/crates/test-support/src/db.rs.jinja",
+        output: "crates/{package}-test-support/src/db.rs",
     },
 ];
 

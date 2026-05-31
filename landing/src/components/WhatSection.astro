@@ -1,0 +1,41 @@
+---
+---
+
+  <section class="section appear" id="what">
+    <div class="section-head">
+      <span class="no">01</span>
+      <h2>Why a jig.</h2>
+    </div>
+
+    <div class="section-intro">
+      <p class="lede">
+        Drop a coding agent into a repo and it guesses at your commands, drifts across runs, and leaves nothing you can audit. <span class="serif ink">A prose </span><span class="acid">AGENTS.md</span><span class="serif ink"> is a suggestion — not a contract.</span>
+      </p>
+      <p class="sub">
+        A jig replaces that with a fixed, inspectable surface — where to look, what to run, what counts as done, and a receipt for every step. The four pieces below are how.
+      </p>
+    </div>
+
+    <div class="principles">
+      <div>
+        <span class="pno">01</span>
+        <h3>Drop-in <em>AGENTS.md</em></h3>
+        <p>An opinionated <span class="acid">AGENTS.md</span> + agent-map lands in the repo and tells the agent what the surface is, where to look, and what is in-bounds.</p>
+      </div>
+      <div>
+        <span class="pno">02</span>
+        <h3>Stable <em>contract</em> surface</h3>
+        <p>The agent calls into <span class="hot">scripts/jig</span>, which dispatches to manifest-defined tools — checks, tests, schema verification, migrations, and repo policy — and writes a receipt for every call. Your existing <span class="acid">Makefile</span> stays project-owned and untouched.</p>
+      </div>
+      <div>
+        <span class="pno">03</span>
+        <h3>Typed <em>jig</em> runtime</h3>
+        <p>Each subcommand declares its arguments and return shape in <span class="hot">.agent/jig-contract.json</span> — the agent sends validated input and gets <span class="acid">structured JSON</span> back, not parsed stdout. An <span class="hot">MCP</span> server (Model Context Protocol) lets models discover and call those tools directly. No shell flags to memorize, no targets to guess.</p>
+      </div>
+      <div>
+        <span class="pno">04</span>
+        <h3>Work <em>gates</em> + receipts</h3>
+        <p>Required gates run on every change. Every run writes append-only <span class="steel">JSONL</span> receipts to <span class="hot">.agent/state/</span> so you can audit what an agent attempted, when, and what passed.</p>
+      </div>
+    </div>
+  </section>

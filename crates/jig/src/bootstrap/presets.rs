@@ -52,6 +52,7 @@ impl ScaffoldPreset {
                     "apps/<repo>-api",
                     "crates/<repo>-core",
                     "crates/<repo>",
+                    "crates/<repo>-http",
                     "crates/<repo>-test-support",
                     "crates/<repo>-db when --db postgres or --db sqlite is selected",
                 ],

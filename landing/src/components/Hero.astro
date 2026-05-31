@@ -1,0 +1,139 @@
+---
+import { site } from '../config/site';
+---
+
+  <!-- ─── HERO ─── -->
+  <section class="hero">
+    <div class="hero-grid">
+      <div>
+        <h1 class="reveal d2">
+          <span class="row a">A&nbsp;HARNESS</span>
+          <span class="row b stroke">FOR&nbsp;YOUR</span>
+          <span class="row c">REPOS,</span>
+          <span class="row b">OPERATED&nbsp;BY</span>
+          <span class="row a">AGENTS.</span>
+        </h1>
+
+        <p class="hero-lede reveal d3">
+          Point a coding agent at your repo and it runs your real checks — <b>format, lint, test, migrate</b> — the same way on every machine, can't close out work until they pass, and leaves an auditable receipt for every run.
+        </p>
+        <p class="hero-stack reveal d3">
+          Built for <b>Rust</b> app repos — Cargo workspaces — with <b>React / TypeScript</b> web apps alongside.
+        </p>
+
+        <dl class="hero-meta reveal d4">
+          <div>
+            <dt>What it is</dt>
+            <dd>A <b>reusable harness</b> that turns a repository into an operating environment for coding agents — opinionated, inspectable, reviewable.</dd>
+          </div>
+          <div>
+            <dt>What it gives you</dt>
+            <dd>A typed <b>jig</b> contract — every tool runs through <b>scripts/jig</b> — with work <b>gates</b> backed by append-only <b>receipts</b>, an MCP runtime, and CI workflows. Plus a port-conflict-free <b>dev proxy</b>, a sealed secrets <b>vault</b>, and a versioned <b>prompt library</b>.</dd>
+          </div>
+          <div>
+            <dt>Who it's for</dt>
+            <dd><b>Rust developers</b> running coding agents on real app repos — Cargo workspaces, optional SQLx — with <b>React / TypeScript</b> frontends (Vite, Astro) via Bun. Other stacks land as modular language adapters ship.</dd>
+          </div>
+        </dl>
+
+        <div class="cta-row reveal d5">
+          <a class="btn" href="#quickstart">
+            <span>jig init</span><span class="arr">↗</span>
+          </a>
+          <a class="btn ghost" href="#contract">
+            <span>read the contract</span><span class="arr">→</span>
+          </a>
+          <a class="btn ghost" href={site.repoUrl} style="border-color: var(--rule-2);">
+            <span>github / source</span><span class="arr">↗</span>
+          </a>
+        </div>
+      </div>
+
+      <!-- schematic right column -->
+      <aside class="schem reveal d3" aria-hidden="true">
+        <div class="schem-grid"></div>
+        <div class="schem-corner tl"></div>
+        <div class="schem-corner tr"></div>
+        <div class="schem-corner bl"></div>
+        <div class="schem-corner br"></div>
+        <div class="schem-label">FIG. 01 — THE JIG (cross-section)</div>
+
+        <svg class="schem-svg" viewBox="0 0 360 420" preserveAspectRatio="xMidYMid meet" fill="none">
+          <!-- center gear · outer g positions, inner g rotates (avoids CSS transform clobbering the translate) -->
+          <g transform="translate(180 210)"><g class="gear-mark">
+            <circle r="74" stroke="#ece6d6" stroke-width=".7" opacity=".55"/>
+            <circle r="58" stroke="#ff4d1f" stroke-width="1.1"/>
+            <circle r="22" stroke="#ece6d6" stroke-width=".7"/>
+            <circle r="3" fill="#ff4d1f"/>
+            <g stroke="#ece6d6" stroke-width=".7">
+              <line x1="-90" y1="0" x2="-58" y2="0"/>
+              <line x1="58"  y1="0" x2="90"  y2="0"/>
+              <line x1="0" y1="-90" x2="0" y2="-58"/>
+              <line x1="0" y1="58"  x2="0" y2="90"/>
+              <line x1="-63" y1="-63" x2="-41" y2="-41"/>
+              <line x1="41"  y1="41"  x2="63"  y2="63"/>
+              <line x1="63"  y1="-63" x2="41"  y2="-41"/>
+              <line x1="-63" y1="63"  x2="-41" y2="41"/>
+            </g>
+            <g fill="#ff4d1f">
+              <rect x="-2"  y="-78" width="4" height="8"/>
+              <rect x="-2"  y="70"  width="4" height="8"/>
+              <rect x="-78" y="-2"  width="8" height="4"/>
+              <rect x="70"  y="-2"  width="8" height="4"/>
+            </g>
+          </g></g>
+
+          <!-- dimension lines & callouts -->
+          <g stroke="#ece6d6" stroke-width=".5" opacity=".55">
+            <line x1="18" y1="40" x2="342" y2="40"/>
+            <line x1="18" y1="36" x2="18"  y2="44"/>
+            <line x1="342" y1="36" x2="342" y2="44"/>
+
+            <line x1="320" y1="80" x2="320" y2="380"/>
+            <line x1="316" y1="80" x2="324" y2="80"/>
+            <line x1="316" y1="380" x2="324" y2="380"/>
+
+            <line x1="18" y1="385" x2="270" y2="385"/>
+            <line x1="18" y1="381" x2="18" y2="389"/>
+            <line x1="270" y1="381" x2="270" y2="389"/>
+          </g>
+          <g fill="#b6ad97" font-family="JetBrains Mono" font-size="9" letter-spacing=".1em">
+            <text x="180" y="34" text-anchor="middle">324.00 mm — REPO BOUNDARY</text>
+            <text x="333" y="232" transform="rotate(90 333 232)" text-anchor="middle">300.00 mm — TEMPLATE</text>
+            <text x="144" y="403" text-anchor="middle">252.00 mm — CONTRACT</text>
+          </g>
+
+          <!-- callout leaders -->
+          <g stroke="#ff4d1f" stroke-width=".6" fill="none">
+            <path d="M 120 150 L 60 100"/>
+            <path d="M 240 150 L 300 100"/>
+            <path d="M 240 270 L 300 320"/>
+            <path d="M 120 270 L 60 320"/>
+          </g>
+        </svg>
+
+        <div class="schem-callout" style="top:78px; left:14px;">
+          <span class="n">1</span>jig runtime
+          <small>Rust CLI · MCP server</small>
+        </div>
+        <div class="schem-callout" style="top:78px; right:14px; text-align:right;">
+          <span class="n">2</span>jig contract
+          <small>schema in JSON</small>
+        </div>
+        <div class="schem-callout" style="bottom:54px; right:14px; text-align:right;">
+          <span class="n">3</span>receipts log
+          <small>append-only</small>
+        </div>
+        <div class="schem-callout" style="bottom:54px; left:14px;">
+          <span class="n">4</span>policy &amp; CI
+          <small>scripts + actions</small>
+        </div>
+
+        <div class="schem-label-b">
+          <span>SCALE 1:1</span>
+          <s>DO NOT BYPASS GATES</s>
+          <span>DWG 001/A</span>
+        </div>
+      </aside>
+    </div>
+  </section>

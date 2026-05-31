@@ -1,3 +1,13 @@
+pub mod app;
+[% if db_enabled %]
+pub mod db;
+[% endif %]
+pub mod http;
+pub mod responses;
+
+pub use app::TestApp;
+pub use responses::TestResponse;
+
 pub fn test_router() -> axum::Router {
-    <<[ module_name ]>>::router(<<[ module_name ]>>::AppState::new())
+    <<[ module_name ]>>_http::router(<<[ module_name ]>>::AppState::new())
 }

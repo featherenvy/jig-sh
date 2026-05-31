@@ -1,0 +1,30 @@
+---
+import { site } from '../config/site';
+---
+
+  <section class="section appear" id="install">
+    <div class="section-head">
+      <span class="no">05</span>
+      <h2>Drive it from the terminal.</h2>
+    </div>
+
+    <div class="term-block">
+      <div class="legend">
+        <h4>What you're watching</h4>
+        <ul>
+          <li><b>scripts/jig doctor --summary</b> — checks runtime, config, contract, required tools, proxy/vault status, and expected agent skills.</li>
+          <li><b>scripts/jig agent bootstrap</b> — installs the Codex-side skills the harness expects, pulling from the complementary <a href={site.skillsRepoUrl} style="color:var(--hot);">jig-skills</a> marketplace by default. No separate checkout required.</li>
+          <li>Pass <b>--marketplace &lt;source&gt;</b> to override: a GitHub shorthand (<span class="ink">bpcakes/jig-skills</span>) or a local path (<span class="ink">../jig-skills</span>) both work.</li>
+        </ul>
+      </div>
+
+      <div class="term">
+        <div class="panel-bar">
+          <span class="dots"><i></i><i></i><i></i></span>
+          <span>~/repos/target-repo — zsh</span>
+          <span>tty 02</span>
+        </div>
+        <div class="term-body" id="term"></div>
+      </div>
+    </div>
+  </section>
