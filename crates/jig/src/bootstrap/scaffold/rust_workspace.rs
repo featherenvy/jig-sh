@@ -11,6 +11,10 @@ use super::{InitScaffoldPlan, ScaffoldDb};
 
 const RUST_WORKSPACE_TEMPLATES: &[ScaffoldTemplateFile] = &[
     ScaffoldTemplateFile {
+        template: "rust-react/workspace/.env.example.jinja",
+        output: ".env.example",
+    },
+    ScaffoldTemplateFile {
         template: "rust-react/workspace/Cargo.toml.jinja",
         output: "Cargo.toml",
     },
@@ -156,6 +160,15 @@ impl InitScaffoldPlan {
     }
 
     fn rust_workspace_template_context(&self) -> Value {
+        let database_url_example = match self.db {
+            ScaffoldDb::None => String::new(),
+            ScaffoldDb::Postgres => format!(
+                "postgres://postgres:postgres@localhost:5432/{}_dev",
+                self.module_name
+            ),
+            ScaffoldDb::Sqlite => format!("sqlite:{}.db", self.module_name),
+        };
+
         json!({
             "package_name": self.package_name,
             "module_name": self.module_name,
@@ -172,6 +185,7 @@ impl InitScaffoldPlan {
                 ScaffoldDb::Sqlite => "SqlitePool",
             },
             "migration_path": format!("{DB_CRATE_TO_REPO_ROOT}/{}", self.migration_dir),
+            "database_url_example": database_url_example,
         })
     }
 }

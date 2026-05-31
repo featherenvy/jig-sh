@@ -97,7 +97,7 @@ jig init /path/to/target-repo --repo-name target-repo --sqlx-enabled false
 jig init /path/to/target-repo --preset rust-react --db postgres --frontends web,landing,admin
 ```
 
-This scaffolds a Cargo workspace (`apps/<repo>-api`, `crates/<repo>-core`, `crates/<repo>`, `crates/<repo>-http`, `crates/<repo>-test-support`, optional `crates/<repo>-db`) plus frontend apps (Vite React `web`/`admin-panel`, Astro `landing`). The app crate owns typed `AppConfig`/`AppState`; the HTTP crate owns the Axum router, handlers, middleware, and health endpoints. Preset application code is generated once and then becomes **project-owned** — `jig update` keeps the harness current but never migrates or overwrites your application source.
+This scaffolds a Cargo workspace (`apps/<repo>-api`, `crates/<repo>-core`, `crates/<repo>`, `crates/<repo>-http`, `crates/<repo>-test-support`, optional `crates/<repo>-db`) plus frontend apps (Vite React `web`/`admin-panel`, Astro `landing`). The app crate owns typed `AppConfig`/`AppState`; the API binary loads `.env` with `dotenvy`; the HTTP crate owns the Axum router, handlers, middleware, and health endpoints. The scaffold includes a root `.env.example` for local settings and ignores local `.env` files. Preset application code is generated once and then becomes **project-owned** — `jig update` keeps the harness current but never migrates or overwrites your application source.
 
 **Adopt an existing repo.** `jig adopt` scans first and previews managed-file changes; re-run with `--write` after reviewing:
 

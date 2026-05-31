@@ -5,6 +5,7 @@ use <<[ module_name ]>>::AppConfig;
 
 #[tokio::main]
 async fn main() -> ExitCode {
+    load_dotenv();
     init_tracing();
     install_panic_hook();
 
@@ -14,6 +15,14 @@ async fn main() -> ExitCode {
             tracing::error!(error = ?error, "API server failed");
             ExitCode::FAILURE
         }
+    }
+}
+
+fn load_dotenv() {
+    match dotenvy::dotenv() {
+        Ok(_) => {}
+        Err(dotenvy::Error::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => eprintln!("warning: failed to load .env: {error}"),
     }
 }
 

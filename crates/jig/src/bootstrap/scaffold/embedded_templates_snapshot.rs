@@ -230,6 +230,12 @@ export default defineConfig({
   },
 });
 "# },
+    EmbeddedScaffoldTemplateFile { relative_path: "rust-react/workspace/.env.example.jinja", contents: r#"BIND_ADDR=127.0.0.1:3000
+RUST_LOG=<<[ module_name ]>>=info,tower_http=info
+[% if db_enabled -%]
+DATABASE_URL=<<[ database_url_example ]>>
+[% endif -%]
+"# },
     EmbeddedScaffoldTemplateFile { relative_path: "rust-react/workspace/Cargo.toml.jinja", contents: r#"[workspace]
 resolver = "2"
 members = [
@@ -251,6 +257,7 @@ license = "MIT"
 [workspace.dependencies]
 anyhow = "1"
 axum = "0.8"
+dotenvy = "0.15"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
@@ -272,6 +279,7 @@ license.workspace = true
 [dependencies]
 anyhow.workspace = true
 axum.workspace = true
+dotenvy.workspace = true
 <<[ package_name ]>> = { path = "../../crates/<<[ package_name ]>>"[% if db_enabled %], features = ["db"][% endif %] }
 <<[ package_name ]>>-http = { path = "../../crates/<<[ package_name ]>>-http"[% if db_enabled %], features = ["db"][% endif %] }
 tokio.workspace = true
@@ -285,6 +293,7 @@ use <<[ module_name ]>>::AppConfig;
 
 #[tokio::main]
 async fn main() -> ExitCode {
+    load_dotenv();
     init_tracing();
     install_panic_hook();
 
@@ -294,6 +303,14 @@ async fn main() -> ExitCode {
             tracing::error!(error = ?error, "API server failed");
             ExitCode::FAILURE
         }
+    }
+}
+
+fn load_dotenv() {
+    match dotenvy::dotenv() {
+        Ok(_) => {}
+        Err(dotenvy::Error::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => eprintln!("warning: failed to load .env: {error}"),
     }
 }
 

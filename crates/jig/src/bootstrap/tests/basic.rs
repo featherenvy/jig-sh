@@ -674,6 +674,7 @@ fn run_init_rust_react_scaffold_generates_backend_and_frontends() {
 
     assert_eq!(output["scaffold"]["preset"], "rust-react");
     assert_eq!(output["scaffold"]["db"], "postgres");
+    assert!(destination.join(".env.example").exists());
     assert!(destination.join("Cargo.toml").exists());
     assert!(destination.join("apps/my-app-api/src/main.rs").exists());
     assert!(destination.join("crates/my-app-core/src/lib.rs").exists());
@@ -740,6 +741,8 @@ fn run_init_rust_react_scaffold_generates_backend_and_frontends() {
     let api_main = fs::read_to_string(destination.join("apps/my-app-api/src/main.rs")).unwrap();
     assert!(api_main.contains("use anyhow::Context;"));
     assert!(api_main.contains("use my_app::AppConfig;"));
+    assert!(api_main.contains("load_dotenv();"));
+    assert!(api_main.contains("warning: failed to load .env"));
     assert!(api_main.contains("let bound_addr = listener"));
     assert!(api_main.contains("Failed to read API listener address after bind"));
     assert!(api_main.contains("tracing::info!(%bound_addr, \"listening\")"));
@@ -761,6 +764,14 @@ fn run_init_rust_react_scaffold_generates_backend_and_frontends() {
             .contains("command = \"BIND_ADDR=\\\"${HOST}:${PORT}\\\" cargo run -p my-app-api\"")
     );
     assert!(!jig_toml.contains("port = 3000"));
+    assert_eq!(
+        fs::read_to_string(destination.join(".env.example")).unwrap(),
+        "BIND_ADDR=127.0.0.1:3000\nRUST_LOG=my_app=info,tower_http=info\nDATABASE_URL=postgres://postgres:postgres@localhost:5432/my_app_dev\n"
+    );
+    let workspace_cargo = fs::read_to_string(destination.join("Cargo.toml")).unwrap();
+    assert!(workspace_cargo.contains("dotenvy = \"0.15\""));
+    let api_cargo = fs::read_to_string(destination.join("apps/my-app-api/Cargo.toml")).unwrap();
+    assert!(api_cargo.contains("dotenvy.workspace = true"));
     let app_lib = fs::read_to_string(destination.join("crates/my-app/src/lib.rs")).unwrap();
     assert!(app_lib.contains("pub struct AppConfig"));
     assert!(app_lib.contains("pub fn from_env() -> Result<Self>"));
@@ -923,6 +934,11 @@ fn scaffold_defaults_to_web_frontend_and_no_db() {
     assert!(!cargo_toml.contains("sqlx ="));
     assert!(cargo_toml.contains("\"signal\", \"time\""));
     assert!(cargo_toml.ends_with('\n'));
+    let env_example = fs::read_to_string(temp.path().join(".env.example")).unwrap();
+    assert!(env_example.starts_with("BIND_ADDR=127.0.0.1:3000\nRUST_LOG="));
+    assert!(env_example.ends_with("=info,tower_http=info\n"));
+    assert!(!env_example.contains("DATABASE_URL"));
+    assert_eq!(env_example.lines().count(), 2);
 }
 
 #[test]
@@ -1408,6 +1424,10 @@ fn scaffold_sqlite_branch_generates_sqlite_db_helper() {
     assert!(cargo_toml.contains("\"sqlite\""));
     assert!(cargo_toml.contains("\"signal\", \"time\""));
     assert!(cargo_toml.ends_with('\n'));
+    assert_eq!(
+        fs::read_to_string(temp.path().join(".env.example")).unwrap(),
+        "BIND_ADDR=127.0.0.1:3000\nRUST_LOG=demo=info,tower_http=info\nDATABASE_URL=sqlite:demo.db\n"
+    );
     let db_cargo = fs::read_to_string(temp.path().join("crates/demo-db/Cargo.toml")).unwrap();
     assert!(db_cargo.contains("anyhow.workspace = true"));
     assert!(db_cargo.contains("tokio.workspace = true"));
@@ -1445,6 +1465,7 @@ fn scaffold_output_paths_include_template_collision_candidates() {
 
     let paths = plan.output_paths();
     for expected in [
+        ".env.example",
         "Cargo.toml",
         "crates/demo-http/Cargo.toml",
         "crates/demo-http/AGENTS.md",
